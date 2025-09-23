@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
+use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::spawn_local;
-use web_sys::HtmlInputElement;
+use web_sys::{FileReader, HtmlInputElement, ProgressEvent};
 use yew::prelude::*;
 
 #[wasm_bindgen]
@@ -71,6 +72,7 @@ fn parse_and_log_csv(csv_text: &str) {
 #[function_component(App)]
 pub fn app() -> Html {
     let greet_input_ref = use_node_ref();
+    let file_input_ref = use_node_ref();
 
     let name = use_state(|| String::new());
 
@@ -113,6 +115,7 @@ pub fn app() -> Html {
     };
 
     let open_file_click = {
+<<<<<<< HEAD
         Callback::from(move |_| {
             spawn_local(async move {
                 // Use Tauri dialog to start at the home directory
@@ -125,6 +128,37 @@ pub fn app() -> Html {
     };
 
     // Removed: HTML input file flow in favor of Tauri dialog
+=======
+        let file_input_ref = file_input_ref.clone();
+        Callback::from(move |_| {
+            if let Some(input) = file_input_ref.cast::<HtmlInputElement>() {
+                input.click();
+            }
+        })
+    };
+
+    let on_file_change = Callback::from(move |event: web_sys::Event| {
+        let target = event.target().and_then(|t| t.dyn_into::<HtmlInputElement>().ok());
+        if let Some(input) = target {
+            if let Some(files) = input.files() {
+                if let Some(file) = files.get(0) {
+                    let reader = FileReader::new().unwrap();
+                    let reader_clone = reader.clone();
+                    let on_loadend = Closure::<dyn FnMut(ProgressEvent)>::new(move |_e| {
+                        if let Ok(result) = reader_clone.result() {
+                            if let Some(text) = result.as_string() {
+                                parse_and_log_csv(&text);
+                            }
+                        }
+                    });
+                    reader.set_onloadend(Some(on_loadend.as_ref().unchecked_ref()));
+                    on_loadend.forget();
+                    let _ = reader.read_as_text(&file);
+                }
+            }
+        }
+    });
+>>>>>>> 2f9a086 (feature/open-csv)
 
     html! {
         <main class="container">
@@ -147,6 +181,16 @@ pub fn app() -> Html {
             <p>{ &*greet_msg }</p>
 
             <div class="row">
+<<<<<<< HEAD
+=======
+                <input
+                    ref={file_input_ref}
+                    type="file"
+                    accept=".csv,text/csv"
+                    style="display: none;"
+                    onchange={on_file_change}
+                />
+>>>>>>> 2f9a086 (feature/open-csv)
                 <button type="button" onclick={open_file_click}>{"Open file"}</button>
             </div>
         </main>
