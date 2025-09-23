@@ -1,8 +1,7 @@
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
-use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::spawn_local;
-use web_sys::{FileReader, HtmlInputElement, ProgressEvent};
+use web_sys::HtmlInputElement;
 use yew::prelude::*;
 
 #[wasm_bindgen]
@@ -36,6 +35,15 @@ enum ContentType {
 enum MediaKind {
     Pictures,
     Video,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Page {
+    Home,
+    List,
+    Downloads,
+    Collection,
+    Settings,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -72,9 +80,9 @@ fn parse_and_log_csv(csv_text: &str) {
 #[function_component(App)]
 pub fn app() -> Html {
     let greet_input_ref = use_node_ref();
-    let file_input_ref = use_node_ref();
 
     let name = use_state(|| String::new());
+    let page = use_state(|| Page::Home);
 
     let greet_msg = use_state(|| String::new());
     {
@@ -115,7 +123,6 @@ pub fn app() -> Html {
     };
 
     let open_file_click = {
-<<<<<<< HEAD
         Callback::from(move |_| {
             spawn_local(async move {
                 // Use Tauri dialog to start at the home directory
@@ -128,71 +135,81 @@ pub fn app() -> Html {
     };
 
     // Removed: HTML input file flow in favor of Tauri dialog
-=======
-        let file_input_ref = file_input_ref.clone();
-        Callback::from(move |_| {
-            if let Some(input) = file_input_ref.cast::<HtmlInputElement>() {
-                input.click();
-            }
-        })
+
+    let set_page = |p: Page, page: UseStateHandle<Page>| Callback::from(move |_| page.set(p));
+
+    let sidebar = {
+        let page = page.clone();
+        html! {
+            <aside class="sidebar">
+                <button class="nav-btn" onclick={set_page(Page::Home, page.clone())} title="Home">
+                    <img src="public/home.svg" alt="Home" />
+                </button>
+                <button class="nav-btn" onclick={set_page(Page::List, page.clone())} title="List">
+                    <img src="public/list.svg" alt="List" />
+                </button>
+                <button class="nav-btn" onclick={set_page(Page::Downloads, page.clone())} title="Downloads">
+                    <img src="public/download.svg" alt="Downloads" />
+                </button>
+                <button class="nav-btn" onclick={set_page(Page::Collection, page.clone())} title="Collection">
+                    <img src="public/collection.svg" alt="Collection" />
+                </button>
+                <button class="nav-btn" onclick={set_page(Page::Settings, page.clone())} title="Settings">
+                    <img src="public/gear.svg" alt="Settings" />
+                </button>
+            </aside>
+        }
     };
 
-    let on_file_change = Callback::from(move |event: web_sys::Event| {
-        let target = event.target().and_then(|t| t.dyn_into::<HtmlInputElement>().ok());
-        if let Some(input) = target {
-            if let Some(files) = input.files() {
-                if let Some(file) = files.get(0) {
-                    let reader = FileReader::new().unwrap();
-                    let reader_clone = reader.clone();
-                    let on_loadend = Closure::<dyn FnMut(ProgressEvent)>::new(move |_e| {
-                        if let Ok(result) = reader_clone.result() {
-                            if let Some(text) = result.as_string() {
-                                parse_and_log_csv(&text);
-                            }
-                        }
-                    });
-                    reader.set_onloadend(Some(on_loadend.as_ref().unchecked_ref()));
-                    on_loadend.forget();
-                    let _ = reader.read_as_text(&file);
-                }
-            }
-        }
-    });
->>>>>>> 2f9a086 (feature/open-csv)
+    let body = match *page {
+        Page::Home => html! {
+            <main class="container">
+                <h1>{"Welcome to Tauri + Yew"}</h1>
+                <div class="row">
+                    <a href="https://tauri.app" target="_blank">
+                        <img src="public/tauri.svg" class="logo tauri" alt="Tauri logo"/>
+                    </a>
+                    <a href="https://yew.rs" target="_blank">
+                        <img src="public/yew.png" class="logo yew" alt="Yew logo"/>
+                    </a>
+                </div>
+                <p>{"Click on the Tauri and Yew logos to learn more."}</p>
+                <form class="row" onsubmit={greet}>
+                    <input id="greet-input" ref={greet_input_ref} placeholder="Enter a name..." />
+                    <button type="submit">{"Greet"}</button>
+                </form>
+                <p>{ &*greet_msg }</p>
+                <div class="row">
+                    <button type="button" onclick={open_file_click}>{"Open file"}</button>
+                </div>
+            </main>
+        },
+        Page::List => html! {
+            <main class="container" style="padding-top: 20vh;">
+                <img src="public/list.svg" class="logo" alt="List" />
+            </main>
+        },
+        Page::Downloads => html! {
+            <main class="container" style="padding-top: 20vh;">
+                <img src="public/download.svg" class="logo" alt="Downloads" />
+            </main>
+        },
+        Page::Collection => html! {
+            <main class="container" style="padding-top: 20vh;">
+                <img src="public/collection.svg" class="logo" alt="Collection" />
+            </main>
+        },
+        Page::Settings => html! {
+            <main class="container" style="padding-top: 20vh;">
+                <img src="public/gear.svg" class="logo" alt="Settings" />
+            </main>
+        },
+    };
 
     html! {
-        <main class="container">
-            <h1>{"Welcome to Tauri + Yew"}</h1>
-
-            <div class="row">
-                <a href="https://tauri.app" target="_blank">
-                    <img src="public/tauri.svg" class="logo tauri" alt="Tauri logo"/>
-                </a>
-                <a href="https://yew.rs" target="_blank">
-                    <img src="public/yew.png" class="logo yew" alt="Yew logo"/>
-                </a>
-            </div>
-            <p>{"Click on the Tauri and Yew logos to learn more."}</p>
-
-            <form class="row" onsubmit={greet}>
-                <input id="greet-input" ref={greet_input_ref} placeholder="Enter a name..." />
-                <button type="submit">{"Greet"}</button>
-            </form>
-            <p>{ &*greet_msg }</p>
-
-            <div class="row">
-<<<<<<< HEAD
-=======
-                <input
-                    ref={file_input_ref}
-                    type="file"
-                    accept=".csv,text/csv"
-                    style="display: none;"
-                    onchange={on_file_change}
-                />
->>>>>>> 2f9a086 (feature/open-csv)
-                <button type="button" onclick={open_file_click}>{"Open file"}</button>
-            </div>
-        </main>
+        <>
+            { sidebar }
+            { body }
+        </>
     }
 }
