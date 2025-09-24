@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
+use web_sys::HtmlInputElement;
 use yew::prelude::*;
 
 #[wasm_bindgen]
@@ -12,6 +13,59 @@ extern "C" {
 #[derive(Serialize, Deserialize)]
 struct GreetArgs<'a> {
     name: &'a str,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+enum Platform {
+    Tiktok,
+    Instagram,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+enum ContentType {
+    Liked,
+    Reposts,
+    Profile,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+enum MediaKind {
+    Pictures,
+    Video,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct ClipRow {
+    #[serde(rename = "Platform")]
+    platform: Platform,
+    #[serde(rename = "Type")]
+    content_type: ContentType,
+    #[serde(rename = "Handle")]
+    handle: String,
+    #[serde(rename = "Media")]
+    media: MediaKind,
+    #[serde(rename = "link")]
+    link: String,
+}
+
+fn parse_and_log_csv(csv_text: &str) {
+    let mut reader = csv::ReaderBuilder::new()
+        .has_headers(true)
+        .from_reader(csv_text.as_bytes());
+
+    for record in reader.deserialize::<ClipRow>() {
+        match record {
+            Ok(row) => {
+                web_sys::console::log_1(&format!("{:?}", row).into());
+            }
+            Err(err) => {
+                web_sys::console::error_1(&format!("CSV parse error: {err}").into());
+            }
+        }
+    }
 }
 
 #[function_component(App)]
@@ -58,6 +112,20 @@ pub fn app() -> Html {
         })
     };
 
+    let open_file_click = {
+        Callback::from(move |_| {
+            spawn_local(async move {
+                // Use Tauri dialog to start at the home directory
+                let csv_js = invoke("pick_csv_and_read", JsValue::NULL).await;
+                if let Some(csv_text) = csv_js.as_string() {
+                    parse_and_log_csv(&csv_text);
+                }
+            });
+        })
+    };
+
+    // Removed: HTML input file flow in favor of Tauri dialog
+
     html! {
         <main class="container">
             <h1>{"Welcome to Tauri + Yew"}</h1>
@@ -77,6 +145,10 @@ pub fn app() -> Html {
                 <button type="submit">{"Greet"}</button>
             </form>
             <p>{ &*greet_msg }</p>
+
+            <div class="row">
+                <button type="button" onclick={open_file_click}>{"Open file"}</button>
+            </div>
         </main>
     }
 }
