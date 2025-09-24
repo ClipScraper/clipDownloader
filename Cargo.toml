@@ -26,6 +26,12 @@ serde = { version = "1", features = ["derive"] }
 serde-wasm-bindgen = "0.6"
 console_error_panic_hook = "0.1.7"
 csv = "1.3"
+yew_icons = { version = "0.8.0", features = [
+    "LucideHome",
+    "LucideDownload",
+    "LucideLibrary",
+    "LucideSettings"
+] }
 
 [workspace]
 members = ["src-tauri"]

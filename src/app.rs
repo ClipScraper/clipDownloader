@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
 use web_sys::HtmlInputElement;
+use yew_icons::{Icon, IconId};
 use yew::prelude::*;
 
 #[wasm_bindgen]
@@ -40,9 +41,8 @@ enum MediaKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Page {
     Home,
-    List,
     Downloads,
-    Collection,
+    Library,
     Settings,
 }
 
@@ -143,19 +143,16 @@ pub fn app() -> Html {
         html! {
             <aside class="sidebar">
                 <button class="nav-btn" onclick={set_page(Page::Home, page.clone())} title="Home">
-                    <img src="public/home.svg" alt="Home" />
-                </button>
-                <button class="nav-btn" onclick={set_page(Page::List, page.clone())} title="List">
-                    <img src="public/list.svg" alt="List" />
+                    <Icon icon_id={IconId::LucideHome} width={"28"} height={"28"} />
                 </button>
                 <button class="nav-btn" onclick={set_page(Page::Downloads, page.clone())} title="Downloads">
-                    <img src="public/download.svg" alt="Downloads" />
+                    <Icon icon_id={IconId::LucideDownload} width={"28"} height={"28"} />
                 </button>
-                <button class="nav-btn" onclick={set_page(Page::Collection, page.clone())} title="Collection">
-                    <img src="public/collection.svg" alt="Collection" />
+                <button class="nav-btn" onclick={set_page(Page::Library, page.clone())} title="Library">
+                    <Icon icon_id={IconId::LucideLibrary} width={"28"} height={"28"} />
                 </button>
                 <button class="nav-btn" onclick={set_page(Page::Settings, page.clone())} title="Settings">
-                    <img src="public/gear.svg" alt="Settings" />
+                    <Icon icon_id={IconId::LucideSettings} width={"28"} height={"28"} />
                 </button>
             </aside>
         }
@@ -164,19 +161,10 @@ pub fn app() -> Html {
     let body = match *page {
         Page::Home => html! {
             <main class="container">
-                <h1>{"Welcome to Tauri + Yew"}</h1>
-                <div class="row">
-                    <a href="https://tauri.app" target="_blank">
-                        <img src="public/tauri.svg" class="logo tauri" alt="Tauri logo"/>
-                    </a>
-                    <a href="https://yew.rs" target="_blank">
-                        <img src="public/yew.png" class="logo yew" alt="Yew logo"/>
-                    </a>
-                </div>
-                <p>{"Click on the Tauri and Yew logos to learn more."}</p>
+                <h1>{"Welcome to Clip Downloader"}</h1>
                 <form class="row" onsubmit={greet}>
-                    <input id="greet-input" ref={greet_input_ref} placeholder="Enter a name..." />
-                    <button type="submit">{"Greet"}</button>
+                    <input id="greet-input" ref={greet_input_ref} placeholder="Enter url..." />
+                    <button type="submit">{"Download"}</button>
                 </form>
                 <p>{ &*greet_msg }</p>
                 <div class="row">
@@ -184,24 +172,19 @@ pub fn app() -> Html {
                 </div>
             </main>
         },
-        Page::List => html! {
-            <main class="container" style="padding-top: 20vh;">
-                <img src="public/list.svg" class="logo" alt="List" />
-            </main>
-        },
         Page::Downloads => html! {
             <main class="container" style="padding-top: 20vh;">
-                <img src="public/download.svg" class="logo" alt="Downloads" />
+                <Icon icon_id={IconId::LucideDownload} width={"64"} height={"64"} />
             </main>
         },
-        Page::Collection => html! {
+        Page::Library => html! {
             <main class="container" style="padding-top: 20vh;">
-                <img src="public/collection.svg" class="logo" alt="Collection" />
+                <Icon icon_id={IconId::LucideLibrary} width={"64"} height={"64"} />
             </main>
         },
         Page::Settings => html! {
             <main class="container" style="padding-top: 20vh;">
-                <img src="public/gear.svg" class="logo" alt="Settings" />
+                <Icon icon_id={IconId::LucideSettings} width={"64"} height={"64"} />
             </main>
         },
     };
