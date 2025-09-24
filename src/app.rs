@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
 use web_sys::HtmlInputElement;
+use yew_icons::{Icon, IconId};
 use yew::prelude::*;
 
 #[wasm_bindgen]
@@ -35,6 +36,14 @@ enum ContentType {
 enum MediaKind {
     Pictures,
     Video,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Page {
+    Home,
+    Downloads,
+    Library,
+    Settings,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -73,6 +82,7 @@ pub fn app() -> Html {
     let greet_input_ref = use_node_ref();
 
     let name = use_state(|| String::new());
+    let page = use_state(|| Page::Home);
 
     let greet_msg = use_state(|| String::new());
     {
@@ -126,29 +136,63 @@ pub fn app() -> Html {
 
     // Removed: HTML input file flow in favor of Tauri dialog
 
+    let set_page = |p: Page, page: UseStateHandle<Page>| Callback::from(move |_| page.set(p));
+
+    let sidebar = {
+        let page = page.clone();
+        html! {
+            <aside class="sidebar">
+                <button class="nav-btn" onclick={set_page(Page::Home, page.clone())} title="Home">
+                    <Icon icon_id={IconId::LucideHome} width={"28"} height={"28"} />
+                </button>
+                <button class="nav-btn" onclick={set_page(Page::Downloads, page.clone())} title="Downloads">
+                    <Icon icon_id={IconId::LucideDownload} width={"28"} height={"28"} />
+                </button>
+                <button class="nav-btn" onclick={set_page(Page::Library, page.clone())} title="Library">
+                    <Icon icon_id={IconId::LucideLibrary} width={"28"} height={"28"} />
+                </button>
+                <button class="nav-btn" onclick={set_page(Page::Settings, page.clone())} title="Settings">
+                    <Icon icon_id={IconId::LucideSettings} width={"28"} height={"28"} />
+                </button>
+            </aside>
+        }
+    };
+
+    let body = match *page {
+        Page::Home => html! {
+            <main class="container">
+                <h1>{"Welcome to Clip Downloader"}</h1>
+                <form class="row" onsubmit={greet}>
+                    <input id="greet-input" ref={greet_input_ref} placeholder="Enter url..." />
+                    <button type="submit">{"Download"}</button>
+                </form>
+                <p>{ &*greet_msg }</p>
+                <div class="row">
+                    <button type="button" onclick={open_file_click}>{"Open file"}</button>
+                </div>
+            </main>
+        },
+        Page::Downloads => html! {
+            <main class="container" style="padding-top: 20vh;">
+                <Icon icon_id={IconId::LucideDownload} width={"64"} height={"64"} />
+            </main>
+        },
+        Page::Library => html! {
+            <main class="container" style="padding-top: 20vh;">
+                <Icon icon_id={IconId::LucideLibrary} width={"64"} height={"64"} />
+            </main>
+        },
+        Page::Settings => html! {
+            <main class="container" style="padding-top: 20vh;">
+                <Icon icon_id={IconId::LucideSettings} width={"64"} height={"64"} />
+            </main>
+        },
+    };
+
     html! {
-        <main class="container">
-            <h1>{"Welcome to Tauri + Yew"}</h1>
-
-            <div class="row">
-                <a href="https://tauri.app" target="_blank">
-                    <img src="public/tauri.svg" class="logo tauri" alt="Tauri logo"/>
-                </a>
-                <a href="https://yew.rs" target="_blank">
-                    <img src="public/yew.png" class="logo yew" alt="Yew logo"/>
-                </a>
-            </div>
-            <p>{"Click on the Tauri and Yew logos to learn more."}</p>
-
-            <form class="row" onsubmit={greet}>
-                <input id="greet-input" ref={greet_input_ref} placeholder="Enter a name..." />
-                <button type="submit">{"Greet"}</button>
-            </form>
-            <p>{ &*greet_msg }</p>
-
-            <div class="row">
-                <button type="button" onclick={open_file_click}>{"Open file"}</button>
-            </div>
-        </main>
+        <>
+            { sidebar }
+            { body }
+        </>
     }
 }

@@ -19,6 +19,7 @@
 
 .container {
   margin: 0;
+  margin-left: 80px;
   padding-top: 10vh;
   display: flex;
   flex-direction: column;
@@ -40,6 +41,85 @@
 .row {
   display: flex;
   justify-content: center;
+}
+
+.header {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: space-evenly;
+  padding: 0 12px;
+  z-index: 10;
+  background: transparent;
+}
+
+.header .nav-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  background: transparent;
+  box-shadow: none;
+}
+
+.header .nav-btn img,
+.header .nav-btn svg {
+  width: 24px;
+  height: 24px;
+}
+
+/* Sidebar navigation */
+.sidebar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: 72px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 16px;
+  padding: 12px 0;
+  z-index: 10;
+  background: transparent;
+}
+
+.sidebar .nav-btn {
+  width: 48px;
+  height: 48px;
+  border-radius: 10px;
+  background: transparent;
+  box-shadow: none;
+  border: 1px solid transparent;
+}
+
+.sidebar .nav-btn img,
+.sidebar .nav-btn svg {
+  width: 28px;
+  height: 28px;
+}
+
+.sidebar .nav-btn:hover img,
+.sidebar .nav-btn:hover svg {
+  filter: drop-shadow(0 0 2em #24c8db);
+}
+
+/* remove borders/outline on hover/focus */
+.sidebar .nav-btn:hover,
+.sidebar .nav-btn:active,
+.sidebar .nav-btn:focus,
+.sidebar .nav-btn:focus-visible {
+  border-color: transparent;
+  background: transparent;
+  outline: none;
+  box-shadow: none;
 }
 
 a {
