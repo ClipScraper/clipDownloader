@@ -1,0 +1,5 @@
+- save files in db
+- save config
+- handle errors
+- get collections from extension
+- add tests

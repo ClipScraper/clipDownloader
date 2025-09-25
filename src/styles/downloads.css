@@ -1,0 +1,99 @@
+.downloads-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 auto 16px auto;
+  width: min(560px, calc(100% - 160px));
+}
+
+.toggle-btn {
+  padding: 0.5rem 1rem;
+  border-radius: 10px;
+}
+
+.toggle-btn.active {
+  border-color: #396cd8;
+  background-color: #e8e8e8;
+}
+/* table */
+.queue-table {
+  width: calc(100% - 160px);
+  margin: 0 auto;
+  border-collapse: collapse;
+}
+.queue-table th,
+.queue-table td {
+  padding: 8px 10px;
+  text-align: left;
+  border-bottom: 1px solid rgba(0,0,0,0.12);
+}
+
+/* summary view */
+.summary { width: calc(100% - 160px); margin: 0 auto; }
+.platform-item, .collection-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px;
+  border-radius: 10px;
+  cursor: pointer;
+  box-shadow: 0 2px 2px rgba(0,0,0,0.2);
+  margin-bottom: 8px;
+  background-color: rgba(255,255,255,0.06);
+  transition: background-color 0.2s ease;
+}
+.collection-item { margin-left: 16px; }
+.platform-item:hover, .collection-item:hover { background-color: rgba(255,255,255,0.12); }
+.item-left { display: flex; align-items: center; gap: 10px; }
+.item-right { display: flex; align-items: center; gap: 10px; }
+.brand-icon { width: 18px; height: 18px; border-radius: 4px; }
+
+.rows { list-style: none; padding-left: 36px; margin: 8px 0 16px 0; }
+.rows li { margin: 6px 0; display: flex; gap: 8px; align-items: center; }
+.rows .link-text { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; min-width: 420px; }
+@media (prefers-color-scheme: dark) {
+  .queue-table th,
+  .queue-table td {
+    border-color: rgba(255,255,255,0.12);
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  .toggle-btn.active {
+    background-color: #0f0f0f69;
+  }
+}
+
+/* icons inside the small action button on the right */
+/* reset the compact icon button so global button padding doesn't clip its SVG */
+.icon-btn {
+  padding: 0;                 /* ← critical */
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: none;           /* optional: avoid the global box-shadow */
+  background: transparent;    /* already set, but keep explicit */
+  border: 1px solid transparent;
+  color: #e5e7eb;
+}
+
+/* ensure the lucide SVG is actually drawn at a visible size */
+.icon-btn svg {
+  width: 18px;
+  height: 18px;
+  display: block;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.icon-btn:hover {
+  color: #ffffff;
+}
