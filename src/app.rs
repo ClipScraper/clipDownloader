@@ -191,40 +191,20 @@ pub fn app() -> Html {
 
     let greet_msg = use_state(|| String::new());
     let queue_rows = use_state(|| Vec::<ClipRow>::new());
-    {
-        let greet_msg = greet_msg.clone();
-        let name = name.clone();
-        let name2 = name.clone();
-        use_effect_with(
-            name2,
-            move |_| {
-                spawn_local(async move {
-                    if name.is_empty() {
-                        return;
-                    }
-
-                    let args = serde_wasm_bindgen::to_value(&GreetArgs { name: &*name }).unwrap();
-                    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-                    let new_msg = invoke("greet", args).await.as_string().unwrap();
-                    greet_msg.set(new_msg);
-                });
-
-                || {}
-            },
-        );
-    }
+    // removed greet side-effect
 
     let greet = {
         let name = name.clone();
         let greet_input_ref = greet_input_ref.clone();
         Callback::from(move |e: SubmitEvent| {
             e.prevent_default();
-            name.set(
-                greet_input_ref
-                    .cast::<web_sys::HtmlInputElement>()
-                    .unwrap()
-                    .value(),
-            );
+            let value = greet_input_ref.cast::<web_sys::HtmlInputElement>().unwrap().value();
+            name.set(value.clone());
+            // trigger download via tauri backend
+            wasm_bindgen_futures::spawn_local(async move {
+                let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "url": value })).unwrap();
+                let _ = invoke("download_url", args).await;
+            });
         })
     };
 
@@ -268,18 +248,29 @@ pub fn app() -> Html {
     };
 
     let body = match *page {
-        Page::Home => html! {
-            <main class="container">
-                <h1>{"Welcome to Clip Downloader"}</h1>
-                <form class="row" onsubmit={greet}>
-                    <input id="greet-input" ref={greet_input_ref} placeholder="Enter url..." />
-                    <button type="submit">{"Download"}</button>
-                </form>
-                <p>{ &*greet_msg }</p>
-                <div class="row">
-                    <button type="button" onclick={open_file_click}>{"Open file"}</button>
-                </div>
-            </main>
+        Page::Home => {
+            let url_val = (*name).clone();
+            let is_valid = url_val.contains("instagram.com") || url_val.contains("tiktok.com") || url_val.contains("youtube.com") || url_val.contains("youtu.be");
+            let on_input = {
+                let name = name.clone();
+                Callback::from(move |e: web_sys::InputEvent| {
+                    if let Some(t) = e.target() { if let Ok(inp) = t.dyn_into::<web_sys::HtmlInputElement>() { name.set(inp.value()); } }
+                })
+            };
+            html! {
+                <main class="container">
+                    <h1>{"Welcome to Clip Downloader"}</h1>
+                    <form class="row home-form" onsubmit={greet}>
+                        <input id="greet-input" ref={greet_input_ref} placeholder="Enter url..." oninput={on_input} />
+                        { if is_valid {
+                            html!{ <button type="submit" class="download-cta" title="Download"><img class="download-icon" src="assets/download.svg" /></button> }
+                        } else { html!{} } }
+                    </form>
+                    <div class="row home-actions">
+                        <button type="button" onclick={open_file_click}>{"Import list"}</button>
+                    </div>
+                </main>
+            }
         },
         Page::Downloads => {
             let platform_summaries = group_by_platform_and_collection(&queue_rows);

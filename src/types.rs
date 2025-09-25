@@ -1,0 +1,56 @@
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "lowercase")]
+pub enum Platform {
+    Tiktok,
+    Instagram,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "lowercase")]
+pub enum ContentType {
+    Liked,
+    Reposts,
+    Profile,
+    Bookmarks,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum MediaKind {
+    Pictures,
+    Video,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ClipRow {
+    #[serde(rename = "Platform")]
+    pub platform: Platform,
+    #[serde(rename = "Type")]
+    pub content_type: ContentType,
+    #[serde(rename = "Handle")]
+    pub handle: String,
+    #[serde(rename = "Media")]
+    pub media: MediaKind,
+    #[serde(rename = "link")]
+    pub link: String,
+}
+
+pub fn platform_str(p: &Platform) -> &'static str {
+    match p { Platform::Tiktok => "tiktok", Platform::Instagram => "instagram" }
+}
+
+pub fn content_type_str(t: &ContentType) -> &'static str {
+    match t {
+        ContentType::Liked => "liked",
+        ContentType::Reposts => "reposts",
+        ContentType::Profile => "profile",
+        ContentType::Bookmarks => "bookmarks",
+    }
+}
+
+pub fn media_str(m: &MediaKind) -> &'static str {
+    match m { MediaKind::Pictures => "pictures", MediaKind::Video => "video" }
+}
+
