@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
 use yew_icons::{Icon, IconId};
+use crate::pages; // declared in main.rs
+use crate::types::{Platform, ContentType, MediaKind, ClipRow, platform_str, content_type_str};
 use yew::prelude::*;
 use lucide_yew::Repeat2;
 
@@ -16,28 +18,7 @@ struct GreetArgs<'a> {
     name: &'a str,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
-#[serde(rename_all = "lowercase")]
-enum Platform {
-    Tiktok,
-    Instagram,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
-#[serde(rename_all = "lowercase")]
-enum ContentType {
-    Liked,
-    Reposts,
-    Profile,
-    Bookmarks,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-enum MediaKind {
-    Pictures,
-    Video,
-}
+// Types moved to crate::types
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Page {
@@ -47,19 +28,7 @@ enum Page {
     Settings,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-struct ClipRow {
-    #[serde(rename = "Platform")]
-    platform: Platform,
-    #[serde(rename = "Type")]
-    content_type: ContentType,
-    #[serde(rename = "Handle")]
-    handle: String,
-    #[serde(rename = "Media")]
-    media: MediaKind,
-    #[serde(rename = "link")]
-    link: String,
-}
+// ClipRow imported from crate::types
 
 fn parse_csv(csv_text: &str) -> Vec<ClipRow> {
     let mut reader = csv::ReaderBuilder::new()
@@ -77,20 +46,7 @@ fn parse_csv(csv_text: &str) -> Vec<ClipRow> {
     rows
 }
 
-fn platform_str(p: &Platform) -> &'static str {
-    match p { Platform::Tiktok => "tiktok", Platform::Instagram => "instagram" }
-}
-fn content_type_str(t: &ContentType) -> &'static str {
-    match t {
-        ContentType::Liked => "liked",
-        ContentType::Reposts => "reposts",
-        ContentType::Profile => "profile",
-        ContentType::Bookmarks => "bookmarks",
-    }
-}
-fn media_str(m: &MediaKind) -> &'static str {
-    match m { MediaKind::Pictures => "pictures", MediaKind::Video => "video" }
-}
+// helpers imported from crate::types
 
 fn display_label_for_row(row: &ClipRow) -> String {
     // For instagram links, prefer username - kind - id when present; else trim to last two segments
@@ -186,8 +142,7 @@ pub fn app() -> Html {
 
     let name = use_state(|| String::new());
     let page = use_state(|| Page::Home);
-    let expanded_platforms = use_state(|| std::collections::HashSet::<String>::new());
-    let expanded_collections = use_state(|| std::collections::HashSet::<String>::new());
+    // Downloads page manages its own expand state
 
     let greet_msg = use_state(|| String::new());
     let queue_rows = use_state(|| Vec::<ClipRow>::new());
@@ -223,6 +178,21 @@ pub fn app() -> Html {
         })
     };
 
+    // Callback for HomePage Import list button (takes unit)
+    let on_open_file = {
+        let queue_rows = queue_rows.clone();
+        Callback::from(move |_: ()| {
+            let q = queue_rows.clone();
+            spawn_local(async move {
+                let csv_js = invoke("pick_csv_and_read", JsValue::NULL).await;
+                if let Some(csv_text) = csv_js.as_string() {
+                    let rows = parse_csv(&csv_text);
+                    q.set(rows);
+                }
+            });
+        })
+    };
+
     // Removed: HTML input file flow in favor of Tauri dialog
 
     let set_page = |p: Page, page: UseStateHandle<Page>| Callback::from(move |_| page.set(p));
@@ -248,148 +218,10 @@ pub fn app() -> Html {
     };
 
     let body = match *page {
-        Page::Home => {
-            let url_val = (*name).clone();
-            let is_valid = url_val.contains("instagram.com") || url_val.contains("tiktok.com") || url_val.contains("youtube.com") || url_val.contains("youtu.be");
-            let on_input = {
-                let name = name.clone();
-                Callback::from(move |e: web_sys::InputEvent| {
-                    if let Some(t) = e.target() { if let Ok(inp) = t.dyn_into::<web_sys::HtmlInputElement>() { name.set(inp.value()); } }
-                })
-            };
-            html! {
-                <main class="container">
-                    <h1>{"Welcome to Clip Downloader"}</h1>
-                    <form class="row home-form" onsubmit={greet}>
-                        <input id="greet-input" ref={greet_input_ref} placeholder="Enter url..." oninput={on_input} />
-                        { if is_valid {
-                            html!{ <button type="submit" class="download-cta" title="Download"><img class="download-icon" src="assets/download.svg" /></button> }
-                        } else { html!{} } }
-                    </form>
-                    <div class="row home-actions">
-                        <button type="button" onclick={open_file_click}>{"Import list"}</button>
-                    </div>
-                </main>
-            }
-        },
-        Page::Downloads => {
-            let platform_summaries = group_by_platform_and_collection(&queue_rows);
-
-            let toggle_platform = {
-                let expanded_platforms = expanded_platforms.clone();
-                Callback::from(move |plat_key: String| {
-                    let mut set = (*expanded_platforms).clone();
-                    if !set.insert(plat_key.clone()) { set.remove(&plat_key); }
-                    expanded_platforms.set(set);
-                })
-            };
-            let toggle_collection = {
-                let expanded_collections = expanded_collections.clone();
-                Callback::from(move |col_key: String| {
-                    let mut set = (*expanded_collections).clone();
-                    if !set.insert(col_key.clone()) { set.remove(&col_key); }
-                    expanded_collections.set(set);
-                })
-            };
-
-            html! {
-                <main class="container" style="padding-top: 10vh;">
-                    <div class="summary">
-                        { for platform_summaries.into_iter().map(|ps| {
-                            let plat_label = platform_str(&ps.platform).to_string();
-                            let collections_count = ps.collections.len();
-                            let bookmarks_count: usize = ps.collections.iter().map(|c| c.rows.len()).sum();
-                            let key = plat_label.clone();
-                            let is_open = expanded_platforms.contains(&key);
-                            let on_click = {
-                                let toggle_platform = toggle_platform.clone();
-                                let k = key.clone();
-                                Callback::from(move |_| toggle_platform.emit(k.clone()))
-                            };
-
-                            let collections_html = if is_open {
-                                html! {
-                                    <div>
-                                        { for ps.collections.into_iter().map(|c| {
-                                            let col_key = format!("{}::{}::{}", plat_label, c.key.handle, content_type_str(&c.key.content_type));
-                                            let col_open = expanded_collections.contains(&col_key);
-                                            let on_col_click = {
-                                                let toggle_collection = toggle_collection.clone();
-                                                let k = col_key.clone();
-                                                Callback::from(move |_| toggle_collection.emit(k.clone()))
-                                            };
-                                            html! {
-                                                <div>
-                                                    <div class="collection-item" onclick={on_col_click}>
-                                                        <div class="item-left">
-                                                            <span>{ format!("{} | {}", c.key.handle, content_type_str(&c.key.content_type)) }</span>
-                                                        </div>
-                                                        <div class="item-right">
-                                                            <span>{ format!("{} bookmarks", c.rows.len()) }</span>
-                                                            <button class="icon-btn" title="Download">
-                                                                <Icon icon_id={IconId::LucideDownload} width={"18"} height={"18"} />
-                                                            </button>
-                                                        </div>
-                                                    </div>
-                                                    { if col_open {
-                                                        html! {
-                                                            <ul class="rows">
-                                                                { for c.rows.into_iter().map(|row| html!{
-                                                                    <li>
-                                                                        {
-                                                                            match row.media {
-                                                                                MediaKind::Pictures => html!{ <Icon icon_id={IconId::LucideImage} width={"16"} height={"16"} /> },
-                                                                                MediaKind::Video => html!{ <Icon icon_id={IconId::LucideVideo} width={"16"} height={"16"} /> },
-                                                                            }
-                                                                        }
-                                                                        <a class="link-text" href={row.link.clone()} target="_blank">{ display_label_for_row(&row) }</a>
-                                                                        <button class="icon-btn" title="Download">
-                                                                            <Icon icon_id={IconId::LucideDownload} width={"16"} height={"16"} />
-                                                                        </button>
-                                                                    </li>
-                                                                }) }
-                                                            </ul>
-                                                        }
-                                                    } else { html!{} } }
-                                                </div>
-                                            }
-                                        }) }
-                                    </div>
-                                }
-                            } else { html!{} };
-
-                            html! {
-                                <div>
-                                    <div class="platform-item" onclick={on_click}>
-                                        <div class="item-left">
-                                            <img class="brand-icon" src={if plat_label == "instagram" { "public/instagram.webp" } else { "public/tiktok.webp" }} />
-                                            <span>{ plat_label.clone() }</span>
-                                        </div>
-                                        <div class="item-right">
-                                            <span>{ format!("{} collections | {} bookmarks", collections_count, bookmarks_count) }</span>
-                                            <button class="icon-btn" title="Download">
-                                                <Icon icon_id={IconId::LucideDownload} width={"18"} height={"18"} />
-                                            </button>
-                                        </div>
-                                    </div>
-                                    { collections_html }
-                                </div>
-                            }
-                        }) }
-                    </div>
-                </main>
-            }
-        },
-        Page::Library => html! {
-            <main class="container" style="padding-top: 20vh;">
-                <Icon icon_id={IconId::LucideLibrary} width={"64"} height={"64"} />
-            </main>
-        },
-        Page::Settings => html! {
-            <main class="container" style="padding-top: 20vh;">
-                <Icon icon_id={IconId::LucideSettings} width={"64"} height={"64"} />
-            </main>
-        },
+        Page::Home => html! { <pages::home::HomePage on_open_file={on_open_file} /> },
+        Page::Downloads => html! { <pages::downloads::DownloadsPage rows={(*queue_rows).clone()} /> },
+        Page::Library => html! { <pages::library::LibraryPage /> },
+        Page::Settings => html! { <pages::settings::SettingsPage /> },
     };
 
     html! {
