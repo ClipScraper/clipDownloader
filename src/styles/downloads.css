@@ -1,0 +1,43 @@
+.downloads-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 auto 16px auto;
+  width: min(560px, calc(100% - 160px));
+}
+
+.toggle-btn {
+  padding: 0.5rem 1rem;
+  border-radius: 10px;
+}
+
+.toggle-btn.active {
+  border-color: #396cd8;
+  background-color: #e8e8e8;
+}
+/* table */
+.queue-table {
+  width: calc(100% - 160px);
+  margin: 0 auto;
+  border-collapse: collapse;
+}
+.queue-table th,
+.queue-table td {
+  padding: 8px 10px;
+  text-align: left;
+  border-bottom: 1px solid rgba(0,0,0,0.12);
+}
+@media (prefers-color-scheme: dark) {
+  .queue-table th,
+  .queue-table td {
+    border-color: rgba(255,255,255,0.12);
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  .toggle-btn.active {
+    background-color: #0f0f0f69;
+  }
+}
+
