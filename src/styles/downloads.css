@@ -94,6 +94,12 @@
   stroke-linejoin: round;
 }
 
+/* Make only the download.svg icons render white */
+.icon-btn > img.brand-icon[src$="download.svg"] {
+  filter: invert(1) brightness(1.8);
+}
+
 .icon-btn:hover {
   color: #ffffff;
+  border-color: #ffffff;
 }

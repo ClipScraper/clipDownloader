@@ -3,3 +3,5 @@
 - handle errors
 - get collections from extension
 - add tests
+- support drag and drop of csv
+- align css in home with /download

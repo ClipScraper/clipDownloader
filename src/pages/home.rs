@@ -1,5 +1,6 @@
 use wasm_bindgen::prelude::*;
 use yew::prelude::*;
+use serde::{Serialize, Deserialize};
 
 #[derive(Serialize, Deserialize)]
 struct GreetArgs<'a> { name: &'a str }
@@ -19,29 +20,21 @@ pub struct Props {
 pub fn home_page(props: &Props) -> Html {
     let greet_input_ref = use_node_ref();
     let name = use_state(|| String::new());
-    let greet_msg = use_state(|| String::new());
-
-    {
-        let greet_msg = greet_msg.clone();
+    let on_input = {
         let name = name.clone();
-        let name2 = name.clone();
-        use_effect_with(name2, move |_| {
-            wasm_bindgen_futures::spawn_local(async move {
-                if name.is_empty() { return; }
-                let args = serde_wasm_bindgen::to_value(&GreetArgs { name: &*name }).unwrap();
-                let new_msg = invoke("greet", args).await.as_string().unwrap();
-                greet_msg.set(new_msg);
-            });
-            || {}
-        });
-    }
-
+        Callback::from(move |e: web_sys::InputEvent| {
+            if let Some(t) = e.target() { if let Ok(inp) = t.dyn_into::<web_sys::HtmlInputElement>() { name.set(inp.value()); } }
+        })
+    };
     let greet = {
-        let name = name.clone();
         let greet_input_ref = greet_input_ref.clone();
         Callback::from(move |e: SubmitEvent| {
             e.prevent_default();
-            name.set(greet_input_ref.cast::<web_sys::HtmlInputElement>().unwrap().value());
+            let value = greet_input_ref.cast::<web_sys::HtmlInputElement>().unwrap().value();
+            wasm_bindgen_futures::spawn_local(async move {
+                let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "url": value })).unwrap();
+                let _ = invoke("download_url", args).await;
+            });
         })
     };
 
@@ -53,13 +46,14 @@ pub fn home_page(props: &Props) -> Html {
     html! {
         <main class="container">
             <h1>{"Welcome to Clip Downloader"}</h1>
-            <form class="row" onsubmit={greet}>
-                <input id="greet-input" ref={greet_input_ref} placeholder="Enter url..." />
-                <button type="submit">{"Download"}</button>
+            <form class="row home-form" onsubmit={greet}>
+                <input id="url-input" ref={greet_input_ref} placeholder="Enter url..." oninput={on_input} />
+                { if name.contains("instagram.com") || name.contains("tiktok.com") || name.contains("youtube.com") || name.contains("youtu.be") {
+                    html!{ <button type="submit" class="download-cta" title="Download"><img class="download-icon" src="assets/download.svg" /></button> }
+                } else { html!{} } }
             </form>
-            <p>{ &*greet_msg }</p>
-            <div class="row">
-                <button type="button" onclick={open_click}>{"Open file"}</button>
+            <div class="row home-actions">
+                <button type="button" onclick={open_click}>{"Import list"}</button>
             </div>
         </main>
     }
