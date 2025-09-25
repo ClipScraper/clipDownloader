@@ -165,7 +165,7 @@ pub fn app() -> Html {
 
     let open_file_click = {
         let queue_rows = queue_rows.clone();
-        Callback::from(move |_| {
+        Callback::from(move |_: MouseEvent| {
             let q = queue_rows.clone();
             spawn_local(async move {
                 // Use Tauri dialog to start at the home directory
