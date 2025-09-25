@@ -98,8 +98,6 @@ pub fn app() -> Html {
 
     let name = use_state(|| String::new());
     let page = use_state(|| Page::Home);
-    let queue_active = use_state(|| false);
-    let downloads_active = use_state(|| false);
 
     let greet_msg = use_state(|| String::new());
     let queue_rows = use_state(|| Vec::<ClipRow>::new());
@@ -193,70 +191,49 @@ pub fn app() -> Html {
                 </div>
             </main>
         },
-        Page::Downloads => {
-            let toggle_queue = {
-                let queue_active = queue_active.clone();
-                Callback::from(move |_| queue_active.set(!*queue_active))
-            };
-            let toggle_downloads = {
-                let downloads_active = downloads_active.clone();
-                Callback::from(move |_| downloads_active.set(!*downloads_active))
-            };
-
-            html! {
-                <main class="container" style="padding-top: 10vh;">
-                    <div class="downloads-header">
-                        <button class={classes!("toggle-btn", if *queue_active {"active"} else {""})} onclick={toggle_queue}>{"Queue"}</button>
-                        <button class={classes!("toggle-btn", if *downloads_active {"active"} else {""})} onclick={toggle_downloads}>{"Downloads"}</button>
-                    </div>
-                    {
-                        if *queue_active {
-                            html!{
-                                <table class="queue-table">
-                                    <thead>
-                                        <tr>
-                                            <th>{"Platform"}</th>
-                                            <th>{"Type"}</th>
-                                            <th>{"Handle"}</th>
-                                            <th>{"Media"}</th>
-                                            <th>{"Link"}</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        { for queue_rows.iter().map(|row| html!{
-                                            <tr>
-                                                <td>{ platform_str(&row.platform) }</td>
-                                                <td>
-                                                    {
-                                                        match row.content_type {
-                                                            ContentType::Bookmarks => html!{ <Icon icon_id={IconId::LucideBookmark} width={"20"} height={"20"} /> },
-                                                            ContentType::Liked => html!{ <Icon icon_id={IconId::LucideHeart} width={"20"} height={"20"} /> },
-                                                            ContentType::Profile => html!{ <Icon icon_id={IconId::LucideUser} width={"20"} height={"20"} /> },
-                                                            ContentType::Reposts => html!{ <Repeat2 size=20 /> },
-                                                        }
-                                                    }
-                                                </td>
-                                                <td>{ row.handle.clone() }</td>
-                                                <td>
-                                                    {
-                                                        match row.media {
-                                                            MediaKind::Pictures => html!{ <Icon icon_id={IconId::LucideImage} width={"20"} height={"20"} /> },
-                                                            MediaKind::Video => html!{ <Icon icon_id={IconId::LucideVideo} width={"20"} height={"20"} /> },
-                                                        }
-                                                    }
-                                                </td>
-                                                <td>
-                                                    <a href={row.link.clone()} target="_blank">{ row.link.clone() }</a>
-                                                </td>
-                                            </tr>
-                                        })}
-                                    </tbody>
-                                </table>
-                            }
-                        } else { html!{} }
-                    }
-                </main>
-            }
+        Page::Downloads => html! {
+            <main class="container" style="padding-top: 10vh;">
+                <table class="queue-table">
+                    <thead>
+                        <tr>
+                            <th>{"Platform"}</th>
+                            <th>{"Type"}</th>
+                            <th>{"Handle"}</th>
+                            <th>{"Media"}</th>
+                            <th>{"Link"}</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        { for queue_rows.iter().map(|row| html!{
+                            <tr>
+                                <td>{ platform_str(&row.platform) }</td>
+                                <td>
+                                    {
+                                        match row.content_type {
+                                            ContentType::Bookmarks => html!{ <Icon icon_id={IconId::LucideBookmark} width={"20"} height={"20"} /> },
+                                            ContentType::Liked => html!{ <Icon icon_id={IconId::LucideHeart} width={"20"} height={"20"} /> },
+                                            ContentType::Profile => html!{ <Icon icon_id={IconId::LucideUser} width={"20"} height={"20"} /> },
+                                            ContentType::Reposts => html!{ <Repeat2 size=20 /> },
+                                        }
+                                    }
+                                </td>
+                                <td>{ row.handle.clone() }</td>
+                                <td>
+                                    {
+                                        match row.media {
+                                            MediaKind::Pictures => html!{ <Icon icon_id={IconId::LucideImage} width={"20"} height={"20"} /> },
+                                            MediaKind::Video => html!{ <Icon icon_id={IconId::LucideVideo} width={"20"} height={"20"} /> },
+                                        }
+                                    }
+                                </td>
+                                <td>
+                                    <a href={row.link.clone()} target="_blank">{ row.link.clone() }</a>
+                                </td>
+                            </tr>
+                        })}
+                    </tbody>
+                </table>
+            </main>
         },
         Page::Library => html! {
             <main class="container" style="padding-top: 20vh;">
