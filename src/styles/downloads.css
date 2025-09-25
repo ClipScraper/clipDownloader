@@ -48,10 +48,10 @@
 .item-left { display: flex; align-items: center; gap: 10px; }
 .item-right { display: flex; align-items: center; gap: 10px; }
 .brand-icon { width: 18px; height: 18px; border-radius: 4px; }
-.icon-btn { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 8px; background: transparent; border: 1px solid transparent; }
-.icon-btn:hover { background: rgba(255,255,255,0.12); }
+
 .rows { list-style: none; padding-left: 36px; margin: 8px 0 16px 0; }
 .rows li { margin: 6px 0; display: flex; gap: 8px; align-items: center; }
+.rows .link-text { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; min-width: 420px; }
 @media (prefers-color-scheme: dark) {
   .queue-table th,
   .queue-table td {
@@ -65,3 +65,35 @@
   }
 }
 
+/* icons inside the small action button on the right */
+/* reset the compact icon button so global button padding doesn't clip its SVG */
+.icon-btn {
+  padding: 0;                 /* ← critical */
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: none;           /* optional: avoid the global box-shadow */
+  background: transparent;    /* already set, but keep explicit */
+  border: 1px solid transparent;
+  color: #e5e7eb;
+}
+
+/* ensure the lucide SVG is actually drawn at a visible size */
+.icon-btn svg {
+  width: 18px;
+  height: 18px;
+  display: block;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.icon-btn:hover {
+  color: #ffffff;
+}

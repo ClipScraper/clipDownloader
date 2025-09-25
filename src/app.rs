@@ -107,12 +107,17 @@ fn display_label_for_row(row: &ClipRow) -> String {
             let kind = parts.get(5).unwrap_or(&"");
             let id = parts.get(6).unwrap_or(&"");
             let id = if id.is_empty() { parts.last().unwrap_or(&"") } else { id };
+            // Avoid duplicate segments: if kind == id, show only one
+            if kind == id { return format!("{} - {}", username, kind); }
             return format!("{} - {} - {}", username, kind, id);
         }
     }
     // Fallback: last two segments
     if parts.len() >= 2 {
-        return format!("{}/{}", parts[parts.len()-2], parts[parts.len()-1]);
+        let a = parts[parts.len()-2];
+        let b = parts[parts.len()-1];
+        if a == b { return a.to_string(); }
+        return format!("{}/{}", a, b);
     }
     row.link.clone()
 }
@@ -346,7 +351,7 @@ pub fn app() -> Html {
                                                                                 MediaKind::Video => html!{ <Icon icon_id={IconId::LucideVideo} width={"16"} height={"16"} /> },
                                                                             }
                                                                         }
-                                                                        <a href={row.link.clone()} target="_blank">{ display_label_for_row(&row) }</a>
+                                                                        <a class="link-text" href={row.link.clone()} target="_blank">{ display_label_for_row(&row) }</a>
                                                                         <button class="icon-btn" title="Download">
                                                                             <Icon icon_id={IconId::LucideDownload} width={"16"} height={"16"} />
                                                                         </button>
