@@ -3,9 +3,8 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
 use yew_icons::{Icon, IconId};
 use crate::pages; // declared in main.rs
-use crate::types::{Platform, ContentType, MediaKind, ClipRow, platform_str, content_type_str};
+use crate::types::{ClipRow};
 use yew::prelude::*;
-use lucide_yew::Repeat2;
 
 #[wasm_bindgen]
 extern "C" {

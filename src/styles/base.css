@@ -119,6 +119,11 @@ button:active {
   flex-direction: row;
   align-items: center;
   gap: 1rem;
+  justify-content: flex-start;
+}
+
+.form-group.row label {
+    margin-bottom: 0;
 }
 
 .form-group label {

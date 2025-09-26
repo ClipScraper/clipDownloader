@@ -60,8 +60,3 @@ pub fn content_type_str(t: &ContentType) -> &'static str {
         ContentType::Bookmarks => "bookmarks",
     }
 }
-
-pub fn media_str(m: &MediaKind) -> &'static str {
-    match m { MediaKind::Pictures => "pictures", MediaKind::Video => "video" }
-}
-
