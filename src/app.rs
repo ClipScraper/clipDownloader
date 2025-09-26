@@ -5,16 +5,25 @@ use yew_icons::{Icon, IconId};
 use crate::pages; // declared in main.rs
 use crate::types::{ClipRow};
 use yew::prelude::*;
+use yew_hooks::prelude::*;
 
 #[wasm_bindgen]
 extern "C" {
     #[wasm_bindgen(js_namespace = ["window", "__TAURI__", "core"])]
     async fn invoke(cmd: &str, args: JsValue) -> JsValue;
+
+    #[wasm_bindgen(js_namespace = ["window", "__TAURI__", "event"])]
+    async fn listen(event: &str, f: &Closure<dyn FnMut(JsValue)>) -> JsValue;
 }
 
 #[derive(Serialize, Deserialize)]
 struct GreetArgs<'a> {
     name: &'a str,
+}
+
+#[derive(Serialize, Deserialize)]
+struct ReadCsvFromPathArgs<'a> {
+    path: &'a str,
 }
 
 // Types moved to crate::types
@@ -45,6 +54,38 @@ fn parse_csv(csv_text: &str) -> Vec<ClipRow> {
     rows
 }
 
+async fn listen_for_file_drops(q: UseStateHandle<Vec<ClipRow>>, page: UseStateHandle<Page>) {
+    let closure: Closure<dyn FnMut(JsValue)> = Closure::new(move |evt: JsValue| {
+        if let Some(obj) = js_sys::Object::try_from(&evt) {
+            if let Ok(payload) = js_sys::Reflect::get(obj, &"payload".into()) {
+                if let Ok(arr) = js_sys::Array::try_from(payload) {
+                    if arr.length() > 0 {
+                        let first = arr.get(0);
+                        if let Some(path) = first.as_string() {
+                            let q = q.clone();
+                            let page = page.clone();
+                            spawn_local(async move {
+                                let args = serde_wasm_bindgen::to_value(&ReadCsvFromPathArgs { path: &path }).unwrap();
+                                let csv_js = invoke("read_csv_from_path", args).await;
+                                if let Some(csv_text) = csv_js.as_string() {
+                                    let rows = parse_csv(&csv_text);
+                                    q.set(rows);
+                                    page.set(Page::Downloads);
+                                } else {
+                                    web_sys::console::error_1(&"read_csv_from_path failed".into());
+                                }
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    });
+
+    listen("tauri://file-drop", &closure).await;
+    closure.forget();
+}
+
 #[function_component(App)]
 pub fn app() -> Html {
     let _greet_input_ref = use_node_ref();
@@ -54,16 +95,30 @@ pub fn app() -> Html {
     // Downloads page manages its own expand state
     let queue_rows = use_state(|| Vec::<ClipRow>::new());
 
+    {
+        let q = queue_rows.clone();
+        let page = page.clone();
+        use_effect_once(move || {
+            spawn_local(async move {
+                listen_for_file_drops(q, page).await;
+            });
+            || {}
+        });
+    }
+
     // Callback for HomePage Import list button (takes unit)
     let on_open_file = {
         let queue_rows = queue_rows.clone();
+        let page = page.clone();
         Callback::from(move |_: ()| {
             let q = queue_rows.clone();
+            let p = page.clone();
             spawn_local(async move {
                 let csv_js = invoke("pick_csv_and_read", JsValue::NULL).await;
                 if let Some(csv_text) = csv_js.as_string() {
                     let rows = parse_csv(&csv_text);
                     q.set(rows);
+                    p.set(Page::Downloads);
                 }
             });
         })

@@ -58,4 +58,3 @@ pub fn home_page(props: &Props) -> Html {
         </main>
     }
 }
-
