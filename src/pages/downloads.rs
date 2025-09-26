@@ -1,6 +1,6 @@
 use yew::prelude::*;
 use yew_icons::{Icon, IconId};
-use crate::types::{ClipRow, Platform, ContentType, MediaKind, platform_str, content_type_str};
+use crate::types::{ClipRow, MediaKind, platform_str, content_type_str};
 
 #[derive(Properties, PartialEq, Clone)]
 pub struct Props {

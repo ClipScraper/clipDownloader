@@ -11,6 +11,7 @@ web-sys = { version = "0.3", features = [
     "Window",
     "Document",
     "HtmlInputElement",
+    "HtmlSelectElement",
     "Event",
     "EventTarget",
     "FileReader",
@@ -37,7 +38,8 @@ yew_icons = { version = "0.8.0", features = [
     "LucideVideo",
     "LucideBookmark",
     "LucideHeart",
-    "LucideUser"
+    "LucideUser",
+    "LucideFolder"
 ] }
 
 # ✅ add lucide-yew with the category that contains Repeat2

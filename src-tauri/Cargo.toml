@@ -3,6 +3,8 @@ name = "clip-downloader"
 version = "0.1.0"
 description = "A Tauri App"
 authors = ["you"]
+license = ""
+repository = ""
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -15,13 +17,19 @@ name = "clip_downloader_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
-tauri-build = { version = "2", features = [] }
+tauri-build = { version = "2.0.0-beta", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
-tauri-plugin-opener = "2"
-tauri-plugin-dialog = "2"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-dirs = "5"
+tauri = { version = "2.0.0-beta", features = [] }
+tauri-plugin-shell = "2.0.0-beta"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tauri-plugin-dialog = "2.0.0-beta.6"
+tauri-plugin-opener = "2.0.0-beta.3"
+dirs = "5.0"
+
+[features]
+# this feature is used for production builds or when `devPath` points to the filesystem
+# DO NOT REMOVE!!
+custom-protocol = ["tauri/custom-protocol"]
 
