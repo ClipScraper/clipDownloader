@@ -16,14 +16,13 @@ pub enum ContentType {
     Bookmarks,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum MediaKind {
     Pictures,
     Video,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ClipRow {
     #[serde(rename = "Platform")]
     pub platform: Platform,
@@ -35,6 +34,18 @@ pub struct ClipRow {
     pub media: MediaKind,
     #[serde(rename = "link")]
     pub link: String,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq)]
+pub enum OnDuplicate {
+    Overwrite,
+    CreateNew,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq)]
+pub struct Settings {
+    pub download_directory: String,
+    pub on_duplicate: OnDuplicate,
 }
 
 pub fn platform_str(p: &Platform) -> &'static str {
