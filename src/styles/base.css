@@ -126,6 +126,20 @@ button:active {
     margin-bottom: 0;
 }
 
+.settings-form .input-group {
+  align-items: center;
+}
+
+.settings-form .input-group input, .settings-form .input-group button {
+    height: 44px;
+    box-sizing: border-box;
+}
+
+.settings-form .input-group .icon-btn {
+    width: 44px;
+    min-width: 44px;
+}
+
 .form-group label {
   margin-bottom: 0.5rem;
   font-weight: 500;

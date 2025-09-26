@@ -47,9 +47,9 @@ fn parse_csv(csv_text: &str) -> Vec<ClipRow> {
 
 #[function_component(App)]
 pub fn app() -> Html {
-    let greet_input_ref = use_node_ref();
+    let _greet_input_ref = use_node_ref();
 
-    let name = use_state(|| String::new());
+    let _name = use_state(|| String::new());
     let page = use_state(|| Page::Home);
     // Downloads page manages its own expand state
     let queue_rows = use_state(|| Vec::<ClipRow>::new());

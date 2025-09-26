@@ -45,7 +45,7 @@ pub fn settings_page() -> Html {
             spawn_local(async move {
                 let result = invoke(
                     "open_directory",
-                    serde_wasm_bindgen::to_value(&path).unwrap(),
+                    serde_wasm_bindgen::to_value(&serde_json::json!({ "path": path })).unwrap(),
                 )
                 .await;
                 if !result.is_null() {
@@ -100,7 +100,7 @@ pub fn settings_page() -> Html {
                         <input type="text" id="download-dir" readonly=true value={settings.download_directory.clone()} />
                         <button onclick={on_directory_pick}>{"Browse"}</button>
                         <button onclick={on_open_directory} class="icon-btn">
-                            <Icon icon_id={IconId::LucideFolder} width={"36"} height={"36"} />
+                            <Icon icon_id={IconId::LucideFolder} width={"30"} height={"30"} />
                         </button>
                     </div>
                 </div>
