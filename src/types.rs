@@ -18,7 +18,9 @@ pub enum ContentType {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum MediaKind {
+    #[serde(alias = "pictures")]
     Pictures,
+    #[serde(alias = "video")]
     Video,
 }
 
