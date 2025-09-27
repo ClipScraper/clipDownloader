@@ -4,24 +4,22 @@
   "version": "0.1.0",
   "identifier": "com.hjoncour.clip-downloader",
   "build": {
-    "beforeDevCommand": "trunk serve",
     "devUrl": "http://localhost:1420",
     "beforeBuildCommand": "trunk build",
     "frontendDist": "../dist"
   },
-  "app": {
-    "withGlobalTauri": true,
-    "windows": [
-      {
-        "title": "clip-downloader",
-        "width": 800,
-        "height": 600
-      }
-    ],
-    "security": {
-      "csp": null
-    }
-  },
+    "app": {
+      "withGlobalTauri": true,
+      "windows": [
+        {
+          "title": "clip-downloader",
+          "width": 800,
+          "height": 600,
+          "dragDropEnabled": true
+        }
+      ],
+      "security": { "csp": null }
+    },
   "bundle": {
     "active": true,
     "targets": "all",

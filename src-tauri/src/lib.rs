@@ -58,6 +58,12 @@ async fn pick_csv_and_read(app: tauri::AppHandle) -> Result<String, String> {
 }
 
 #[tauri::command]
+async fn read_csv_from_path(path: String) -> Result<String, String> {
+    println!("[tauri] read_csv_from_path: {}", path); // <-- add this
+    std::fs::read_to_string(path).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 async fn load_settings() -> settings::Settings {
     settings::load_settings()
 }
@@ -119,6 +125,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             greet,
             pick_csv_and_read,
+            read_csv_from_path,
             download_url,
             load_settings,
             save_settings,
