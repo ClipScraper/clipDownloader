@@ -64,11 +64,14 @@ pub fn save_settings(settings: &Settings) -> Result<(), String> {
         })
 }
 
-/// Get yt-dlp flags for handling duplicates
+/// Map our duplicate policies to yt-dlp flags.
+/// - Overwrite   -> force overwrite existing files
+/// - CreateNew   -> we compute a unique name ourselves (no special flag)
+/// - DoNothing   -> tell yt-dlp to skip and not resume partials
 pub fn get_yt_dlp_duplicate_flags(on_duplicate: &OnDuplicate) -> Vec<String> {
     match on_duplicate {
-        OnDuplicate::Overwrite => vec![],
-        OnDuplicate::CreateNew => vec!["--no-overwrites".into()],
+        OnDuplicate::Overwrite => vec!["--force-overwrites".into()],
+        OnDuplicate::CreateNew => vec![], // we ensure uniqueness by choosing a free name
         OnDuplicate::DoNothing => vec!["--no-overwrites".into(), "--no-continue".into()],
     }
 }
