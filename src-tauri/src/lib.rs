@@ -52,7 +52,6 @@ fn safari_cookie_readable() -> bool {
                 let mut buf = [0u8; 1];
                 return f.read(&mut buf).is_ok();
             } else {
-                // open() failed (likely EPERM / sandbox). Treat as unreadable.
                 return false;
             }
         }
@@ -103,12 +102,16 @@ fn gallery_dl_candidates() -> Vec<(String, Vec<String>)> {
     ]
 }
 
-fn run_gallery_dl(out_dir: &Path, url: &str, cookie_arg: &str) -> std::io::Result<std::process::Output> {
-    // NOTE: Do NOT pass "--progress" (your version doesn't support it).
+// For gallery-dl we pass the *root* download dir (user setting) as base directory.
+// That way gallery-dl creates "instagram/<user>/..." or "tiktok/<user>/..." under it,
+// avoiding the duplicate "<platform>/<platform>/..." you saw.
+fn run_gallery_dl(base_download_dir: &Path, url: &str, cookie_arg: &str) -> std::io::Result<std::process::Output> {
+    // NOTE: Do NOT pass "--progress" (not supported in your version).
+    // "-d" is an alias for "-o base-directory=..."
     let base_args = vec![
         "--verbose".into(),
         "--cookies-from-browser".into(), cookie_arg.into(),
-        "-d".into(), out_dir.display().to_string(),
+        "-d".into(), base_download_dir.display().to_string(),
         url.into(),
     ];
 
@@ -155,7 +158,15 @@ async fn download_url(app: tauri::AppHandle, url: String) {
             let processed_url = processed_url.clone();
 
             async move {
-                let base = PathBuf::from("/Users/hjoncour/Downloads/dld"); // TODO: use Settings later
+                // 1) Load download root from settings.json (no hard-coded path!)
+                let s = settings::load_settings();
+                let download_root = PathBuf::from(s.download_directory.clone());
+                if let Err(e) = fs::create_dir_all(&download_root) {
+                    emit_status(&window, false, format!("Failed to create download dir: {e}"));
+                    return;
+                }
+
+                // 2) Compute site for messages and yt-dlp subdir
                 let site = if processed_url.contains("instagram.com") {
                     "instagram"
                 } else if processed_url.contains("tiktok.com") {
@@ -166,8 +177,9 @@ async fn download_url(app: tauri::AppHandle, url: String) {
                     "other"
                 };
 
-                let out_dir = base.join(site);
-                let _ = fs::create_dir_all(&out_dir);
+                // For yt-dlp we still save into "<root>/<site>/..."
+                let yt_out_dir = download_root.join(site);
+                let _ = fs::create_dir_all(&yt_out_dir);
 
                 let is_ig = is_instagram_post(&processed_url);
                 let is_tt_photo = is_tiktok_photo(&processed_url);
@@ -179,10 +191,13 @@ async fn download_url(app: tauri::AppHandle, url: String) {
                     emit_status(&window, false, format!("Trying {}...", browser));
 
                     if wants_images {
-                        // First choice: gallery-dl (images & carousels)
-                        match run_gallery_dl(&out_dir, &processed_url, cookie_arg) {
+                        // 3) Prefer gallery-dl and point it at the *root* directory
+                        //    so it will create "<root>/<platform>/<username>/..."
+                        match run_gallery_dl(&download_root, &processed_url, cookie_arg) {
                             Ok(output) if output.status.success() => {
-                                emit_status(&window, true, format!("Saved images to {}", out_dir.display()));
+                                // Message points at "<root>/<site>"
+                                let site_dir = download_root.join(site);
+                                emit_status(&window, true, format!("Saved images under {}", site_dir.display()));
                                 println!("[tauri] gallery-dl ok with {browser}\nstdout:\n{}", String::from_utf8_lossy(&output.stdout));
                                 return;
                             }
@@ -194,14 +209,14 @@ async fn download_url(app: tauri::AppHandle, url: String) {
                             }
                         }
 
-                        // For TikTok /photo/, yt-dlp does not support this URL pattern — no point trying.
+                        // For TikTok /photo/, yt-dlp does not support this URL pattern — skip it.
                         if is_tt_photo {
-                            continue; // try next browser (maybe different cookies help gallery-dl)
+                            continue; // try next browser; maybe different cookies make gallery-dl succeed
                         }
                         // For Instagram /p/, yt-dlp can sometimes enumerate items; fall through to yt-dlp.
                     }
 
-                    // yt-dlp path (video/general, or IG fallback)
+                    // 4) yt-dlp path (video/general, or IG fallback)
                     let mut args: Vec<String> = vec![
                         "--verbose".into(),
                         "-N".into(), "8".into(),
@@ -211,14 +226,14 @@ async fn download_url(app: tauri::AppHandle, url: String) {
                     let template = if is_ig {
                         // IG posts: allow autonumber for carousels; don't hard fail if some items are images
                         args.push("--ignore-no-formats-error".into());
-                        format!("{}/%(uploader)s - %(title)s [%(id)s]-%(autonumber)03d.%(ext)s", out_dir.display())
+                        format!("{}/%(uploader)s - %(title)s [%(id)s]-%(autonumber)03d.%(ext)s", yt_out_dir.display())
                     } else {
                         // Video sites (TikTok *video*, YouTube...)
                         args.extend(vec![
                             "-f".into(), "bestvideo+bestaudio/best".into(),
                             "--merge-output-format".into(), "mp4".into(),
                         ]);
-                        format!("{}/%(uploader)s - %(title)s [%(id)s].%(ext)s", out_dir.display())
+                        format!("{}/%(uploader)s - %(title)s [%(id)s].%(ext)s", yt_out_dir.display())
                     };
 
                     args.push("-o".into());
@@ -229,7 +244,7 @@ async fn download_url(app: tauri::AppHandle, url: String) {
 
                     match Command::new("yt-dlp").args(&arg_refs).output() {
                         Ok(out) if out.status.success() => {
-                            emit_status(&window, true, format!("Saved to {}", out_dir.display()));
+                            emit_status(&window, true, format!("Saved to {}", yt_out_dir.display()));
                             println!("[tauri] yt-dlp ok with {browser}\nstdout:\n{}", String::from_utf8_lossy(&out.stdout));
                             return;
                         }
