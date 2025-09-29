@@ -53,9 +53,11 @@ pub async fn download_url(
             let processed_url = processed_url.clone();
 
             async move {
-                // 1) Load download root from settings.json (no hard-coded path!)
+                // 1) Load download root and settings from settings.json
                 let s = settings::load_settings();
                 let download_root = PathBuf::from(s.download_directory.clone());
+                let on_duplicate = s.on_duplicate.clone();
+
                 if let Err(e) = std_fs::create_dir_all(&download_root) {
                     emit_status(&window, false, format!("Failed to create download dir: {e}"));
                     *state_clone.0.lock().unwrap() = None;
@@ -85,11 +87,8 @@ pub async fn download_url(
                 let browsers = utils::os::installed_browsers();
 
                 for (browser, cookie_arg) in &browsers {
-                    // Don't emit "Trying..." messages anymore
-
                     if wants_images {
-                        // 3) Prefer gallery-dl and point it at the *root* directory
-                        //    so it will create "<root>/<platform>/<username>/..."
+                        // 3) Prefer gallery-dl for images; base dir is the *root*.
                         match download::image::run_gallery_dl(&download_root, &processed_url, cookie_arg) {
                             Ok(output) if output.status.success() => {
                                 // Message points at "<root>/<site>"
@@ -117,11 +116,11 @@ pub async fn download_url(
                             }
                         }
 
-                        // For TikTok /photo/, yt-dlp does not support this URL pattern — skip it.
+                        // TikTok /photo/ is not supported by yt-dlp → try next browser (cookies).
                         if is_tt_photo {
-                            continue; // try next browser; maybe different cookies make gallery-dl succeed
+                            continue;
                         }
-                        // For Instagram /p/, yt-dlp can sometimes enumerate items; fall through to yt-dlp.
+                        // IG /p/ can still sometimes be handled by yt-dlp → fall through.
                     }
 
                     // 4) yt-dlp path (video/general, or IG fallback)
@@ -131,19 +130,39 @@ pub async fn download_url(
                         cookie_arg,
                         &processed_url,
                         is_ig,
+                        &on_duplicate,
                         |progress_line| {
-                            // Emit progress updates to the frontend
                             emit_status(&window_clone, false, progress_line.to_string());
                         },
                     ) {
                         Ok((true, output)) => {
-                            // Check if file was already downloaded
-                            let message = if output.contains("has already been downloaded") {
-                                format!("File already exists in {}", yt_out_dir.display())
-                            } else {
-                                format!("Saved to {}", yt_out_dir.display())
+                            // Decide user message based on policy and yt-dlp output
+                            let existed = output.contains("has already been downloaded")
+                                || output.contains("[download] Skipping")
+                                || output.contains("has already been recorded in the archive");
+
+                            let message = match on_duplicate {
+                                settings::OnDuplicate::DoNothing if existed => {
+                                    format!("File already exists, skipped (as per settings) in {}", yt_out_dir.display())
+                                }
+                                settings::OnDuplicate::Overwrite => {
+                                    // Even if yt-dlp printed "already downloaded", we forced overwrites,
+                                    // so we report a normal save.
+                                    format!("Saved to {}", yt_out_dir.display())
+                                }
+                                settings::OnDuplicate::CreateNew => {
+                                    // We chose a free name, so we report a normal save.
+                                    format!("Saved to {}", yt_out_dir.display())
+                                }
+                                _ => {
+                                    if existed {
+                                        format!("File already exists in {}", yt_out_dir.display())
+                                    } else {
+                                        format!("Saved to {}", yt_out_dir.display())
+                                    }
+                                }
                             };
-                            
+
                             println!("[tauri] Emitting completion message: {}", message);
                             emit_status(&window, true, message);
                             println!("[tauri] yt-dlp ok with {browser}");
@@ -172,7 +191,6 @@ pub async fn download_url(
                         "Failed to download with any available browser's cookies.",
                     );
                 }
-                // Finally, clear the handle from the state
                 *state_clone.0.lock().unwrap() = None;
             }
         });
