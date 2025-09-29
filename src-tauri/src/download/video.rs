@@ -1,12 +1,14 @@
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::process::{Command, Stdio};
+use crate::settings::OnDuplicate;
 
 pub fn run_yt_dlp_with_progress<F>(
     yt_out_dir: &Path,
     cookie_arg: &str,
     processed_url: &str,
     is_ig: bool,
+    on_duplicate: &OnDuplicate,
     mut progress_callback: F,
 ) -> std::io::Result<(bool, String)>
 where
@@ -22,25 +24,24 @@ where
         "--no-cache-dir".into(),
     ];
 
+    // Add duplicate handling flags
+    args.extend(crate::settings::get_yt_dlp_duplicate_flags(on_duplicate));
+
     let template = if is_ig {
-        // IG posts: allow autonumber for carousels; don't hard fail if some items are images
-        args.push("--ignore-no-formats-error".into());
-        format!(
-            "{}/%(uploader)s - %(title)s [%(id)s]-%(autonumber)03d.%(ext)s",
-            yt_out_dir.display()
-        )
+        args.push("--ignore-no-formats-error".into()); // IG posts: allow autonumber for carousels; don't hard fail if some items are images
+        format!("{}/%(uploader)s - %(title)s [%(id)s]-%(autonumber)03d.%(ext)s", yt_out_dir.display())
     } else {
-        // Video sites (TikTok *video*, YouTube...)
-        args.extend(vec![
-            "-f".into(),
-            "bestvideo+bestaudio/best".into(),
-            "--merge-output-format".into(),
-            "mp4".into(),
-        ]);
-        format!(
-            "{}/%(uploader)s - %(title)s [%(id)s].%(ext)s",
-            yt_out_dir.display()
-        )
+        args.extend(vec!["-f".into(), "bestvideo+bestaudio/best".into(), "--merge-output-format".into(), "mp4".into()]); // Video sites (TikTok *video*, YouTube...)
+        
+        // Add autonumber to template if CreateNew is selected
+        match on_duplicate {
+            OnDuplicate::CreateNew => {
+                format!("{}/%(uploader)s - %(title)s [%(id)s]_%(autonumber)d.%(ext)s", yt_out_dir.display())
+            }
+            _ => {
+                format!("{}/%(uploader)s - %(title)s [%(id)s].%(ext)s", yt_out_dir.display())
+            }
+        }
     };
 
     args.push("-o".into());
@@ -63,6 +64,7 @@ where
 
     let mut all_output = String::new();
     let mut already_downloaded = false;
+    let mut file_skipped = false;
 
     // Read stdout for progress
     for line in stdout_reader.lines() {
@@ -72,6 +74,11 @@ where
             
             if line.contains("has already been downloaded") {
                 already_downloaded = true;
+            }
+            
+            if line.contains("has already been recorded in the archive") 
+                || line.contains("[download] Skipping") {
+                file_skipped = true;
             }
             
             // Pass progress lines to callback
@@ -90,5 +97,5 @@ where
     }
 
     let status = child.wait()?;
-    Ok((status.success() || already_downloaded, all_output))
+    Ok((status.success() || already_downloaded || file_skipped, all_output))
 }

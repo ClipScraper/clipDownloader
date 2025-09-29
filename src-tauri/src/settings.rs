@@ -2,10 +2,11 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub enum OnDuplicate {
     Overwrite,
     CreateNew,
+    DoNothing,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -61,4 +62,13 @@ pub fn save_settings(settings: &Settings) -> Result<(), String> {
             fs::write(&path, content)
                 .map_err(|e| format!("Failed to write settings file: {}", e))
         })
+}
+
+/// Get yt-dlp flags for handling duplicates
+pub fn get_yt_dlp_duplicate_flags(on_duplicate: &OnDuplicate) -> Vec<String> {
+    match on_duplicate {
+        OnDuplicate::Overwrite => vec![],
+        OnDuplicate::CreateNew => vec!["--no-overwrites".into()],
+        OnDuplicate::DoNothing => vec!["--no-overwrites".into(), "--no-continue".into()],
+    }
 }

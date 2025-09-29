@@ -61,10 +61,10 @@ pub fn settings_page() -> Html {
         Callback::from(move |e: Event| {
             let value = e.target_unchecked_into::<web_sys::HtmlSelectElement>().value();
             let mut s = (*settings).clone();
-            s.on_duplicate = if value == "overwrite" {
-                OnDuplicate::Overwrite
-            } else {
-                OnDuplicate::CreateNew
+            s.on_duplicate = match value.as_str() {
+                "overwrite" => OnDuplicate::Overwrite,
+                "do_nothing" => OnDuplicate::DoNothing,
+                _ => OnDuplicate::CreateNew,
             };
             settings.set(s);
         })
@@ -110,6 +110,7 @@ pub fn settings_page() -> Html {
                     <select id="on-duplicate" onchange={on_duplicate_change}>
                         <option value="create_new" selected={settings.on_duplicate == OnDuplicate::CreateNew}>{"Create new file"}</option>
                         <option value="overwrite" selected={settings.on_duplicate == OnDuplicate::Overwrite}>{"Overwrite file"}</option>
+                        <option value="do_nothing" selected={settings.on_duplicate == OnDuplicate::DoNothing}>{"Do nothing"}</option>
                     </select>
                 </div>
                 <div class="form-group center">

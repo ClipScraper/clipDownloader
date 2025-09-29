@@ -45,6 +45,7 @@ pub struct ClipRow {
 pub enum OnDuplicate {
     Overwrite,
     CreateNew,
+    DoNothing,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq)]

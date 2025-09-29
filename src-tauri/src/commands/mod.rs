@@ -53,9 +53,11 @@ pub async fn download_url(
             let processed_url = processed_url.clone();
 
             async move {
-                // 1) Load download root from settings.json (no hard-coded path!)
+                // 1) Load download root and settings from settings.json
                 let s = settings::load_settings();
                 let download_root = PathBuf::from(s.download_directory.clone());
+                let on_duplicate = s.on_duplicate.clone();
+                
                 if let Err(e) = std_fs::create_dir_all(&download_root) {
                     emit_status(&window, false, format!("Failed to create download dir: {e}"));
                     *state_clone.0.lock().unwrap() = None;
@@ -131,15 +133,22 @@ pub async fn download_url(
                         cookie_arg,
                         &processed_url,
                         is_ig,
+                        &on_duplicate,
                         |progress_line| {
                             // Emit progress updates to the frontend
                             emit_status(&window_clone, false, progress_line.to_string());
                         },
                     ) {
                         Ok((true, output)) => {
-                            // Check if file was already downloaded
-                            let message = if output.contains("has already been downloaded") {
-                                format!("File already exists in {}", yt_out_dir.display())
+                            // Determine the appropriate message based on what happened
+                            let message = if output.contains("has already been downloaded") 
+                                || output.contains("[download] Skipping")
+                                || output.contains("has already been recorded in the archive") {
+                                if on_duplicate == settings::OnDuplicate::DoNothing {
+                                    format!("File already exists, skipped (as per settings) in {}", yt_out_dir.display())
+                                } else {
+                                    format!("File already exists in {}", yt_out_dir.display())
+                                }
                             } else {
                                 format!("Saved to {}", yt_out_dir.display())
                             };
