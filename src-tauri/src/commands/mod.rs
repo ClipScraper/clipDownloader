@@ -2,9 +2,10 @@ use crate::{
     download::{self},
     settings,
     utils::{self},
+    DownloadState,
 };
 use std::{fs as std_fs, path::PathBuf};
-use tauri::{Emitter, Manager};
+use tauri::{Emitter, Manager, State};
 
 #[derive(serde::Serialize, Clone)]
 struct DownloadResult {
@@ -23,7 +24,11 @@ fn emit_status(window: &tauri::WebviewWindow, ok: bool, msg: impl Into<String>) 
 }
 
 #[tauri::command]
-pub async fn download_url(app: tauri::AppHandle, url: String) {
+pub async fn download_url(
+    app: tauri::AppHandle,
+    url: String,
+    state: State<'_, DownloadState>,
+) -> Result<(), String> {
     println!("[tauri] download_url called with: {}", url);
 
     if let Some(window) = app.get_webview_window("main") {
@@ -42,7 +47,8 @@ pub async fn download_url(app: tauri::AppHandle, url: String) {
             format!("Starting download for {}...", processed_url),
         );
 
-        tokio::spawn({
+        let state_clone = state.inner().clone();
+        let handle = tokio::spawn({
             let window = window.clone();
             let processed_url = processed_url.clone();
 
@@ -52,6 +58,7 @@ pub async fn download_url(app: tauri::AppHandle, url: String) {
                 let download_root = PathBuf::from(s.download_directory.clone());
                 if let Err(e) = std_fs::create_dir_all(&download_root) {
                     emit_status(&window, false, format!("Failed to create download dir: {e}"));
+                    *state_clone.0.lock().unwrap() = None;
                     return;
                 }
 
@@ -78,7 +85,7 @@ pub async fn download_url(app: tauri::AppHandle, url: String) {
                 let browsers = utils::os::installed_browsers();
 
                 for (browser, cookie_arg) in &browsers {
-                    emit_status(&window, false, format!("Trying {}...", browser));
+                    // Don't emit "Trying..." messages anymore
 
                     if wants_images {
                         // 3) Prefer gallery-dl and point it at the *root* directory
@@ -96,6 +103,7 @@ pub async fn download_url(app: tauri::AppHandle, url: String) {
                                     "[tauri] gallery-dl ok with {browser}\nstdout:\n{}",
                                     String::from_utf8_lossy(&output.stdout)
                                 );
+                                *state_clone.0.lock().unwrap() = None;
                                 return;
                             }
                             Ok(output) => {
@@ -117,19 +125,35 @@ pub async fn download_url(app: tauri::AppHandle, url: String) {
                     }
 
                     // 4) yt-dlp path (video/general, or IG fallback)
-                    match download::video::run_yt_dlp(&yt_out_dir, cookie_arg, &processed_url, is_ig) {
-                        Ok(out) if out.status.success() => {
-                            emit_status(&window, true, format!("Saved to {}", yt_out_dir.display()));
-                            println!(
-                                "[tauri] yt-dlp ok with {browser}\nstdout:\n{}",
-                                String::from_utf8_lossy(&out.stdout)
-                            );
+                    let window_clone = window.clone();
+                    match download::video::run_yt_dlp_with_progress(
+                        &yt_out_dir,
+                        cookie_arg,
+                        &processed_url,
+                        is_ig,
+                        |progress_line| {
+                            // Emit progress updates to the frontend
+                            emit_status(&window_clone, false, progress_line.to_string());
+                        },
+                    ) {
+                        Ok((true, output)) => {
+                            // Check if file was already downloaded
+                            let message = if output.contains("has already been downloaded") {
+                                format!("File already exists in {}", yt_out_dir.display())
+                            } else {
+                                format!("Saved to {}", yt_out_dir.display())
+                            };
+                            
+                            println!("[tauri] Emitting completion message: {}", message);
+                            emit_status(&window, true, message);
+                            println!("[tauri] yt-dlp ok with {browser}");
+                            *state_clone.0.lock().unwrap() = None;
                             return;
                         }
-                        Ok(out) => {
+                        Ok((false, output)) => {
                             eprintln!(
-                                "[tauri] yt-dlp failed with browser: {browser}\nstderr:\n{}",
-                                String::from_utf8_lossy(&out.stderr)
+                                "[tauri] yt-dlp failed with browser: {browser}\noutput:\n{}",
+                                output
                             );
                         }
                         Err(e) => {
@@ -148,11 +172,15 @@ pub async fn download_url(app: tauri::AppHandle, url: String) {
                         "Failed to download with any available browser's cookies.",
                     );
                 }
+                // Finally, clear the handle from the state
+                *state_clone.0.lock().unwrap() = None;
             }
         });
+        *state.0.lock().unwrap() = Some(handle);
     } else {
         eprintln!("Could not get main window.");
     }
+    Ok(())
 }
 
 #[tauri::command]
@@ -230,6 +258,15 @@ pub async fn open_directory(path: String) -> Result<(), String> {
             .arg(path)
             .spawn()
             .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn cancel_download(state: State<'_, DownloadState>) -> Result<(), String> {
+    if let Some(handle) = state.0.lock().unwrap().take() {
+        handle.abort();
+        println!("[tauri] Download cancelled.");
     }
     Ok(())
 }
