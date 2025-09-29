@@ -1,8 +1,16 @@
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
+use wasm_bindgen_futures::spawn_local;
 use web_sys::DragEvent;
 use yew::prelude::*;
 use serde::{Serialize, Deserialize};
+use yew_hooks::prelude::*;
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+struct DownloadResult {
+    success: bool,
+    message: String,
+}
 
 #[derive(Serialize, Deserialize)]
 struct GreetArgs<'a> { name: &'a str }
@@ -11,6 +19,9 @@ struct GreetArgs<'a> { name: &'a str }
 extern "C" {
     #[wasm_bindgen(js_namespace = ["window", "__TAURI__", "core"])]
     async fn invoke(cmd: &str, args: JsValue) -> JsValue;
+
+    #[wasm_bindgen(js_namespace = ["window", "__TAURI__", "event"])]
+    async fn listen(event: &str, f: &Closure<dyn FnMut(JsValue)>) -> JsValue;
 }
 
 #[derive(Properties, PartialEq, Clone)]
@@ -23,18 +34,47 @@ pub struct Props {
 pub fn home_page(props: &Props) -> Html {
     let greet_input_ref = use_node_ref();
     let name = use_state(|| String::new());
+    let download_results = use_state(|| Vec::<DownloadResult>::new());
+
+    {
+        let download_results = download_results.clone();
+        use_effect_once(move || {
+            let download_results = download_results.clone();
+            spawn_local(async move {
+                let closure = Closure::wrap(Box::new(move |event: JsValue| {
+                    if let Ok(result) = serde_wasm_bindgen::from_value(event) {
+                        let mut results = (*download_results).clone();
+                        results.push(result);
+                        download_results.set(results);
+                    }
+                }) as Box<dyn FnMut(_)>);
+                let _ = listen("download-status", &closure).await;
+                closure.forget();
+            });
+            || {}
+        });
+    }
 
     let on_input = {
         let name = name.clone();
         Callback::from(move |e: web_sys::InputEvent| {
-            if let Some(t) = e.target() { if let Ok(inp) = t.dyn_into::<web_sys::HtmlInputElement>() { name.set(inp.value()); } }
+            if let Some(t) = e.target() {
+                if let Ok(inp) = t.dyn_into::<web_sys::HtmlInputElement>() {
+                    let value = inp.value();
+                    web_sys::console::log_1(&format!("Input changed: {}", value).into());
+                    name.set(value);
+                }
+            }
         })
     };
     let greet = {
         let greet_input_ref = greet_input_ref.clone();
+        let download_results = download_results.clone();
         Callback::from(move |e: SubmitEvent| {
             e.prevent_default();
+            download_results.set(vec![]); // Clear previous results
             let value = greet_input_ref.cast::<web_sys::HtmlInputElement>().unwrap().value();
+            web_sys::console::log_1(&format!("Form submitted with URL: {}", value).into());
             wasm_bindgen_futures::spawn_local(async move {
                 let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "url": value })).unwrap();
                 let _ = invoke("download_url", args).await;
@@ -96,6 +136,15 @@ pub fn home_page(props: &Props) -> Html {
                     html!{ <button type="submit" class="download-cta" title="Download"><img class="download-icon" src="assets/download.svg" /></button> }
                 } else { html!{} } }
             </form>
+            <div class="messages">
+                { for (*download_results).clone().into_iter().map(|result| {
+                    html! {
+                        <div class={if result.success { "message-success" } else { "message-error" }}>
+                            { result.message }
+                        </div>
+                    }
+                })}
+            </div>
             <div class="row home-actions">
                 <button type="button" onclick={open_click}>{"Import list"}</button>
             </div>
