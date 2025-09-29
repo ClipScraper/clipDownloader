@@ -1,6 +1,6 @@
 use yew::prelude::*;
 use yew_icons::{Icon, IconId};
-use crate::types::{ClipRow, MediaKind, platform_str, content_type_str};
+use crate::types::{ClipRow, MediaKind, platform_str, content_type_str, Platform};
 
 #[derive(Properties, PartialEq, Clone)]
 pub struct Props {
@@ -27,6 +27,15 @@ fn display_label_for_row(row: &ClipRow) -> String {
         return format!("{}/{}", a, b);
     }
     row.link.clone()
+}
+
+fn platform_icon_src(p: &str) -> &'static str {
+    match p {
+        "instagram" => "public/instagram.webp",
+        "tiktok" => "public/tiktok.webp",
+        "youtube" => "public/youtube.webp",
+        _ => "",
+    }
 }
 
 #[function_component(DownloadsPage)]
@@ -119,7 +128,7 @@ pub fn downloads_page(props: &Props) -> Html {
                         <div>
                             <div class="platform-item" onclick={on_click}>
                                 <div class="item-left">
-                                    <img class="brand-icon" src={if plat_label == "instagram" { "public/instagram.webp" } else { "public/tiktok.webp" }} />
+                                    <img class="brand-icon" src={platform_icon_src(&plat_label)} />
                                     <span>{ plat_label.clone() }</span>
                                 </div>
                                 <div class="item-right">
