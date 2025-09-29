@@ -40,7 +40,8 @@ yew_icons = { version = "0.8.0", features = [
     "LucideBookmark",
     "LucideHeart",
     "LucideUser",
-    "LucideFolder"
+    "LucideFolder",
+    "LucideTrash2"
 ] }
 
 # ✅ add lucide-yew with the category that contains Repeat2
