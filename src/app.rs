@@ -3,7 +3,7 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
 use yew_icons::{Icon, IconId};
 use crate::pages; // declared in main.rs
-use crate::types::{ClipRow};
+use crate::types::{ClipRow, Platform, ContentType};
 use yew::prelude::*;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -186,12 +186,32 @@ struct ReadCsvFromPathArgs<'a> {
     path: &'a str,
 }
 
+pub enum DeleteItem {
+    Platform(Platform),
+    Collection(Platform, String, ContentType),
+    Row(String),
+}
+
 #[function_component(App)]
 pub fn app() -> Html {
     let _greet_input_ref = use_node_ref();
 
     let page = use_state(|| Page::Home);
+    // Downloads page manages its own expand state
     let queue_rows = use_state(|| Vec::<ClipRow>::new());
+
+    let on_delete = {
+        let queue_rows = queue_rows.clone();
+        Callback::from(move |item: DeleteItem| {
+            let current_rows = (*queue_rows).clone();
+            let new_rows = match item {
+                DeleteItem::Platform(plat) => current_rows.into_iter().filter(|r| r.platform != plat).collect(),
+                DeleteItem::Collection(plat, handle, ctype) => current_rows.into_iter().filter(|r| r.platform != plat || r.handle != handle || r.content_type != ctype).collect(),
+                DeleteItem::Row(link) => current_rows.into_iter().filter(|r| r.link != link).collect(),
+            };
+            queue_rows.set(new_rows);
+        })
+    };
 
     let on_csv_load = {
         let queue_rows = queue_rows.clone();
@@ -250,7 +270,7 @@ pub fn app() -> Html {
 
     let body = match *page {
         Page::Home => html! { <pages::home::HomePage on_open_file={on_open_file} on_csv_load={on_csv_load.clone()} /> },
-        Page::Downloads => html! { <pages::downloads::DownloadsPage rows={(*queue_rows).clone()} /> },
+        Page::Downloads => html! { <pages::downloads::DownloadsPage rows={(*queue_rows).clone()} on_delete={on_delete} /> },
         Page::Library => html! { <pages::library::LibraryPage /> },
         Page::Settings => html! { <pages::settings::SettingsPage /> },
     };
