@@ -43,8 +43,13 @@
   justify-content: center;
 }
 
-.home-form { gap: 8px; }
-.home-actions { margin-top: 16px; }
+.home-form {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+.home-actions { margin-top: 128px; }
 
 .download-cta {
   display: inline-flex;
@@ -56,6 +61,12 @@
   /* Solid dark background for the download button */
   background-color: #1D1D1D;
   box-shadow: 0 2px 2px rgba(0,0,0,0.2);
+}
+.download-cta:disabled {
+  background-color: #555;
+  cursor: not-allowed;
+  filter: grayscale(1);
+  opacity: 0.5;
 }
 .download-cta:hover { filter: brightness(1.05); }
 .download-cta:active { background-color: #1D1D1D; }
