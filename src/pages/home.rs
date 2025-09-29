@@ -175,9 +175,15 @@ pub fn home_page(props: &Props) -> Html {
             <h1>{"Welcome to Clip Downloader"}</h1>
             <form class="home-form" onsubmit={greet}>
                 <input id="url-input" ref={greet_input_ref} placeholder="Enter url..." oninput={on_input} disabled={*is_downloading} />
-                <button type="submit" class="download-cta" title="Download" disabled={!is_valid_url || *is_downloading}>
-                    <img class="download-icon" src="assets/download.svg" />
-                </button>
+                { if !*is_downloading {
+                    html! {
+                        <button type="submit" class="download-cta" title="Download" disabled={!is_valid_url || *is_downloading}>
+                            <img class="download-icon" src="assets/download.svg" />
+                        </button>
+                    }
+                } else {
+                    html! {}
+                }}
             </form>
 
             { if *is_downloading {
