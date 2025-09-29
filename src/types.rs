@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 pub enum Platform {
     Tiktok,
     Instagram,
+    Youtube,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -14,6 +15,8 @@ pub enum ContentType {
     Reposts,
     Profile,
     Bookmarks,
+    Playlist,
+    Recommendation,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -51,7 +54,11 @@ pub struct Settings {
 }
 
 pub fn platform_str(p: &Platform) -> &'static str {
-    match p { Platform::Tiktok => "tiktok", Platform::Instagram => "instagram" }
+    match p {
+        Platform::Tiktok => "tiktok",
+        Platform::Instagram => "instagram",
+        Platform::Youtube => "youtube",
+    }
 }
 
 pub fn content_type_str(t: &ContentType) -> &'static str {
@@ -60,5 +67,7 @@ pub fn content_type_str(t: &ContentType) -> &'static str {
         ContentType::Reposts => "reposts",
         ContentType::Profile => "profile",
         ContentType::Bookmarks => "bookmarks",
+        ContentType::Playlist => "playlist",
+        ContentType::Recommendation => "recommendation",
     }
 }

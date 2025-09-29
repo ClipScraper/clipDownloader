@@ -23,7 +23,6 @@ pub struct Props {
 pub fn home_page(props: &Props) -> Html {
     let greet_input_ref = use_node_ref();
     let name = use_state(|| String::new());
-    let is_drag_over = use_state(|| false);
 
     let on_input = {
         let name = name.clone();

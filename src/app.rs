@@ -1,12 +1,9 @@
 // ===== src/app.rs =====
-use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
-use wasm_bindgen::closure::Closure;
-use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::spawn_local;
 use yew_icons::{Icon, IconId};
 use crate::pages; // declared in main.rs
-use crate::types::ClipRow;
+use crate::types::{ClipRow};
 use yew::prelude::*;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -35,14 +32,9 @@ extern "C" {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-#[derive(Serialize, Deserialize)]
-struct GreetArgs<'a> { name: &'a str }
-
-#[derive(Serialize, Deserialize)]
-struct ReadCsvFromPathArgs<'a> { path: &'a str }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Page { Home, Downloads, Library, Settings }
+enum Page {Home, Downloads, Library, Settings}
 
 fn parse_csv(csv_text: &str) -> Vec<ClipRow> {
     let mut reader = csv::ReaderBuilder::new()
@@ -67,24 +59,6 @@ fn log_json(label: &str, v: &JsValue) {
         .and_then(|j| j.as_string())
         .unwrap_or_else(|| "<unstringifiable>".to_string());
     web_sys::console::log_2(&JsValue::from_str(label), &JsValue::from_str(&s));
-}
-
-// Use the Tauri command to read a file and push it into Downloads.
-fn handle_dropped_path(path: String, q: UseStateHandle<Vec<ClipRow>>, page: UseStateHandle<Page>) {
-    web_sys::console::log_1(&JsValue::from_str(&format!("➡️ drop: {}", path)));
-    spawn_local(async move {
-        let args = serde_wasm_bindgen::to_value(&ReadCsvFromPathArgs { path: &path }).unwrap();
-        let csv_js = invoke("read_csv_from_path", args).await;
-        if let Some(csv_text) = csv_js.as_string() {
-            web_sys::console::log_1(&JsValue::from_str(&format!("📄 read_csv_from_path OK, {} bytes", csv_text.len())));
-            let rows = parse_csv(&csv_text);
-            web_sys::console::log_1(&JsValue::from_str(&format!("✅ parsed {} rows", rows.len())));
-            q.set(rows);
-            page.set(Page::Downloads);
-        } else {
-            web_sys::console::error_1(&"❌ read_csv_from_path failed (no string)".into());
-        }
-    });
 }
 
 // Start BOTH listeners: (A) official onDragDropEvent, (B) raw event fallback.
@@ -118,7 +92,18 @@ async fn start_dragdrop_listener(q: UseStateHandle<Vec<ClipRow>>, page: UseState
                             web_sys::console::log_1(&JsValue::from_str(&format!("paths len={}", arr.length())));
                             if arr.length() > 0 {
                                 if let Some(path) = arr.get(0).as_string() {
-                                    handle_dropped_path(path, handler_q.clone(), handler_page.clone());
+                                    // Spawning a task to handle the async file reading
+                                    let q_clone = handler_q.clone();
+                                    let page_clone = handler_page.clone();
+                                    spawn_local(async move {
+                                        let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "path": path })).unwrap();
+                                        let csv_js = invoke("read_csv_from_path", args).await;
+                                        if let Some(csv_text) = csv_js.as_string() {
+                                            let rows = parse_csv(&csv_text);
+                                            q_clone.set(rows);
+                                            page_clone.set(Page::Downloads);
+                                        }
+                                    });
                                 }
                             }
                         }
@@ -153,7 +138,18 @@ async fn start_dragdrop_listener(q: UseStateHandle<Vec<ClipRow>>, page: UseState
                         web_sys::console::log_1(&JsValue::from_str(&format!("paths len={}", arr.length())));
                         if arr.length() > 0 {
                             if let Some(path) = arr.get(0).as_string() {
-                                handle_dropped_path(path, fallback_q.clone(), fallback_page.clone());
+                                // Spawning a task to handle the async file reading
+                                let q_clone = fallback_q.clone();
+                                let page_clone = fallback_page.clone();
+                                spawn_local(async move {
+                                    let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "path": path })).unwrap();
+                                    let csv_js = invoke("read_csv_from_path", args).await;
+                                    if let Some(csv_text) = csv_js.as_string() {
+                                        let rows = parse_csv(&csv_text);
+                                        q_clone.set(rows);
+                                        page_clone.set(Page::Downloads);
+                                    }
+                                });
                             }
                         }
                     }
@@ -185,11 +181,15 @@ async fn start_dragdrop_listener(q: UseStateHandle<Vec<ClipRow>>, page: UseState
     leave.forget();
 }
 
+#[derive(serde::Serialize)]
+struct ReadCsvFromPathArgs<'a> {
+    path: &'a str,
+}
+
 #[function_component(App)]
 pub fn app() -> Html {
     let _greet_input_ref = use_node_ref();
 
-    let _name = use_state(|| String::new());
     let page = use_state(|| Page::Home);
     let queue_rows = use_state(|| Vec::<ClipRow>::new());
 
