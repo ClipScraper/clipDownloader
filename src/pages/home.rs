@@ -35,6 +35,8 @@ pub fn home_page(props: &Props) -> Html {
     let greet_input_ref = use_node_ref();
     let name = use_state(|| String::new());
     let download_results = use_state(|| Vec::<DownloadResult>::new());
+    let is_downloading = use_state(|| false);
+    let download_progress = use_state(|| String::from("Starting download..."));
     let is_valid_url = name.contains("instagram.com")
         || name.contains("tiktok.com")
         || name.contains("youtube.com")
@@ -42,14 +44,35 @@ pub fn home_page(props: &Props) -> Html {
 
     {
         let download_results = download_results.clone();
+        let is_downloading = is_downloading.clone();
+        let download_progress = download_progress.clone();
         use_effect_once(move || {
             let download_results = download_results.clone();
+            let is_downloading_clone = is_downloading.clone();
+            let download_progress_clone = download_progress.clone();
             spawn_local(async move {
                 let closure = Closure::wrap(Box::new(move |event: JsValue| {
-                    if let Ok(result) = serde_wasm_bindgen::from_value(event) {
-                        let mut results = (*download_results).clone();
-                        results.push(result);
-                        download_results.set(results);
+                    // In Tauri v2, events have a payload property
+                    let payload = js_sys::Reflect::get(&event, &JsValue::from_str("payload"))
+                        .unwrap_or(event.clone());
+                    
+                    if let Ok(result) = serde_wasm_bindgen::from_value::<DownloadResult>(payload) {
+                        let msg = result.message.clone();
+                        
+                        // Check if this is a completion message (success or failure)
+                        let is_complete = msg.starts_with("Saved") 
+                            || msg.starts_with("Failed") 
+                            || msg.starts_with("File already exists");
+                        
+                        if is_complete {
+                            is_downloading_clone.set(false);
+                            let mut results = (*download_results).clone();
+                            results.push(result);
+                            download_results.set(results);
+                        } else {
+                            // Update progress for non-completion messages
+                            download_progress_clone.set(msg.clone());
+                        }
                     }
                 }) as Box<dyn FnMut(_)>);
                 let _ = listen("download-status", &closure).await;
@@ -74,14 +97,30 @@ pub fn home_page(props: &Props) -> Html {
     let greet = {
         let greet_input_ref = greet_input_ref.clone();
         let download_results = download_results.clone();
+        let is_downloading = is_downloading.clone();
+        let download_progress = download_progress.clone();
         Callback::from(move |e: SubmitEvent| {
             e.prevent_default();
+            is_downloading.set(true);
+            download_progress.set("Starting download...".to_string());
             download_results.set(vec![]); // Clear previous results
             let value = greet_input_ref.cast::<web_sys::HtmlInputElement>().unwrap().value();
             web_sys::console::log_1(&format!("Form submitted with URL: {}", value).into());
             wasm_bindgen_futures::spawn_local(async move {
                 let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "url": value })).unwrap();
                 let _ = invoke("download_url", args).await;
+            });
+        })
+    };
+
+    let cancel_download = {
+        let is_downloading = is_downloading.clone();
+        let download_results = download_results.clone();
+        Callback::from(move |_| {
+            is_downloading.set(false);
+            download_results.set(vec![]);
+            spawn_local(async {
+                let _ = invoke("cancel_download", JsValue::NULL).await;
             });
         })
     };
@@ -135,11 +174,23 @@ pub fn home_page(props: &Props) -> Html {
         <main class="container" {ondragover} {ondragleave} {ondrop}>
             <h1>{"Welcome to Clip Downloader"}</h1>
             <form class="home-form" onsubmit={greet}>
-                <input id="url-input" ref={greet_input_ref} placeholder="Enter url..." oninput={on_input} />
-                <button type="submit" class="download-cta" title="Download" disabled={!is_valid_url}>
+                <input id="url-input" ref={greet_input_ref} placeholder="Enter url..." oninput={on_input} disabled={*is_downloading} />
+                <button type="submit" class="download-cta" title="Download" disabled={!is_valid_url || *is_downloading}>
                     <img class="download-icon" src="assets/download.svg" />
                 </button>
             </form>
+
+            { if *is_downloading {
+                html! {
+                    <div class="row" style="margin-top: 16px; flex-direction: column; align-items: center; gap: 12px;">
+                        <span style="font-family: monospace; font-size: 0.9em;">{(*download_progress).clone()}</span>
+                        <button type="button" onclick={cancel_download}>{"Cancel"}</button>
+                    </div>
+                }
+            } else {
+                html! {}
+            }}
+
             <div class="messages">
                 { for (*download_results).clone().into_iter().map(|result| {
                     html! {
