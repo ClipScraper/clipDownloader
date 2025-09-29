@@ -35,6 +35,10 @@ pub fn home_page(props: &Props) -> Html {
     let greet_input_ref = use_node_ref();
     let name = use_state(|| String::new());
     let download_results = use_state(|| Vec::<DownloadResult>::new());
+    let is_valid_url = name.contains("instagram.com")
+        || name.contains("tiktok.com")
+        || name.contains("youtube.com")
+        || name.contains("youtu.be");
 
     {
         let download_results = download_results.clone();
@@ -130,11 +134,11 @@ pub fn home_page(props: &Props) -> Html {
     html! {
         <main class="container" {ondragover} {ondragleave} {ondrop}>
             <h1>{"Welcome to Clip Downloader"}</h1>
-            <form class="row home-form" onsubmit={greet}>
+            <form class="home-form" onsubmit={greet}>
                 <input id="url-input" ref={greet_input_ref} placeholder="Enter url..." oninput={on_input} />
-                { if name.contains("instagram.com") || name.contains("tiktok.com") || name.contains("youtube.com") || name.contains("youtu.be") {
-                    html!{ <button type="submit" class="download-cta" title="Download"><img class="download-icon" src="assets/download.svg" /></button> }
-                } else { html!{} } }
+                <button type="submit" class="download-cta" title="Download" disabled={!is_valid_url}>
+                    <img class="download-icon" src="assets/download.svg" />
+                </button>
             </form>
             <div class="messages">
                 { for (*download_results).clone().into_iter().map(|result| {
