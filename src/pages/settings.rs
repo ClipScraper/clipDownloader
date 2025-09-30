@@ -1,8 +1,21 @@
-use crate::types::{Settings, OnDuplicate};
+use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
 use yew::prelude::*;
 use yew_icons::{Icon, IconId};
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq)]
+pub enum OnDuplicate {
+    Overwrite,
+    CreateNew,
+    DoNothing,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq)]
+pub struct Settings {
+    pub download_directory: String,
+    pub on_duplicate: OnDuplicate,
+}
 
 #[wasm_bindgen]
 extern "C" {

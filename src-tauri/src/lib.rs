@@ -1,4 +1,5 @@
 mod commands;
+mod database;
 mod download;
 mod settings;
 mod utils;

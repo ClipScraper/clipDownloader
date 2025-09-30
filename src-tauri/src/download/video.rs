@@ -2,7 +2,7 @@ use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use crate::settings::OnDuplicate;
+use crate::database::OnDuplicate;
 
 /// Build the common yt-dlp args (cookies, parallel, etc.), and the
 /// format args depending on IG vs video sites.

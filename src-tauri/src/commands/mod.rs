@@ -1,11 +1,51 @@
 use crate::{
+    database::{OnDuplicate, Settings},
     download::{self},
     settings,
     utils::{self},
     DownloadState,
 };
+use chrono::Utc;
 use std::{fs as std_fs, path::PathBuf};
 use tauri::{Emitter, Manager, State};
+
+/// Parse user_handle and clean_name from yt-dlp output
+/// Expected format: "user_handle - name [id].ext"
+fn parse_filename_from_output(output: &str) -> (String, String) {
+    // Look for the destination filename in yt-dlp output
+    for line in output.lines() {
+        if line.contains("Destination:") {
+            // Extract filename from "Destination: /path/to/filename.ext"
+            if let Some(colon_pos) = line.find(':') {
+                let filename_part = &line[colon_pos + 1..].trim();
+                if let Some(last_slash) = filename_part.rfind('/') {
+                    let filename = &filename_part[last_slash + 1..];
+
+                    // Parse: "user_handle - name [id].ext"
+                    if let Some(bracket_start) = filename.find('[') {
+                        if let Some(_bracket_end) = filename.find(']') {
+                            let before_bracket = &filename[..bracket_start].trim();
+
+                            // Split on " - " to get user_handle and name
+                            if let Some(dash_pos) = before_bracket.find(" - ") {
+                                let user_handle = before_bracket[..dash_pos].trim().to_string();
+                                let name = before_bracket[dash_pos + 3..].trim().to_string();
+
+                                return (user_handle, name);
+                            }
+                        }
+                    }
+
+                    // Fallback: if we can't parse the format, return the whole filename as name
+                    return ("Unknown".to_string(), filename.to_string());
+                }
+            }
+        }
+    }
+
+    // If no destination found, return defaults
+    ("Unknown".to_string(), "Unknown".to_string())
+}
 
 #[derive(serde::Serialize, Clone)]
 struct DownloadResult {
@@ -102,6 +142,36 @@ pub async fn download_url(
                                     "[tauri] gallery-dl ok with {browser}\nstdout:\n{}",
                                     String::from_utf8_lossy(&output.stdout)
                                 );
+
+                                // Insert download record into database for image downloads
+                                if let Ok(db) = crate::database::Database::new() {
+                                    // Parse filename from gallery-dl output
+                                    let (user_handle, clean_name) = parse_filename_from_output(&String::from_utf8_lossy(&output.stdout));
+
+                                    let download = crate::database::Download {
+                                        id: None,
+                                        platform: if processed_url.contains("instagram.com") {
+                                            crate::database::Platform::Instagram
+                                        } else if processed_url.contains("tiktok.com") {
+                                            crate::database::Platform::Tiktok
+                                        } else {
+                                            crate::database::Platform::Instagram // Default fallback
+                                        },
+                                        name: clean_name,
+                                        media: crate::database::MediaKind::Image,
+                                        user: user_handle,
+                                        origin: crate::database::Origin::Manual, // User clicked download button
+                                        link: processed_url.clone(),
+                                        status: crate::database::DownloadStatus::Done,
+                                        date_added: Utc::now(),
+                                        date_downloaded: Some(Utc::now()),
+                                    };
+
+                                    if let Err(e) = db.insert_download(&download) {
+                                        eprintln!("[tauri] Failed to insert download record: {}", e);
+                                    }
+                                }
+
                                 *state_clone.0.lock().unwrap() = None;
                                 return;
                             }
@@ -142,15 +212,15 @@ pub async fn download_url(
                                 || output.contains("has already been recorded in the archive");
 
                             let message = match on_duplicate {
-                                settings::OnDuplicate::DoNothing if existed => {
+                                OnDuplicate::DoNothing if existed => {
                                     format!("File already exists, skipped (as per settings) in {}", yt_out_dir.display())
                                 }
-                                settings::OnDuplicate::Overwrite => {
+                                OnDuplicate::Overwrite => {
                                     // Even if yt-dlp printed "already downloaded", we forced overwrites,
                                     // so we report a normal save.
                                     format!("Saved to {}", yt_out_dir.display())
                                 }
-                                settings::OnDuplicate::CreateNew => {
+                                OnDuplicate::CreateNew => {
                                     // We chose a free name, so we report a normal save.
                                     format!("Saved to {}", yt_out_dir.display())
                                 }
@@ -166,6 +236,42 @@ pub async fn download_url(
                             println!("[tauri] Emitting completion message: {}", message);
                             emit_status(&window, true, message);
                             println!("[tauri] yt-dlp ok with {browser}");
+
+                            // Extract metadata from filename and insert into database
+                            if let Ok(db) = crate::database::Database::new() {
+                                // Parse filename from yt-dlp output
+                                let (user_handle, clean_name) = parse_filename_from_output(&output);
+
+                                let download = crate::database::Download {
+                                    id: None,
+                                    platform: if processed_url.contains("youtube.com") || processed_url.contains("youtu.be") {
+                                        crate::database::Platform::Youtube
+                                    } else if processed_url.contains("instagram.com") {
+                                        crate::database::Platform::Instagram
+                                    } else if processed_url.contains("tiktok.com") {
+                                        crate::database::Platform::Tiktok
+                                    } else {
+                                        crate::database::Platform::Youtube // Default fallback
+                                    },
+                                    name: clean_name,
+                                    media: if is_ig || is_tt_photo {
+                                        crate::database::MediaKind::Image
+                                    } else {
+                                        crate::database::MediaKind::Video
+                                    },
+                                    user: user_handle,
+                                    origin: crate::database::Origin::Manual, // User clicked download button
+                                    link: processed_url.clone(),
+                                    status: crate::database::DownloadStatus::Done,
+                                    date_added: Utc::now(),
+                                    date_downloaded: Some(Utc::now()),
+                                };
+
+                                if let Err(e) = db.insert_download(&download) {
+                                    eprintln!("[tauri] Failed to insert download record: {}", e);
+                                }
+                            }
+
                             *state_clone.0.lock().unwrap() = None;
                             return;
                         }
@@ -202,12 +308,12 @@ pub async fn download_url(
 }
 
 #[tauri::command]
-pub async fn load_settings() -> settings::Settings {
+pub async fn load_settings() -> Settings {
     settings::load_settings()
 }
 
 #[tauri::command]
-pub async fn save_settings(settings: settings::Settings) -> Result<(), String> {
+pub async fn save_settings(settings: Settings) -> Result<(), String> {
     settings::save_settings(&settings)
 }
 

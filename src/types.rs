@@ -41,18 +41,6 @@ pub struct ClipRow {
     pub link: String,
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq)]
-pub enum OnDuplicate {
-    Overwrite,
-    CreateNew,
-    DoNothing,
-}
-
-#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq)]
-pub struct Settings {
-    pub download_directory: String,
-    pub on_duplicate: OnDuplicate,
-}
 
 pub fn platform_str(p: &Platform) -> &'static str {
     match p {
