@@ -43,6 +43,7 @@ pub struct Download {
     pub origin: Origin,
     pub link: String,
     pub status: DownloadStatus,
+    pub path: String,
     pub date_added: DateTime<Utc>,
     pub date_downloaded: Option<DateTime<Utc>>,
 }
@@ -160,11 +161,15 @@ impl Database {
                 origin TEXT NOT NULL,
                 link TEXT NOT NULL UNIQUE,
                 status TEXT NOT NULL,
+                path TEXT NOT NULL,
                 date_added TEXT NOT NULL,
                 date_downloaded TEXT
             )",
             [],
         )?;
+
+        // Check if path column exists, add it if it doesn't (migration for existing databases)
+        self.migrate_add_path_column()?;
 
         // Create settings table
         self.conn.execute(
@@ -192,10 +197,43 @@ impl Database {
         Ok(())
     }
 
+    /// Migration: Add path column to existing databases that don't have it
+    fn migrate_add_path_column(&self) -> Result<()> {
+        // Use PRAGMA table_info to check if the path column exists
+        let mut stmt = self.conn.prepare("PRAGMA table_info(downloads)")?;
+        let columns = stmt.query_map([], |row| {
+            Ok(row.get::<_, String>(1)?) // column name is in index 1
+        })?;
+
+        let mut column_names = Vec::new();
+        for column in columns {
+            column_names.push(column?);
+        }
+
+        let has_path_column = column_names.iter().any(|name| name == "path");
+
+        if !has_path_column {
+            // Add the path column if it doesn't exist
+            self.conn.execute(
+                "ALTER TABLE downloads ADD COLUMN path TEXT NOT NULL DEFAULT ''",
+                [],
+            )?;
+        }
+
+        Ok(())
+    }
+
     pub fn insert_download(&self, download: &Download) -> Result<i64> {
+        // If path is empty (for existing records), use a default value
+        let path_value = if download.path.is_empty() {
+            "unknown_path".to_string()
+        } else {
+            download.path.clone()
+        };
+
         self.conn.execute(
-            "INSERT INTO downloads (platform, name, media, user_handle, origin, link, status, date_added, date_downloaded)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            "INSERT INTO downloads (platform, name, media, user_handle, origin, link, status, path, date_added, date_downloaded)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             [
                 &format!("{:?}", download.platform).to_lowercase(),
                 &download.name,
@@ -204,6 +242,7 @@ impl Database {
                 &format!("{:?}", download.origin).to_lowercase(),
                 &download.link,
                 &format!("{:?}", download.status).to_lowercase(),
+                &path_value,
                 &download.date_added.to_rfc3339(),
                 &download.date_downloaded.map(|dt| dt.to_rfc3339()).unwrap_or_default(),
             ],
@@ -244,23 +283,26 @@ impl Database {
 
     pub fn get_downloads(&self) -> Result<Vec<Download>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, platform, name, media, user_handle, origin, link, status, date_added, date_downloaded
+            "SELECT id, platform, name, media, user_handle, origin, link, status, path, date_added, date_downloaded
              FROM downloads ORDER BY date_added DESC"
         )?;
 
         let downloads = stmt.query_map([], |row| {
-            let date_added_str: String = row.get(8)?;
+            let date_added_str: String = row.get(9)?;
             let date_added = DateTime::parse_from_rfc3339(&date_added_str)
-                .map_err(|_| rusqlite::Error::InvalidColumnType(8, date_added_str.clone(), rusqlite::types::Type::Text))?
+                .map_err(|_| rusqlite::Error::InvalidColumnType(9, date_added_str.clone(), rusqlite::types::Type::Text))?
                 .with_timezone(&Utc);
 
-            let date_downloaded = if let Some(date_str) = row.get::<_, Option<String>>(9)? {
+            let date_downloaded = if let Some(date_str) = row.get::<_, Option<String>>(10)? {
                 Some(DateTime::parse_from_rfc3339(&date_str)
-                    .map_err(|_| rusqlite::Error::InvalidColumnType(9, date_str.clone(), rusqlite::types::Type::Text))?
+                    .map_err(|_| rusqlite::Error::InvalidColumnType(10, date_str.clone(), rusqlite::types::Type::Text))?
                     .with_timezone(&Utc))
             } else {
                 None
             };
+
+            let path: String = row.get(8)?;
+            let path = if path.is_empty() { "unknown_path".to_string() } else { path };
 
             Ok(Download {
                 id: Some(row.get(0)?),
@@ -271,6 +313,7 @@ impl Database {
                 origin: Origin::from(row.get::<_, String>(5)?),
                 link: row.get(6)?,
                 status: DownloadStatus::from(row.get::<_, String>(7)?),
+                path,
                 date_added,
                 date_downloaded,
             })
@@ -286,23 +329,26 @@ impl Database {
 
     pub fn get_download_by_link(&self, link: &str) -> Result<Option<Download>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, platform, name, media, user_handle, origin, link, status, date_added, date_downloaded
+            "SELECT id, platform, name, media, user_handle, origin, link, status, path, date_added, date_downloaded
              FROM downloads WHERE link = ?1"
         )?;
 
         let result = stmt.query_row([link], |row| {
-            let date_added_str: String = row.get(8)?;
+            let date_added_str: String = row.get(9)?;
             let date_added = DateTime::parse_from_rfc3339(&date_added_str)
-                .map_err(|_| rusqlite::Error::InvalidColumnType(8, date_added_str.clone(), rusqlite::types::Type::Text))?
+                .map_err(|_| rusqlite::Error::InvalidColumnType(9, date_added_str.clone(), rusqlite::types::Type::Text))?
                 .with_timezone(&Utc);
 
-            let date_downloaded = if let Some(date_str) = row.get::<_, Option<String>>(9)? {
+            let date_downloaded = if let Some(date_str) = row.get::<_, Option<String>>(10)? {
                 Some(DateTime::parse_from_rfc3339(&date_str)
-                    .map_err(|_| rusqlite::Error::InvalidColumnType(9, date_str.clone(), rusqlite::types::Type::Text))?
+                    .map_err(|_| rusqlite::Error::InvalidColumnType(10, date_str.clone(), rusqlite::types::Type::Text))?
                     .with_timezone(&Utc))
             } else {
                 None
             };
+
+            let path: String = row.get(8)?;
+            let path = if path.is_empty() { "unknown_path".to_string() } else { path };
 
             Ok(Download {
                 id: Some(row.get(0)?),
@@ -313,6 +359,7 @@ impl Database {
                 origin: Origin::from(row.get::<_, String>(5)?),
                 link: row.get(6)?,
                 status: DownloadStatus::from(row.get::<_, String>(7)?),
+                path,
                 date_added,
                 date_downloaded,
             })

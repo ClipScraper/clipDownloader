@@ -9,17 +9,20 @@ use chrono::Utc;
 use std::{fs as std_fs, path::PathBuf};
 use tauri::{Emitter, Manager, State};
 
-/// Parse user_handle and clean_name from yt-dlp output
+/// Parse user_handle, clean_name, and file_path from yt-dlp output
 /// Expected format: "user_handle - name [id].ext"
-fn parse_filename_from_output(output: &str) -> (String, String) {
+/// Returns (user_handle, clean_name, full_file_path)
+fn parse_filename_from_output(output: &str) -> (String, String, String) {
     // Look for the destination filename in yt-dlp output
     for line in output.lines() {
         if line.contains("Destination:") {
-            // Extract filename from "Destination: /path/to/filename.ext"
+            // Extract full path from "Destination: /path/to/filename.ext"
             if let Some(colon_pos) = line.find(':') {
-                let filename_part = &line[colon_pos + 1..].trim();
-                if let Some(last_slash) = filename_part.rfind('/') {
-                    let filename = &filename_part[last_slash + 1..];
+                let full_path = &line[colon_pos + 1..].trim();
+
+                // Extract just the filename part for parsing
+                if let Some(last_slash) = full_path.rfind('/') {
+                    let filename = &full_path[last_slash + 1..];
 
                     // Parse: "user_handle - name [id].ext"
                     if let Some(bracket_start) = filename.find('[') {
@@ -31,20 +34,20 @@ fn parse_filename_from_output(output: &str) -> (String, String) {
                                 let user_handle = before_bracket[..dash_pos].trim().to_string();
                                 let name = before_bracket[dash_pos + 3..].trim().to_string();
 
-                                return (user_handle, name);
+                                return (user_handle, name, full_path.to_string());
                             }
                         }
                     }
 
                     // Fallback: if we can't parse the format, return the whole filename as name
-                    return ("Unknown".to_string(), filename.to_string());
+                    return ("Unknown".to_string(), filename.to_string(), full_path.to_string());
                 }
             }
         }
     }
 
     // If no destination found, return defaults
-    ("Unknown".to_string(), "Unknown".to_string())
+    ("Unknown".to_string(), "Unknown".to_string(), "".to_string())
 }
 
 #[derive(serde::Serialize, Clone)]
@@ -146,7 +149,7 @@ pub async fn download_url(
                                 // Insert download record into database for image downloads
                                 if let Ok(db) = crate::database::Database::new() {
                                     // Parse filename from gallery-dl output
-                                    let (user_handle, clean_name) = parse_filename_from_output(&String::from_utf8_lossy(&output.stdout));
+                                    let (user_handle, clean_name, file_path) = parse_filename_from_output(&String::from_utf8_lossy(&output.stdout));
 
                                     let download = crate::database::Download {
                                         id: None,
@@ -163,6 +166,7 @@ pub async fn download_url(
                                         origin: crate::database::Origin::Manual, // User clicked download button
                                         link: processed_url.clone(),
                                         status: crate::database::DownloadStatus::Done,
+                                        path: file_path,
                                         date_added: Utc::now(),
                                         date_downloaded: Some(Utc::now()),
                                     };
@@ -240,7 +244,7 @@ pub async fn download_url(
                             // Extract metadata from filename and insert into database
                             if let Ok(db) = crate::database::Database::new() {
                                 // Parse filename from yt-dlp output
-                                let (user_handle, clean_name) = parse_filename_from_output(&output);
+                                let (user_handle, clean_name, file_path) = parse_filename_from_output(&output);
 
                                 let download = crate::database::Download {
                                     id: None,
@@ -263,6 +267,7 @@ pub async fn download_url(
                                     origin: crate::database::Origin::Manual, // User clicked download button
                                     link: processed_url.clone(),
                                     status: crate::database::DownloadStatus::Done,
+                                    path: file_path,
                                     date_added: Utc::now(),
                                     date_downloaded: Some(Utc::now()),
                                 };
