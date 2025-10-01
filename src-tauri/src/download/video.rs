@@ -1,9 +1,8 @@
-use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use crate::settings::OnDuplicate;
+use crate::database::OnDuplicate;
 
 /// Build the common yt-dlp args (cookies, parallel, etc.), and the
 /// format args depending on IG vs video sites.
@@ -176,7 +175,11 @@ where
                 file_skipped = true;
             }
 
-            if line.contains("[download]") || line.contains("[info]") {
+            // Only show actual download progress, not initial messages
+            if (line.contains("[download]") || line.contains("[info]"))
+                && !line.contains("Starting download for")
+                && !line.contains("Sleeping")
+                && !line.starts_with("[info] Downloading") {
                 progress_callback(&line);
             }
         }
