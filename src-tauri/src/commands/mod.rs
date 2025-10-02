@@ -9,45 +9,85 @@ use chrono::Utc;
 use std::{fs as std_fs, path::PathBuf};
 use tauri::{Emitter, Manager, State};
 
-/// Parse user_handle, clean_name, and file_path from yt-dlp output
+/// Parse user_handle, clean_name, and file_path from yt-dlp/gallery-dl output
 /// Expected format: "user_handle - name [id].ext"
 /// Returns (user_handle, clean_name, full_file_path)
-fn parse_filename_from_output(output: &str) -> (String, String, String) {
-    // Look for the destination filename in yt-dlp output
-    for line in output.lines() {
-        if line.contains("Destination:") {
-            // Extract full path from "Destination: /path/to/filename.ext"
-            if let Some(colon_pos) = line.find(':') {
-                let full_path = &line[colon_pos + 1..].trim();
+fn parse_filename_from_output(output: &str, processed_url: &str) -> (String, String, String) {
+    parse_multiple_filenames_from_output(output, processed_url).into_iter().next().unwrap_or_else(|| ("Unknown".to_string(), "Unknown".to_string(), "".to_string()))
+}
 
-                // Extract just the filename part for parsing
-                if let Some(last_slash) = full_path.rfind('/') {
-                    let filename = &full_path[last_slash + 1..];
+/// Parse multiple user_handle, clean_name, and file_path from yt-dlp/gallery-dl output
+/// Returns a Vec of (user_handle, clean_name, full_file_path)
+fn parse_multiple_filenames_from_output(output: &str, processed_url: &str) -> Vec<(String, String, String)> {
+    let mut results = Vec::new();
 
-                    // Parse: "user_handle - name [id].ext"
+    // Look for all destination filenames in gallery-dl output (format: "# /path/to/file.jpg")
+    for (index, line) in output.lines().enumerate() {
+        let trimmed_line = line.trim();
+        if trimmed_line.starts_with('#') && trimmed_line.len() > 2 {
+            // Extract full path after "# "
+            let full_path = &trimmed_line[2..].trim();
+
+            // Extract user handle from the directory path
+            let user_handle = if let Some(last_slash) = full_path.rfind('/') {
+                if let Some(second_last_slash) = full_path[..last_slash].rfind('/') {
+                    full_path[second_last_slash + 1..last_slash].to_string()
+                } else {
+                    "Unknown".to_string()
+                }
+            } else {
+                "Unknown".to_string()
+            };
+
+            // Extract just the filename part for parsing
+            if let Some(last_slash) = full_path.rfind('/') {
+                let filename = &full_path[last_slash + 1..];
+
+                // For carousel images, use a simple name format
+                let clean_name = if filename.contains("Taotao's Photo") {
+                    format!("Image {}", index + 1)
+                } else {
+                    // Try to parse: "user_handle - name [id].ext"
                     if let Some(bracket_start) = filename.find('[') {
                         if let Some(_bracket_end) = filename.find(']') {
                             let before_bracket = &filename[..bracket_start].trim();
 
                             // Split on " - " to get user_handle and name
                             if let Some(dash_pos) = before_bracket.find(" - ") {
-                                let user_handle = before_bracket[..dash_pos].trim().to_string();
-                                let name = before_bracket[dash_pos + 3..].trim().to_string();
-
-                                return (user_handle, name, full_path.to_string());
+                                before_bracket[dash_pos + 3..].trim().to_string()
+                            } else {
+                                filename.to_string()
                             }
+                        } else {
+                            filename.to_string()
                         }
+                    } else {
+                        filename.to_string()
                     }
+                };
 
-                    // Fallback: if we can't parse the format, return the whole filename as name
-                    return ("Unknown".to_string(), filename.to_string(), full_path.to_string());
-                }
+                results.push((user_handle, clean_name, full_path.to_string()));
             }
         }
     }
 
-    // If no destination found, return defaults
-    ("Unknown".to_string(), "Unknown".to_string(), "".to_string())
+    // For TikTok URLs, try to extract username from the URL itself if no destinations found
+    if results.is_empty() && processed_url.contains("tiktok.com/@") {
+        if let Some(at_pos) = processed_url.find("/@") {
+            let after_at = &processed_url[at_pos + 2..];
+            if let Some(slash_pos) = after_at.find('/') {
+                let username = &after_at[..slash_pos];
+                results.push((username.to_string(), "Unknown".to_string(), "".to_string()));
+            }
+        }
+    }
+
+    // If no destinations found, return defaults
+    if results.is_empty() {
+        results.push(("Unknown".to_string(), "Unknown".to_string(), "".to_string()));
+    }
+
+    results
 }
 
 #[derive(serde::Serialize, Clone)]
@@ -146,33 +186,43 @@ pub async fn download_url(
                                     String::from_utf8_lossy(&output.stdout)
                                 );
 
-                                // Insert download record into database for image downloads
+                                // Insert download record(s) into database for image downloads
                                 if let Ok(db) = crate::database::Database::new() {
-                                    // Parse filename from gallery-dl output
-                                    let (user_handle, clean_name, file_path) = parse_filename_from_output(&String::from_utf8_lossy(&output.stdout));
+                                    // Parse multiple filenames from gallery-dl output
+                                    let files = parse_multiple_filenames_from_output(&String::from_utf8_lossy(&output.stdout), &processed_url);
 
-                                    let download = crate::database::Download {
-                                        id: None,
-                                        platform: if processed_url.contains("instagram.com") {
-                                            crate::database::Platform::Instagram
-                                        } else if processed_url.contains("tiktok.com") {
-                                            crate::database::Platform::Tiktok
-                                        } else {
-                                            crate::database::Platform::Instagram // Default fallback
-                                        },
-                                        name: clean_name,
-                                        media: crate::database::MediaKind::Image,
-                                        user: user_handle,
-                                        origin: crate::database::Origin::Manual, // User clicked download button
-                                        link: processed_url.clone(),
-                                        status: crate::database::DownloadStatus::Done,
-                                        path: file_path,
-                                        date_added: Utc::now(),
-                                        date_downloaded: Some(Utc::now()),
+                                    // Generate image set ID if multiple files (carousel)
+                                    let image_set_id = if files.len() > 1 {
+                                        Some(uuid::Uuid::new_v4().to_string())
+                                    } else {
+                                        None
                                     };
 
-                                    if let Err(e) = db.insert_download(&download) {
-                                        eprintln!("[tauri] Failed to insert download record: {}", e);
+                                    for (user_handle, clean_name, file_path) in files {
+                                        let download = crate::database::Download {
+                                            id: None,
+                                            platform: if processed_url.contains("instagram.com") {
+                                                crate::database::Platform::Instagram
+                                            } else if processed_url.contains("tiktok.com") {
+                                                crate::database::Platform::Tiktok
+                                            } else {
+                                                crate::database::Platform::Instagram // Default fallback
+                                            },
+                                            name: clean_name,
+                                            media: crate::database::MediaKind::Image,
+                                            user: user_handle,
+                                            origin: crate::database::Origin::Manual, // User clicked download button
+                                            link: processed_url.clone(),
+                                            status: crate::database::DownloadStatus::Done,
+                                            path: file_path,
+                                            image_set_id: image_set_id.clone(),
+                                            date_added: Utc::now(),
+                                            date_downloaded: Some(Utc::now()),
+                                        };
+
+                                        if let Err(e) = db.insert_download(&download) {
+                                            eprintln!("[tauri] Failed to insert download record: {}", e);
+                                        }
                                     }
                                 }
 
@@ -243,37 +293,47 @@ pub async fn download_url(
 
                             // Extract metadata from filename and insert into database
                             if let Ok(db) = crate::database::Database::new() {
-                                // Parse filename from yt-dlp output
-                                let (user_handle, clean_name, file_path) = parse_filename_from_output(&output);
+                                // Parse multiple filenames from yt-dlp output
+                                let files = parse_multiple_filenames_from_output(&output, &processed_url);
 
-                                let download = crate::database::Download {
-                                    id: None,
-                                    platform: if processed_url.contains("youtube.com") || processed_url.contains("youtu.be") {
-                                        crate::database::Platform::Youtube
-                                    } else if processed_url.contains("instagram.com") {
-                                        crate::database::Platform::Instagram
-                                    } else if processed_url.contains("tiktok.com") {
-                                        crate::database::Platform::Tiktok
-                                    } else {
-                                        crate::database::Platform::Youtube // Default fallback
-                                    },
-                                    name: clean_name,
-                                    media: if is_ig || is_tt_photo {
-                                        crate::database::MediaKind::Image
-                                    } else {
-                                        crate::database::MediaKind::Video
-                                    },
-                                    user: user_handle,
-                                    origin: crate::database::Origin::Manual, // User clicked download button
-                                    link: processed_url.clone(),
-                                    status: crate::database::DownloadStatus::Done,
-                                    path: file_path,
-                                    date_added: Utc::now(),
-                                    date_downloaded: Some(Utc::now()),
+                                // Generate image set ID if multiple files (carousel)
+                                let image_set_id = if files.len() > 1 {
+                                    Some(uuid::Uuid::new_v4().to_string())
+                                } else {
+                                    None
                                 };
 
-                                if let Err(e) = db.insert_download(&download) {
-                                    eprintln!("[tauri] Failed to insert download record: {}", e);
+                                for (user_handle, clean_name, file_path) in files {
+                                    let download = crate::database::Download {
+                                        id: None,
+                                        platform: if processed_url.contains("youtube.com") || processed_url.contains("youtu.be") {
+                                            crate::database::Platform::Youtube
+                                        } else if processed_url.contains("instagram.com") {
+                                            crate::database::Platform::Instagram
+                                        } else if processed_url.contains("tiktok.com") {
+                                            crate::database::Platform::Tiktok
+                                        } else {
+                                            crate::database::Platform::Youtube // Default fallback
+                                        },
+                                        name: clean_name,
+                                        media: if is_ig || is_tt_photo {
+                                            crate::database::MediaKind::Image
+                                        } else {
+                                            crate::database::MediaKind::Video
+                                        },
+                                        user: user_handle,
+                                        origin: crate::database::Origin::Manual, // User clicked download button
+                                        link: processed_url.clone(),
+                                        status: crate::database::DownloadStatus::Done,
+                                        path: file_path,
+                                        image_set_id: image_set_id.clone(),
+                                        date_added: Utc::now(),
+                                        date_downloaded: Some(Utc::now()),
+                                    };
+
+                                    if let Err(e) = db.insert_download(&download) {
+                                        eprintln!("[tauri] Failed to insert download record: {}", e);
+                                    }
                                 }
                             }
 
@@ -399,3 +459,4 @@ pub async fn cancel_download(state: State<'_, DownloadState>) -> Result<(), Stri
     }
     Ok(())
 }
+

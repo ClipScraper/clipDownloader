@@ -44,6 +44,7 @@ pub struct Download {
     pub link: String,
     pub status: DownloadStatus,
     pub path: String,
+    pub image_set_id: Option<String>,
     pub date_added: DateTime<Utc>,
     pub date_downloaded: Option<DateTime<Utc>>,
 }
@@ -159,9 +160,10 @@ impl Database {
                 media TEXT NOT NULL,
                 user_handle TEXT NOT NULL,
                 origin TEXT NOT NULL,
-                link TEXT NOT NULL UNIQUE,
+                link TEXT NOT NULL,
                 status TEXT NOT NULL,
                 path TEXT NOT NULL,
+                image_set_id TEXT,
                 date_added TEXT NOT NULL,
                 date_downloaded TEXT
             )",
@@ -170,6 +172,12 @@ impl Database {
 
         // Check if path column exists, add it if it doesn't (migration for existing databases)
         self.migrate_add_path_column()?;
+
+        // Check if image_set_id column exists, add it if it doesn't (migration for existing databases)
+        self.migrate_add_image_set_id_column()?;
+
+        // Check if link column has UNIQUE constraint and remove it if needed
+        self.migrate_remove_link_unique_constraint()?;
 
         // Create settings table
         self.conn.execute(
@@ -193,6 +201,100 @@ impl Database {
                 "create_new"
             ],
         )?;
+
+        Ok(())
+    }
+
+    /// Migration: Add image_set_id column to existing databases that don't have it
+    fn migrate_add_image_set_id_column(&self) -> Result<()> {
+        // Use PRAGMA table_info to check if the image_set_id column exists
+        let mut stmt = self.conn.prepare("PRAGMA table_info(downloads)")?;
+        let columns = stmt.query_map([], |row| {
+            Ok(row.get::<_, String>(1)?) // column name is in index 1
+        })?;
+
+        let mut column_names = Vec::new();
+        for column in columns {
+            column_names.push(column?);
+        }
+
+        let has_image_set_id_column = column_names.iter().any(|name| name == "image_set_id");
+
+        if !has_image_set_id_column {
+            // Add the image_set_id column if it doesn't exist
+            self.conn.execute(
+                "ALTER TABLE downloads ADD COLUMN image_set_id TEXT",
+                [],
+            )?;
+        }
+
+        Ok(())
+    }
+
+    /// Migration: Remove UNIQUE constraint from link column if it exists
+    fn migrate_remove_link_unique_constraint(&self) -> Result<()> {
+        // For existing databases, we need to recreate the table without the UNIQUE constraint
+        // We'll check if we can successfully insert duplicate links, and if not, recreate the table
+
+        // First, let's try to see if the constraint exists by checking the table schema
+        let mut stmt = self.conn.prepare("PRAGMA table_info(downloads)")?;
+        let columns = stmt.query_map([], |row| {
+            Ok(row.get::<_, String>(1)?) // column name is in index 1
+        })?;
+
+        let column_names: Vec<String> = columns.collect::<Result<Vec<_>, _>>()?;
+        let has_link_column = column_names.iter().any(|name| name == "link");
+
+        if has_link_column {
+            // Try to detect if there's a UNIQUE constraint by attempting to get the table schema
+            let mut stmt = self.conn.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='downloads'")?;
+            let schema: Option<String> = stmt.query_row([], |row| row.get(0)).unwrap_or(None);
+
+            if let Some(sql) = schema {
+                if sql.contains("UNIQUE") && sql.contains("link") {
+                    // The table has a UNIQUE constraint on link, recreate it
+                    self.recreate_downloads_table_without_unique_constraint()?;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Helper function to recreate the downloads table without UNIQUE constraint
+    fn recreate_downloads_table_without_unique_constraint(&self) -> Result<()> {
+        // Create new table without UNIQUE constraint on link
+        self.conn.execute(
+            "CREATE TABLE downloads_new (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                platform TEXT NOT NULL,
+                name TEXT NOT NULL,
+                media TEXT NOT NULL,
+                user_handle TEXT NOT NULL,
+                origin TEXT NOT NULL,
+                link TEXT NOT NULL,
+                status TEXT NOT NULL,
+                path TEXT NOT NULL,
+                image_set_id TEXT,
+                date_added TEXT NOT NULL,
+                date_downloaded TEXT
+            )",
+            [],
+        )?;
+
+        // Copy data from old table to new table
+        self.conn.execute(
+            "INSERT INTO downloads_new (id, platform, name, media, user_handle, origin, link, status, path, image_set_id, date_added, date_downloaded)
+             SELECT id, platform, name, media, user_handle, origin, link, status, path, image_set_id, date_added, date_downloaded
+             FROM downloads",
+            [],
+        )?;
+
+        // Drop old table
+        self.conn.execute("DROP TABLE downloads", [])?;
+
+        // Rename new table
+        self.conn.execute("ALTER TABLE downloads_new RENAME TO downloads", [])?;
 
         Ok(())
     }
@@ -232,8 +334,8 @@ impl Database {
         };
 
         self.conn.execute(
-            "INSERT INTO downloads (platform, name, media, user_handle, origin, link, status, path, date_added, date_downloaded)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            "INSERT INTO downloads (platform, name, media, user_handle, origin, link, status, path, image_set_id, date_added, date_downloaded)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             [
                 &format!("{:?}", download.platform).to_lowercase(),
                 &download.name,
@@ -243,6 +345,7 @@ impl Database {
                 &download.link,
                 &format!("{:?}", download.status).to_lowercase(),
                 &path_value,
+                &download.image_set_id.clone().unwrap_or_default(),
                 &download.date_added.to_rfc3339(),
                 &download.date_downloaded.map(|dt| dt.to_rfc3339()).unwrap_or_default(),
             ],
@@ -283,19 +386,19 @@ impl Database {
 
     pub fn get_downloads(&self) -> Result<Vec<Download>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, platform, name, media, user_handle, origin, link, status, path, date_added, date_downloaded
+            "SELECT id, platform, name, media, user_handle, origin, link, status, path, image_set_id, date_added, date_downloaded
              FROM downloads ORDER BY date_added DESC"
         )?;
 
         let downloads = stmt.query_map([], |row| {
-            let date_added_str: String = row.get(9)?;
+            let date_added_str: String = row.get(10)?;
             let date_added = DateTime::parse_from_rfc3339(&date_added_str)
-                .map_err(|_| rusqlite::Error::InvalidColumnType(9, date_added_str.clone(), rusqlite::types::Type::Text))?
+                .map_err(|_| rusqlite::Error::InvalidColumnType(10, date_added_str.clone(), rusqlite::types::Type::Text))?
                 .with_timezone(&Utc);
 
-            let date_downloaded = if let Some(date_str) = row.get::<_, Option<String>>(10)? {
+            let date_downloaded = if let Some(date_str) = row.get::<_, Option<String>>(11)? {
                 Some(DateTime::parse_from_rfc3339(&date_str)
-                    .map_err(|_| rusqlite::Error::InvalidColumnType(10, date_str.clone(), rusqlite::types::Type::Text))?
+                    .map_err(|_| rusqlite::Error::InvalidColumnType(11, date_str.clone(), rusqlite::types::Type::Text))?
                     .with_timezone(&Utc))
             } else {
                 None
@@ -314,6 +417,7 @@ impl Database {
                 link: row.get(6)?,
                 status: DownloadStatus::from(row.get::<_, String>(7)?),
                 path,
+                image_set_id: row.get(9)?,
                 date_added,
                 date_downloaded,
             })
@@ -329,19 +433,19 @@ impl Database {
 
     pub fn get_download_by_link(&self, link: &str) -> Result<Option<Download>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, platform, name, media, user_handle, origin, link, status, path, date_added, date_downloaded
+            "SELECT id, platform, name, media, user_handle, origin, link, status, path, image_set_id, date_added, date_downloaded
              FROM downloads WHERE link = ?1"
         )?;
 
         let result = stmt.query_row([link], |row| {
-            let date_added_str: String = row.get(9)?;
+            let date_added_str: String = row.get(10)?;
             let date_added = DateTime::parse_from_rfc3339(&date_added_str)
-                .map_err(|_| rusqlite::Error::InvalidColumnType(9, date_added_str.clone(), rusqlite::types::Type::Text))?
+                .map_err(|_| rusqlite::Error::InvalidColumnType(10, date_added_str.clone(), rusqlite::types::Type::Text))?
                 .with_timezone(&Utc);
 
-            let date_downloaded = if let Some(date_str) = row.get::<_, Option<String>>(10)? {
+            let date_downloaded = if let Some(date_str) = row.get::<_, Option<String>>(11)? {
                 Some(DateTime::parse_from_rfc3339(&date_str)
-                    .map_err(|_| rusqlite::Error::InvalidColumnType(10, date_str.clone(), rusqlite::types::Type::Text))?
+                    .map_err(|_| rusqlite::Error::InvalidColumnType(11, date_str.clone(), rusqlite::types::Type::Text))?
                     .with_timezone(&Utc))
             } else {
                 None
@@ -360,6 +464,7 @@ impl Database {
                 link: row.get(6)?,
                 status: DownloadStatus::from(row.get::<_, String>(7)?),
                 path,
+                image_set_id: row.get(9)?,
                 date_added,
                 date_downloaded,
             })
