@@ -9,11 +9,11 @@ use chrono::Utc;
 use std::{fs as std_fs, path::PathBuf};
 use tauri::{Emitter, Manager, State};
 
-/// Parse user_handle, clean_name, and file_path from yt-dlp output
+/// Parse user_handle, clean_name, and file_path from yt-dlp/gallery-dl output
 /// Expected format: "user_handle - name [id].ext"
 /// Returns (user_handle, clean_name, full_file_path)
-fn parse_filename_from_output(output: &str) -> (String, String, String) {
-    // Look for the destination filename in yt-dlp output
+fn parse_filename_from_output(output: &str, processed_url: &str) -> (String, String, String) {
+    // Look for the destination filename in yt-dlp/gallery-dl output
     for line in output.lines() {
         if line.contains("Destination:") {
             // Extract full path from "Destination: /path/to/filename.ext"
@@ -42,6 +42,17 @@ fn parse_filename_from_output(output: &str) -> (String, String, String) {
                     // Fallback: if we can't parse the format, return the whole filename as name
                     return ("Unknown".to_string(), filename.to_string(), full_path.to_string());
                 }
+            }
+        }
+    }
+
+    // For TikTok URLs, try to extract username from the URL itself
+    if processed_url.contains("tiktok.com/@") {
+        if let Some(at_pos) = processed_url.find("/@") {
+            let after_at = &processed_url[at_pos + 2..];
+            if let Some(slash_pos) = after_at.find('/') {
+                let username = &after_at[..slash_pos];
+                return (username.to_string(), "Unknown".to_string(), "".to_string());
             }
         }
     }
@@ -149,7 +160,7 @@ pub async fn download_url(
                                 // Insert download record into database for image downloads
                                 if let Ok(db) = crate::database::Database::new() {
                                     // Parse filename from gallery-dl output
-                                    let (user_handle, clean_name, file_path) = parse_filename_from_output(&String::from_utf8_lossy(&output.stdout));
+                                    let (user_handle, clean_name, file_path) = parse_filename_from_output(&String::from_utf8_lossy(&output.stdout), &processed_url);
 
                                     let download = crate::database::Download {
                                         id: None,
@@ -244,7 +255,7 @@ pub async fn download_url(
                             // Extract metadata from filename and insert into database
                             if let Ok(db) = crate::database::Database::new() {
                                 // Parse filename from yt-dlp output
-                                let (user_handle, clean_name, file_path) = parse_filename_from_output(&output);
+                                let (user_handle, clean_name, file_path) = parse_filename_from_output(&output, &processed_url);
 
                                 let download = crate::database::Download {
                                     id: None,
