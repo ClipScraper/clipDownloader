@@ -24,7 +24,8 @@ pub fn run() {
             commands::read_csv_from_path,
             commands::pick_directory,
             commands::open_directory,
-            commands::cancel_download
+            commands::cancel_download,
+            commands::import_csv_to_db,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -1,4 +1,4 @@
-// ===== src/app.rs =====
+// ===== src/app.rs (replace the whole file with this version) =====
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
 use yew_icons::{Icon, IconId};
@@ -31,7 +31,6 @@ extern "C" {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Page {Home, Downloads, Library, Settings}
@@ -99,6 +98,19 @@ async fn start_dragdrop_listener(q: UseStateHandle<Vec<ClipRow>>, page: UseState
                                         let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "path": path })).unwrap();
                                         let csv_js = invoke("read_csv_from_path", args).await;
                                         if let Some(csv_text) = csv_js.as_string() {
+                                            // NEW: send to backend to import into DB
+                                            let import_args = serde_wasm_bindgen::to_value(
+                                                &serde_json::json!({ "csv_text": csv_text })
+                                            ).unwrap();
+                                            let imported = invoke("import_csv_to_db", import_args).await;
+                                            if let Some(n) = imported.as_f64() {
+                                                web_sys::console::log_1(&format!("✅ Imported {} rows", n as u64).into());
+                                            } else {
+                                                web_sys::console::error_1(&"⚠️ import_csv_to_db returned non-number".into());
+                                                web_sys::console::error_1(&imported);
+                                            }
+
+                                            // Keep the existing preview in UI
                                             let rows = parse_csv(&csv_text);
                                             q_clone.set(rows);
                                             page_clone.set(Page::Downloads);
@@ -145,6 +157,18 @@ async fn start_dragdrop_listener(q: UseStateHandle<Vec<ClipRow>>, page: UseState
                                     let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "path": path })).unwrap();
                                     let csv_js = invoke("read_csv_from_path", args).await;
                                     if let Some(csv_text) = csv_js.as_string() {
+                                        // NEW: import to DB
+                                        let import_args = serde_wasm_bindgen::to_value(
+                                            &serde_json::json!({ "csv_text": csv_text })
+                                        ).unwrap();
+                                        let imported = invoke("import_csv_to_db", import_args).await;
+                                        if let Some(n) = imported.as_f64() {
+                                            web_sys::console::log_1(&format!("✅ Imported {} rows", n as u64).into());
+                                        } else {
+                                            web_sys::console::error_1(&"⚠️ import_csv_to_db returned non-number".into());
+                                            web_sys::console::error_1(&imported);
+                                        }
+
                                         let rows = parse_csv(&csv_text);
                                         q_clone.set(rows);
                                         page_clone.set(Page::Downloads);
@@ -213,10 +237,29 @@ pub fn app() -> Html {
         })
     };
 
+    // ⬇️ When CSV text arrives (drag-drop via DOM, or “Import list”), import it to DB.
     let on_csv_load = {
         let queue_rows = queue_rows.clone();
         let page = page.clone();
         Callback::from(move |csv_text: String| {
+            // Fire import in the background
+            spawn_local({
+                let csv_text_clone = csv_text.clone();
+                async move {
+                    let args = serde_wasm_bindgen::to_value(
+                        &serde_json::json!({ "csv_text": csv_text_clone })
+                    ).unwrap();
+                    let res = invoke("import_csv_to_db", args).await;
+                    if let Some(n) = res.as_f64() {
+                        web_sys::console::log_1(&format!("✅ Imported {} rows", n as u64).into());
+                    } else {
+                        web_sys::console::error_1(&"⚠️ import_csv_to_db returned non-number".into());
+                        web_sys::console::error_1(&res);
+                    }
+                }
+            });
+
+            // Keep showing the preview list in the UI
             let rows = parse_csv(&csv_text);
             queue_rows.set(rows);
             page.set(Page::Downloads);
