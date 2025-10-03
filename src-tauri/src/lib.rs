@@ -18,8 +18,12 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             commands::downloader::download_url,
+
+            // SETTINGS
             commands::settings_cmd::load_settings,
             commands::settings_cmd::save_settings,
+
+            // HOME
             commands::files::pick_csv_and_read,
             commands::files::read_csv_from_path,
             commands::files::pick_directory,

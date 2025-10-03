@@ -5,7 +5,7 @@
 - option to cap file name size
 
 - create a button to put next to DL button in /home | Queue button, to put a download for later
-
+- rename greet var from home
 
 
 #################################### Bug:

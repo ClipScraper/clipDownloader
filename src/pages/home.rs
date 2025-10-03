@@ -32,6 +32,7 @@ pub struct Props {
 
 #[function_component(HomePage)]
 pub fn home_page(props: &Props) -> Html {
+    println!("[FRONTEND] [pages/home.rs] [home_page component]");
     let greet_input_ref = use_node_ref();
     let name = use_state(|| String::new());
     let download_results = use_state(|| Vec::<DownloadResult>::new());
@@ -125,7 +126,11 @@ pub fn home_page(props: &Props) -> Html {
         })
     };
 
+    // [FRONTEND] [pages/home.rs] [open_click callback]
+    // Callback for the "Import list" button click
+    // Triggers the file picker dialog to select and import a CSV file containing URLs to download
     let open_click = {
+        println!("[FRONTEND] [pages/home.rs] [open_click callback]");
         let on_open_file = props.on_open_file.clone();
         Callback::from(move |_| on_open_file.emit(()))
     };
@@ -140,7 +145,12 @@ pub fn home_page(props: &Props) -> Html {
         web_sys::console::log_1(&"Drag leave".into());
     });
 
+    // [FRONTEND] [pages/home.rs] [ondrop callback]
+    // Drag and drop handler for CSV files
+    // Allows users to drag and drop CSV files onto the page for import
+    // Reads the file content and triggers the same CSV import process as the "Import list" button
     let ondrop = {
+        println!("[FRONTEND] [pages/home.rs] [ondrop callback]");
         let on_csv_load = props.on_csv_load.clone();
         Callback::from(move |e: DragEvent| {
             e.prevent_default();
@@ -159,6 +169,7 @@ pub fn home_page(props: &Props) -> Html {
                                 web_sys::console::log_1(&"File loaded".into());
                                 let reader: web_sys::FileReader = e.target().unwrap().dyn_into().unwrap();
                                 let csv_text = reader.result().unwrap().as_string().unwrap();
+                                // Emit CSV content to trigger import process (same as Import list button)
                                 on_csv_load.emit(csv_text);
                             }) as Box<dyn FnMut(_)>);
                             file_reader.set_onload(Some(onload.as_ref().unchecked_ref()));
@@ -207,6 +218,8 @@ pub fn home_page(props: &Props) -> Html {
                 })}
             </div>
             <div class="row home-actions">
+                // Button to open file dialog for importing CSV file containing URLs to download
+                // When clicked, opens a file picker, reads the CSV, imports URLs to database, and navigates to downloads page
                 <button type="button" onclick={open_click}>{"Import list"}</button>
             </div>
         </main>

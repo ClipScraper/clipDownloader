@@ -35,7 +35,12 @@ extern "C" {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Page {Home, Downloads, Library, Settings}
 
+// [FRONTEND] [app.rs] [parse_csv]
+// Parse CSV text into ClipRow structs for UI preview display
+// Used to show imported items immediately in the downloads page before database operations complete
+// Expected CSV format: Platform,Type,Handle,Media,link columns
 fn parse_csv(csv_text: &str) -> Vec<ClipRow> {
+    println!("[FRONTEND] [app.rs] [parse_csv]");
     let mut reader = csv::ReaderBuilder::new()
         .trim(csv::Trim::All)
         .has_headers(true)
@@ -218,6 +223,7 @@ pub enum DeleteItem {
 
 #[function_component(App)]
 pub fn app() -> Html {
+    println!("[FRONTEND] [app.rs] [app component]");
     let _greet_input_ref = use_node_ref();
 
     let page = use_state(|| Page::Home);
@@ -237,18 +243,26 @@ pub fn app() -> Html {
         })
     };
 
-    // ⬇️ When CSV text arrives (drag-drop via DOM, or “Import list”), import it to DB.
+    // [FRONTEND] [app.rs] [on_csv_load callback]
+    // Main CSV processing callback - handles both file picker and drag-drop imports
+    // When CSV text is received (from file picker or drag-drop), this function:
+    // 1. Imports the CSV data to the database in the background
+    // 2. Parses the CSV for immediate UI preview
+    // 3. Updates the UI state to show the imported items in the downloads page
     let on_csv_load = {
+        println!("[FRONTEND] [app.rs] [on_csv_load callback]");
         let queue_rows = queue_rows.clone();
         let page = page.clone();
         Callback::from(move |csv_text: String| {
-            // Fire import in the background
+            // Import CSV data to database asynchronously in the background
+            // This saves all URLs to the database with status "Backlog" for later downloading
             spawn_local({
                 let csv_text_clone = csv_text.clone();
                 async move {
                     let args = serde_wasm_bindgen::to_value(
                         &serde_json::json!({ "csv_text": csv_text_clone })
                     ).unwrap();
+                    // Call backend function to parse CSV and insert records into database
                     let res = invoke("import_csv_to_db", args).await;
                     if let Some(n) = res.as_f64() {
                         web_sys::console::log_1(&format!("✅ Imported {} rows", n as u64).into());
@@ -259,20 +273,29 @@ pub fn app() -> Html {
                 }
             });
 
-            // Keep showing the preview list in the UI
+            // Parse CSV for immediate UI preview display
+            // Show the imported items in the downloads page before they are actually downloaded
             let rows = parse_csv(&csv_text);
             queue_rows.set(rows);
+            // Navigate to downloads page to show the imported items
             page.set(Page::Downloads);
         })
     };
 
+    // [FRONTEND] [app.rs] [on_open_file callback]
+    // Callback triggered when user clicks "Import list" button
+    // Opens a file picker dialog to select a CSV file, reads its contents,
+    // and passes the CSV text to on_csv_load for processing and database import
     let on_open_file = {
+        println!("[FRONTEND] [app.rs] [on_open_file callback]");
         let on_csv_load = on_csv_load.clone();
         Callback::from(move |_: ()| {
             let on_csv_load = on_csv_load.clone();
             spawn_local(async move {
+                // Invoke backend command to open file picker and read CSV file
                 let csv_js = invoke("pick_csv_and_read", JsValue::NULL).await;
                 if let Some(csv_text) = csv_js.as_string() {
+                    // Pass CSV content to import processing function
                     on_csv_load.emit(csv_text);
                 }
             });

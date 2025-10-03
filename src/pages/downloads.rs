@@ -9,7 +9,13 @@ pub struct Props {
     pub on_delete: Callback<DeleteItem>,
 }
 
+// [FRONTEND] [pages/downloads.rs] [display_label_for_row]
+// Generate a human-readable display label for a downloaded item
+// Used to show a meaningful name in the downloads list instead of just the URL
+// For Instagram: shows username and post type/ID
+// For other platforms: shows the last two segments of the URL path
 fn display_label_for_row(row: &ClipRow) -> String {
+    println!("[FRONTEND] [pages/downloads.rs] [display_label_for_row]");
     let url = row.link.trim_end_matches('/');
     let parts: Vec<&str> = url.split('/').collect();
     if parts.len() >= 6 && (parts[3] == "www.instagram.com" || parts[2].contains("instagram.com")) {
@@ -40,12 +46,20 @@ fn platform_icon_src(p: &str) -> &'static str {
     }
 }
 
+// [FRONTEND] [pages/downloads.rs] [DownloadsPage component]
+// Main downloads page component that displays imported items in an organized hierarchical view
+// Shows items grouped by platform (Instagram, TikTok, YouTube), then by user/channel, then by content type
+// Users can expand/collapse sections and perform actions like delete or download
 #[function_component(DownloadsPage)]
 pub fn downloads_page(props: &Props) -> Html {
+    println!("[FRONTEND] [pages/downloads.rs] [DownloadsPage component]");
+    // State for tracking which platform and collection sections are expanded
     let expanded_platforms = use_state(|| std::collections::HashSet::<String>::new());
     let expanded_collections = use_state(|| std::collections::HashSet::<String>::new());
 
-    // Build summaries inline (dup of grouping kept minimal for brevity)
+    // Organize imported items into a hierarchical structure for display
+    // Group by: Platform -> (User Handle, Content Type) -> List of Items
+    // This creates the nested expandable structure shown in the UI
     use std::collections::BTreeMap;
     let mut map: BTreeMap<String, BTreeMap<(String, String, Platform, ContentType), Vec<ClipRow>>> = BTreeMap::new();
     for r in props.rows.iter().cloned() {
@@ -55,7 +69,11 @@ pub fn downloads_page(props: &Props) -> Html {
         map.entry(plat).or_default().entry((handle, typ, r.platform, r.content_type)).or_default().push(r);
     }
 
+    // [FRONTEND] [pages/downloads.rs] [toggle_platform callback]
+    // Callback to toggle platform sections (Instagram, TikTok, YouTube) open/closed
+    // Uses a set to track which platforms are currently expanded
     let toggle_platform = {
+        println!("[FRONTEND] [pages/downloads.rs] [toggle_platform callback]");
         let expanded_platforms = expanded_platforms.clone();
         Callback::from(move |plat_key: String| {
             let mut set = (*expanded_platforms).clone();
@@ -63,7 +81,12 @@ pub fn downloads_page(props: &Props) -> Html {
             expanded_platforms.set(set);
         })
     };
+
+    // [FRONTEND] [pages/downloads.rs] [toggle_collection callback]
+    // Callback to toggle collection sections (individual user/content type groups) open/closed
+    // Uses a set to track which collections are currently expanded
     let toggle_collection = {
+        println!("[FRONTEND] [pages/downloads.rs] [toggle_collection callback]");
         let expanded_collections = expanded_collections.clone();
         Callback::from(move |col_key: String| {
             let mut set = (*expanded_collections).clone();
@@ -75,6 +98,8 @@ pub fn downloads_page(props: &Props) -> Html {
     html! {
         <main class="container" style="padding-top: 10vh;">
             <div class="summary">
+                // Render each platform section (Instagram, TikTok, YouTube)
+                // Each platform shows collection count and total item count
                 { for map.into_iter().map(|(plat_label, col_map)| {
                     let collections_count = col_map.len();
                     let bookmarks_count: usize = col_map.values().map(|v| v.len()).sum();
@@ -132,6 +157,8 @@ pub fn downloads_page(props: &Props) -> Html {
                                         </div>
                                         { if col_open { html!{
                                             <ul class="rows">
+                                                // Render individual items within each collection
+                                                // Shows media type icon, display label, and action buttons
                                                 { for rows.into_iter().map(|row| {
                                                     let on_delete_row = {
                                                         let on_delete = props.on_delete.clone();

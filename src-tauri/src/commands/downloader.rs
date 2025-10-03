@@ -11,7 +11,7 @@ pub async fn download_url(
     url: String,
     state: State<'_, crate::DownloadState>,
 ) -> Result<(), String> {
-    println!("[tauri] download_url called with: {}", url);
+    println!("[BACKEND][DOWNLOADER] download_url called with: {}", url);
 
     if let Some(window) = app.get_webview_window("main") {
         // Normalize minimally: strip IG query params
@@ -22,7 +22,6 @@ pub async fn download_url(
             }
         }
 
-        println!("[tauri] processing url: {}", processed_url);
         emit_status(
             &window,
             false,
@@ -84,10 +83,7 @@ pub async fn download_url(
                                     true,
                                     format!("Saved images under {}", site_dir.display()),
                                 );
-                                println!(
-                                    "[tauri] gallery-dl ok with {browser}\nstdout:\n{}",
-                                    String::from_utf8_lossy(&output.stdout)
-                                );
+                                // println!("[tauri] gallery-dl ok with {browser}\nstdout:\n{}", String::from_utf8_lossy(&output.stdout));
 
                                 // Insert records
                                 if let Ok(db) = crate::database::Database::new() {
@@ -206,7 +202,7 @@ pub async fn download_url(
                             };
 
                             emit_status(&window, true, message);
-                            println!("[tauri] yt-dlp ok with {browser}");
+                            // println!("[tauri] yt-dlp ok with {browser}");
 
                             if let Ok(db) = crate::database::Database::new() {
                                 let mut files = parse_multiple_filenames_from_output(
@@ -311,6 +307,7 @@ pub async fn download_url(
 
 #[tauri::command]
 pub async fn cancel_download(state: State<'_, crate::DownloadState>) -> Result<(), String> {
+    println!("[BACKEND][DOWNLOADER] cancel_download called");
     if let Some(handle) = state.0.lock().unwrap().take() {
         handle.abort();
         println!("[tauri] Download cancelled.");
