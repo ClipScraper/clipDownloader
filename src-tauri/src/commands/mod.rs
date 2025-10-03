@@ -1,4 +1,4 @@
-pub mod events;
+pub mod event;
 pub mod parse;
 pub mod downloader;
 pub mod files;

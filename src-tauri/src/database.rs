@@ -128,10 +128,7 @@ impl Database {
     pub fn new() -> Result<Self> {
         let db_path = Self::get_db_path()?;
         let conn = Connection::open(&db_path)?;
-
-        // Enable foreign keys
         conn.execute("PRAGMA foreign_keys = ON", [])?;
-
         let db = Database { conn };
         db.create_tables()?;
         Ok(db)

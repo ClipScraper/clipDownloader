@@ -17,15 +17,15 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
-            commands::download_url,
-            commands::load_settings,
-            commands::save_settings,
-            commands::pick_csv_and_read,
-            commands::read_csv_from_path,
-            commands::pick_directory,
-            commands::open_directory,
-            commands::cancel_download,
-            commands::import_csv_to_db,
+            commands::downloader::download_url,
+            commands::settings_cmd::load_settings,
+            commands::settings_cmd::save_settings,
+            commands::files::pick_csv_and_read,
+            commands::files::read_csv_from_path,
+            commands::files::pick_directory,
+            commands::files::open_directory,
+            commands::downloader::cancel_download,
+            commands::import::import_csv_to_db,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

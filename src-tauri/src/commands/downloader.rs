@@ -1,4 +1,4 @@
-use super::events::emit_status;
+use super::event::emit_status;
 use super::parse::{ig_handle_and_id, parse_multiple_filenames_from_output};
 use crate::database::OnDuplicate;
 use chrono::Utc;
