@@ -2,3 +2,4 @@
 - handle errors
 - get collections from extension
 - add tests
+- option to cap file name size

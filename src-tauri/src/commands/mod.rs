@@ -6,85 +6,184 @@ use crate::{
     DownloadState,
 };
 use chrono::Utc;
-use std::{fs as std_fs, path::PathBuf};
+use std::{fs as std_fs, path::{Path, PathBuf}};
 use tauri::{Emitter, Manager, State};
 
-/// Parse user_handle, clean_name, and file_path from yt-dlp/gallery-dl output
-/// Expected format: "user_handle - name [id].ext"
-/// Returns (user_handle, clean_name, full_file_path)
-fn parse_filename_from_output(output: &str, processed_url: &str) -> (String, String, String) {
-    parse_multiple_filenames_from_output(output, processed_url).into_iter().next().unwrap_or_else(|| ("Unknown".to_string(), "Unknown".to_string(), "".to_string()))
+/// Extract Instagram handle and id from /reel/… or /p/…
+fn ig_handle_and_id(url: &str) -> (Option<String>, Option<String>) {
+    if let Some(pos) = url.find("instagram.com/") {
+        let rest = &url[pos + "instagram.com/".len()..];
+        let parts: Vec<&str> = rest.trim_matches('/').split('/').collect();
+        if parts.len() >= 3 {
+            let handle = parts[0].to_string();
+            let typ = parts[1];
+            let id = parts[2].to_string();
+            if typ == "reel" || typ == "p" {
+                return (Some(handle), Some(id));
+            }
+        }
+    }
+    (None, None)
 }
 
-/// Parse multiple user_handle, clean_name, and file_path from yt-dlp/gallery-dl output
+/// Parse user_handle, clean_name, and file_path from tool output (gallery-dl or yt-dlp).
 /// Returns a Vec of (user_handle, clean_name, full_file_path)
-fn parse_multiple_filenames_from_output(output: &str, processed_url: &str) -> Vec<(String, String, String)> {
+///
+/// Improvements:
+/// - Detect yt-dlp "Destination: …" and merger lines with the final path
+/// - Honor explicit `--print after_move:filepath` (bare path lines)
+/// - Fallback to IG url for handle (and id for name) when needed
+fn parse_multiple_filenames_from_output(
+    output: &str,
+    processed_url: &str,
+    yt_out_dir_hint: Option<&Path>,
+) -> Vec<(String, String, String)> {
+    use std::path::Path as StdPath;
     let mut results = Vec::new();
+    let mut candidate_paths: Vec<String> = Vec::new();
 
-    // Look for all destination filenames in gallery-dl output (format: "# /path/to/file.jpg")
-    for (index, line) in output.lines().enumerate() {
-        let trimmed_line = line.trim();
-        if trimmed_line.starts_with('#') && trimmed_line.len() > 2 {
-            // Extract full path after "# "
-            let full_path = &trimmed_line[2..].trim();
+    let dir_hint_str = yt_out_dir_hint
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_default();
 
-            // Extract user handle from the directory path
-            let user_handle = if let Some(last_slash) = full_path.rfind('/') {
-                if let Some(second_last_slash) = full_path[..last_slash].rfind('/') {
-                    full_path[second_last_slash + 1..last_slash].to_string()
+    for line in output.lines() {
+        let trimmed = line.trim();
+
+        // gallery-dl style "# /abs/path/file.ext"
+        if trimmed.starts_with('#') && trimmed.len() > 2 {
+            let full_path = trimmed[2..].trim().to_string();
+            candidate_paths.push(full_path);
+            continue;
+        }
+
+        // yt-dlp: [download] Destination: /abs/path/file.ext
+        if let Some(idx) = trimmed.find("Destination: ") {
+            let p = trimmed[idx + "Destination: ".len()..].trim().to_string();
+            candidate_paths.push(p);
+            continue;
+        }
+
+        // yt-dlp: [Merger] Merging formats into "/abs/path/file.ext"
+        if trimmed.contains("Merging formats into") {
+            if let Some(q1) = trimmed.find('"') {
+                if let Some(q2) = trimmed[q1 + 1..].find('"') {
+                    let p = &trimmed[q1 + 1..q1 + 1 + q2];
+                    candidate_paths.push(p.to_string());
+                    continue;
+                }
+            }
+            // fallback without quotes
+            if let Some(after) = trimmed.split("into").nth(1) {
+                candidate_paths.push(after.trim_matches(|c| c == '"' || c == ' ').to_string());
+                continue;
+            }
+        }
+
+        // our explicit --print after_move:filepath / filepath
+        // (bare line containing an absolute path)
+        let looks_absolute_unix = trimmed.starts_with('/');
+        let looks_absolute_win = trimmed.len() > 2 && trimmed.as_bytes()[1] == b':' && (trimmed.as_bytes()[2] == b'\\' || trimmed.as_bytes()[2] == b'/');
+        if looks_absolute_unix || looks_absolute_win || (!dir_hint_str.is_empty() && trimmed.starts_with(&dir_hint_str)) {
+            // Heuristic: likely a printed path; keep it
+            if trimmed.contains('.') { // simple sanity check
+                candidate_paths.push(trimmed.to_string());
+                continue;
+            }
+        }
+
+        // yt-dlp skip message contains filename (no dir)
+        // e.g. "[download] XYZ.mp4 has already been downloaded"
+        if trimmed.starts_with("[download] ") && trimmed.contains(" has already been downloaded") {
+            let name_part = trimmed.trim_start_matches("[download] ").split(" has already been downloaded").next().unwrap_or("").trim();
+            if !name_part.is_empty() && !dir_hint_str.is_empty() {
+                let joined = format!("{}/{}", dir_hint_str, name_part);
+                candidate_paths.push(joined);
+            }
+            continue;
+        }
+        if trimmed.starts_with("[download] Skipping") && trimmed.contains("has already been recorded in the archive") {
+            // This one usually also includes a filename after "Skipping "
+            if let Some(after) = trimmed.strip_prefix("[download] Skipping ") {
+                let fname = after.split(':').next().unwrap_or("").trim();
+                if !fname.is_empty() && !dir_hint_str.is_empty() {
+                    candidate_paths.push(format!("{}/{}", dir_hint_str, fname));
+                }
+            }
+            continue;
+        }
+    }
+
+    // Dedup paths, keep last occurrences (most reliable are after_move)
+    use std::collections::HashSet;
+    let mut seen = HashSet::new();
+    let mut unique_paths = Vec::new();
+    for p in candidate_paths.into_iter() {
+        if seen.insert(p.clone()) {
+            unique_paths.push(p);
+        }
+    }
+
+    // Helper: derive handle + name from path + filename + url
+    for full_path in unique_paths.into_iter() {
+        let full = StdPath::new(&full_path);
+        let filename = full.file_name().and_then(|s| s.to_str()).unwrap_or("");
+        let mut clean_name = filename.to_string();
+        let mut user_handle = "Unknown".to_string();
+
+        // Try parse human-friendly "uploader - title [id].ext" → clean_name = title
+        if let Some(stem) = full.file_stem().and_then(|s| s.to_str()) {
+            let s = stem.to_string();
+            if let Some(bracket_start) = s.find('[') {
+                let before_bracket = s[..bracket_start].trim();
+                if let Some(dash_pos) = before_bracket.find(" - ") {
+                    clean_name = before_bracket[dash_pos + 3..].trim().to_string();
                 } else {
-                    "Unknown".to_string()
+                    clean_name = before_bracket.to_string();
                 }
             } else {
-                "Unknown".to_string()
-            };
+                clean_name = s;
+            }
+        }
 
-            // Extract just the filename part for parsing
-            if let Some(last_slash) = full_path.rfind('/') {
-                let filename = &full_path[last_slash + 1..];
-
-                // For carousel images, use a simple name format
-                let clean_name = if filename.contains("Taotao's Photo") {
-                    format!("Image {}", index + 1)
-                } else {
-                    // Try to parse: "user_handle - name [id].ext"
-                    if let Some(bracket_start) = filename.find('[') {
-                        if let Some(_bracket_end) = filename.find(']') {
-                            let before_bracket = &filename[..bracket_start].trim();
-
-                            // Split on " - " to get user_handle and name
-                            if let Some(dash_pos) = before_bracket.find(" - ") {
-                                before_bracket[dash_pos + 3..].trim().to_string()
-                            } else {
-                                filename.to_string()
+        // Prefer IG handle from URL; otherwise try parent folder (useful for gallery-dl)
+        if processed_url.contains("instagram.com/") {
+            if let (Some(h), _) = ig_handle_and_id(processed_url) {
+                user_handle = h;
+            }
+        }
+        if user_handle == "Unknown" {
+            if let Some(parent) = full.parent() {
+                if let Some(last) = parent.file_name().and_then(|s| s.to_str()) {
+                    // gallery-dl: .../<platform>/<handle>/...
+                    if last != "instagram" && last != "tiktok" && last != "youtube" {
+                        user_handle = last.to_string();
+                    } else if let Some(pp) = parent.parent() {
+                        if let Some(prev) = pp.file_name().and_then(|s| s.to_str()) {
+                            if prev != "instagram" && prev != "tiktok" && prev != "youtube" {
+                                user_handle = prev.to_string();
                             }
-                        } else {
-                            filename.to_string()
                         }
-                    } else {
-                        filename.to_string()
                     }
-                };
-
-                results.push((user_handle, clean_name, full_path.to_string()));
+                }
             }
         }
-    }
 
-    // For TikTok URLs, try to extract username from the URL itself if no destinations found
-    if results.is_empty() && processed_url.contains("tiktok.com/@") {
-        if let Some(at_pos) = processed_url.find("/@") {
-            let after_at = &processed_url[at_pos + 2..];
-            if let Some(slash_pos) = after_at.find('/') {
-                let username = &after_at[..slash_pos];
-                results.push((username.to_string(), "Unknown".to_string(), "".to_string()));
+        // If name is empty or "Unknown" and URL provides id, use the id token (/reel/:id or /p/:id)
+        if clean_name.is_empty() || clean_name.eq_ignore_ascii_case("unknown") {
+            if let (_, Some(id)) = ig_handle_and_id(processed_url) {
+                clean_name = id;
             }
         }
+
+        results.push((user_handle, clean_name, full_path));
     }
 
-    // If no destinations found, return defaults
+    // If nothing detected (e.g., very quiet output), at least fill from URL for IG
     if results.is_empty() {
-        results.push(("Unknown".to_string(), "Unknown".to_string(), "".to_string()));
+        let (h, maybe_id) = ig_handle_and_id(processed_url);
+        let handle = h.unwrap_or_else(|| "Unknown".to_string());
+        let name = maybe_id.unwrap_or_else(|| "Unknown".to_string());
+        results.push((handle, name, String::new()));
     }
 
     results
@@ -117,7 +216,7 @@ pub async fn download_url(
     if let Some(window) = app.get_webview_window("main") {
         // Normalize minimally: strip IG query params; DO NOT rewrite TikTok /photo/ → /video/
         let mut processed_url = url.clone();
-        if processed_url.contains("instagram.com/p/") {
+        if processed_url.contains("instagram.com/") {
             if let Some((base, _)) = processed_url.split_once('?') {
                 processed_url = base.to_string();
             }
@@ -189,7 +288,11 @@ pub async fn download_url(
                                 // Insert download record(s) into database for image downloads
                                 if let Ok(db) = crate::database::Database::new() {
                                     // Parse multiple filenames from gallery-dl output
-                                    let files = parse_multiple_filenames_from_output(&String::from_utf8_lossy(&output.stdout), &processed_url);
+                                    let files = parse_multiple_filenames_from_output(
+                                        &String::from_utf8_lossy(&output.stdout),
+                                        &processed_url,
+                                        None,
+                                    );
 
                                     // Generate image set ID if multiple files (carousel)
                                     let image_set_id = if files.len() > 1 {
@@ -198,7 +301,23 @@ pub async fn download_url(
                                         None
                                     };
 
-                                    for (user_handle, clean_name, file_path) in files {
+                                    for (mut user_handle, mut clean_name, mut file_path) in files {
+                                        // Fallbacks from URL for IG
+                                        if user_handle == "Unknown" && processed_url.contains("instagram.com/") {
+                                            if let (Some(h), _) = ig_handle_and_id(&processed_url) {
+                                                user_handle = h;
+                                            }
+                                        }
+                                        if (clean_name.is_empty() || clean_name.eq_ignore_ascii_case("unknown")) && processed_url.contains("instagram.com/") {
+                                            if let (_, Some(id)) = ig_handle_and_id(&processed_url) {
+                                                clean_name = id;
+                                            }
+                                        }
+                                        if file_path.is_empty() {
+                                            // Gallery-dl should have given us the path, but keep a last resort
+                                            file_path = "unknown_path".to_string();
+                                        }
+
                                         let download = crate::database::Download {
                                             id: None,
                                             platform: if processed_url.contains("instagram.com") {
@@ -270,12 +389,9 @@ pub async fn download_url(
                                     format!("File already exists, skipped (as per settings) in {}", yt_out_dir.display())
                                 }
                                 OnDuplicate::Overwrite => {
-                                    // Even if yt-dlp printed "already downloaded", we forced overwrites,
-                                    // so we report a normal save.
                                     format!("Saved to {}", yt_out_dir.display())
                                 }
                                 OnDuplicate::CreateNew => {
-                                    // We chose a free name, so we report a normal save.
                                     format!("Saved to {}", yt_out_dir.display())
                                 }
                                 _ => {
@@ -291,10 +407,13 @@ pub async fn download_url(
                             emit_status(&window, true, message);
                             println!("[tauri] yt-dlp ok with {browser}");
 
-                            // Extract metadata from filename and insert into database
+                            // Extract metadata from output and insert into database
                             if let Ok(db) = crate::database::Database::new() {
-                                // Parse multiple filenames from yt-dlp output
-                                let files = parse_multiple_filenames_from_output(&output, &processed_url);
+                                let files = parse_multiple_filenames_from_output(
+                                    &output,
+                                    &processed_url,
+                                    Some(&yt_out_dir),
+                                );
 
                                 // Generate image set ID if multiple files (carousel)
                                 let image_set_id = if files.len() > 1 {
@@ -303,7 +422,27 @@ pub async fn download_url(
                                     None
                                 };
 
-                                for (user_handle, clean_name, file_path) in files {
+                                for (mut user_handle, mut clean_name, mut file_path) in files {
+                                    // Fallbacks for Instagram from the URL
+                                    if processed_url.contains("instagram.com/") {
+                                        if user_handle == "Unknown" {
+                                            if let (Some(h), _) = ig_handle_and_id(&processed_url) {
+                                                user_handle = h;
+                                            }
+                                        }
+                                        if clean_name.is_empty() || clean_name.eq_ignore_ascii_case("unknown") {
+                                            if let (_, Some(id)) = ig_handle_and_id(&processed_url) {
+                                                clean_name = id;
+                                            }
+                                        }
+                                    }
+
+                                    // Ensure we never store empty path
+                                    if file_path.is_empty() {
+                                        // As a last resort, try to join the hinted dir with a probed filename
+                                        file_path = "unknown_path".to_string();
+                                    }
+
                                     let download = crate::database::Download {
                                         id: None,
                                         platform: if processed_url.contains("youtube.com") || processed_url.contains("youtu.be") {
@@ -459,4 +598,3 @@ pub async fn cancel_download(state: State<'_, DownloadState>) -> Result<(), Stri
     }
     Ok(())
 }
-
