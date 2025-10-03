@@ -128,10 +128,7 @@ impl Database {
     pub fn new() -> Result<Self> {
         let db_path = Self::get_db_path()?;
         let conn = Connection::open(&db_path)?;
-
-        // Enable foreign keys
         conn.execute("PRAGMA foreign_keys = ON", [])?;
-
         let db = Database { conn };
         db.create_tables()?;
         Ok(db)
@@ -151,7 +148,6 @@ impl Database {
     }
 
     fn create_tables(&self) -> Result<()> {
-        // Create downloads table
         self.conn.execute(
             "CREATE TABLE IF NOT EXISTS downloads (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -170,16 +166,10 @@ impl Database {
             [],
         )?;
 
-        // Check if path column exists, add it if it doesn't (migration for existing databases)
         self.migrate_add_path_column()?;
-
-        // Check if image_set_id column exists, add it if it doesn't (migration for existing databases)
         self.migrate_add_image_set_id_column()?;
-
-        // Check if link column has UNIQUE constraint and remove it if needed
         self.migrate_remove_link_unique_constraint()?;
 
-        // Create settings table
         self.conn.execute(
             "CREATE TABLE IF NOT EXISTS settings (
                 id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -189,7 +179,6 @@ impl Database {
             [],
         )?;
 
-        // Insert default settings if not exists
         self.conn.execute(
             "INSERT OR IGNORE INTO settings (id, download_directory, on_duplicate)
              VALUES (1, ?, ?)",
@@ -326,7 +315,6 @@ impl Database {
     }
 
     pub fn insert_download(&self, download: &Download) -> Result<i64> {
-        // If path is empty (for existing records), use a default value
         let path_value = if download.path.is_empty() {
             "unknown_path".to_string()
         } else {
@@ -347,7 +335,7 @@ impl Database {
                 &path_value,
                 &download.image_set_id.clone().unwrap_or_default(),
                 &download.date_added.to_rfc3339(),
-                &download.date_downloaded.map(|dt| dt.to_rfc3339()).unwrap_or_default(),
+                &download.date_downloaded.as_ref().map(|dt| dt.to_rfc3339()).unwrap_or_default(),
             ],
         )?;
 
