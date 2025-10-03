@@ -9,7 +9,17 @@ use chrono::Utc;
 use std::{fs as std_fs, path::{Path, PathBuf}};
 use tauri::{Emitter, Manager, State};
 
-/// Extract Instagram handle and id from /reel/… or /p/…
+/// Parse user_handle, clean_name, and file_path from yt-dlp/gallery-dl output
+/// Expected format: "user_handle - name [id].ext"
+/// Returns (user_handle, clean_name, full_file_path)
+fn parse_filename_from_output(output: &str, processed_url: &str) -> (String, String, String) {
+    parse_multiple_filenames_from_output(output, processed_url, None)
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| ("Unknown".to_string(), "Unknown".to_string(), "".to_string()))
+}
+
+/// Extract Instagram (handle, id) from /reel/… or /p/…
 fn ig_handle_and_id(url: &str) -> (Option<String>, Option<String>) {
     if let Some(pos) = url.find("instagram.com/") {
         let rest = &url[pos + "instagram.com/".len()..];
@@ -26,7 +36,7 @@ fn ig_handle_and_id(url: &str) -> (Option<String>, Option<String>) {
     (None, None)
 }
 
-/// Parse user_handle, clean_name, and file_path from tool output (gallery-dl or yt-dlp).
+/// Parse multiple user_handle, clean_name, and file_path from yt-dlp/gallery-dl output
 /// Returns a Vec of (user_handle, clean_name, full_file_path)
 ///
 /// Improvements:
@@ -72,37 +82,43 @@ fn parse_multiple_filenames_from_output(
                     continue;
                 }
             }
-            // fallback without quotes
             if let Some(after) = trimmed.split("into").nth(1) {
                 candidate_paths.push(after.trim_matches(|c| c == '"' || c == ' ').to_string());
                 continue;
             }
         }
 
-        // our explicit --print after_move:filepath / filepath
-        // (bare line containing an absolute path)
+        // our explicit --print after_move:filepath / filepath (bare line path)
         let looks_absolute_unix = trimmed.starts_with('/');
-        let looks_absolute_win = trimmed.len() > 2 && trimmed.as_bytes()[1] == b':' && (trimmed.as_bytes()[2] == b'\\' || trimmed.as_bytes()[2] == b'/');
-        if looks_absolute_unix || looks_absolute_win || (!dir_hint_str.is_empty() && trimmed.starts_with(&dir_hint_str)) {
-            // Heuristic: likely a printed path; keep it
-            if trimmed.contains('.') { // simple sanity check
+        let looks_absolute_win = trimmed.len() > 2
+            && trimmed.as_bytes()[1] == b':'
+            && (trimmed.as_bytes()[2] == b'\\' || trimmed.as_bytes()[2] == b'/');
+        if looks_absolute_unix
+            || looks_absolute_win
+            || (!dir_hint_str.is_empty() && trimmed.starts_with(&dir_hint_str))
+        {
+            if trimmed.contains('.') {
                 candidate_paths.push(trimmed.to_string());
                 continue;
             }
         }
 
-        // yt-dlp skip message contains filename (no dir)
-        // e.g. "[download] XYZ.mp4 has already been downloaded"
+        // yt-dlp skip messages (no dir) → join with hint if we have it
         if trimmed.starts_with("[download] ") && trimmed.contains(" has already been downloaded") {
-            let name_part = trimmed.trim_start_matches("[download] ").split(" has already been downloaded").next().unwrap_or("").trim();
+            let name_part = trimmed
+                .trim_start_matches("[download] ")
+                .split(" has already been downloaded")
+                .next()
+                .unwrap_or("")
+                .trim();
             if !name_part.is_empty() && !dir_hint_str.is_empty() {
-                let joined = format!("{}/{}", dir_hint_str, name_part);
-                candidate_paths.push(joined);
+                candidate_paths.push(format!("{}/{}", dir_hint_str, name_part));
             }
             continue;
         }
-        if trimmed.starts_with("[download] Skipping") && trimmed.contains("has already been recorded in the archive") {
-            // This one usually also includes a filename after "Skipping "
+        if trimmed.starts_with("[download] Skipping")
+            && trimmed.contains("has already been recorded in the archive")
+        {
             if let Some(after) = trimmed.strip_prefix("[download] Skipping ") {
                 let fname = after.split(':').next().unwrap_or("").trim();
                 if !fname.is_empty() && !dir_hint_str.is_empty() {
@@ -113,7 +129,7 @@ fn parse_multiple_filenames_from_output(
         }
     }
 
-    // Dedup paths, keep last occurrences (most reliable are after_move)
+    // Dedup paths (keep first occurrence)
     use std::collections::HashSet;
     let mut seen = HashSet::new();
     let mut unique_paths = Vec::new();
@@ -123,14 +139,14 @@ fn parse_multiple_filenames_from_output(
         }
     }
 
-    // Helper: derive handle + name from path + filename + url
+    // Build results with best-effort metadata
     for full_path in unique_paths.into_iter() {
         let full = StdPath::new(&full_path);
         let filename = full.file_name().and_then(|s| s.to_str()).unwrap_or("");
         let mut clean_name = filename.to_string();
         let mut user_handle = "Unknown".to_string();
 
-        // Try parse human-friendly "uploader - title [id].ext" → clean_name = title
+        // Parse "uploader - title [id].ext" → clean_name = title
         if let Some(stem) = full.file_stem().and_then(|s| s.to_str()) {
             let s = stem.to_string();
             if let Some(bracket_start) = s.find('[') {
@@ -145,7 +161,7 @@ fn parse_multiple_filenames_from_output(
             }
         }
 
-        // Prefer IG handle from URL; otherwise try parent folder (useful for gallery-dl)
+        // Prefer IG handle from URL; else try parent folder (gallery-dl)
         if processed_url.contains("instagram.com/") {
             if let (Some(h), _) = ig_handle_and_id(processed_url) {
                 user_handle = h;
@@ -154,7 +170,6 @@ fn parse_multiple_filenames_from_output(
         if user_handle == "Unknown" {
             if let Some(parent) = full.parent() {
                 if let Some(last) = parent.file_name().and_then(|s| s.to_str()) {
-                    // gallery-dl: .../<platform>/<handle>/...
                     if last != "instagram" && last != "tiktok" && last != "youtube" {
                         user_handle = last.to_string();
                     } else if let Some(pp) = parent.parent() {
@@ -168,8 +183,8 @@ fn parse_multiple_filenames_from_output(
             }
         }
 
-        // If name is empty or "Unknown" and URL provides id, use the id token (/reel/:id or /p/:id)
-        if clean_name.is_empty() || clean_name.eq_ignore_ascii_case("unknown") {
+        // ✅ Force IG id as name for /reel/ and /p/
+        if processed_url.contains("instagram.com/") {
             if let (_, Some(id)) = ig_handle_and_id(processed_url) {
                 clean_name = id;
             }
@@ -178,11 +193,15 @@ fn parse_multiple_filenames_from_output(
         results.push((user_handle, clean_name, full_path));
     }
 
-    // If nothing detected (e.g., very quiet output), at least fill from URL for IG
+    // If nothing detected (very quiet output), at least fill from URL for IG
     if results.is_empty() {
         let (h, maybe_id) = ig_handle_and_id(processed_url);
         let handle = h.unwrap_or_else(|| "Unknown".to_string());
-        let name = maybe_id.unwrap_or_else(|| "Unknown".to_string());
+        let name = if processed_url.contains("instagram.com/") {
+            maybe_id.unwrap_or_else(|| "Unknown".to_string())
+        } else {
+            "Unknown".to_string()
+        };
         results.push((handle, name, String::new()));
     }
 
@@ -303,18 +322,18 @@ pub async fn download_url(
 
                                     for (mut user_handle, mut clean_name, mut file_path) in files {
                                         // Fallbacks from URL for IG
-                                        if user_handle == "Unknown" && processed_url.contains("instagram.com/") {
-                                            if let (Some(h), _) = ig_handle_and_id(&processed_url) {
-                                                user_handle = h;
+                                        if processed_url.contains("instagram.com/") {
+                                            if user_handle == "Unknown" {
+                                                if let (Some(h), _) = ig_handle_and_id(&processed_url) {
+                                                    user_handle = h;
+                                                }
                                             }
-                                        }
-                                        if (clean_name.is_empty() || clean_name.eq_ignore_ascii_case("unknown")) && processed_url.contains("instagram.com/") {
+                                            // ✅ Force name to id for IG /reel/ or /p/
                                             if let (_, Some(id)) = ig_handle_and_id(&processed_url) {
                                                 clean_name = id;
                                             }
                                         }
                                         if file_path.is_empty() {
-                                            // Gallery-dl should have given us the path, but keep a last resort
                                             file_path = "unknown_path".to_string();
                                         }
 
@@ -409,11 +428,20 @@ pub async fn download_url(
 
                             // Extract metadata from output and insert into database
                             if let Ok(db) = crate::database::Database::new() {
-                                let files = parse_multiple_filenames_from_output(
+                                let mut files = parse_multiple_filenames_from_output(
                                     &output,
                                     &processed_url,
                                     Some(&yt_out_dir),
                                 );
+
+                                // ✅ Force DB name to IG id for reels/posts
+                                if processed_url.contains("instagram.com/") {
+                                    if let (_, Some(id)) = ig_handle_and_id(&processed_url) {
+                                        for f in files.iter_mut() {
+                                            f.1 = id.clone();
+                                        }
+                                    }
+                                }
 
                                 // Generate image set ID if multiple files (carousel)
                                 let image_set_id = if files.len() > 1 {
@@ -422,24 +450,15 @@ pub async fn download_url(
                                     None
                                 };
 
-                                for (mut user_handle, mut clean_name, mut file_path) in files {
-                                    // Fallbacks for Instagram from the URL
-                                    if processed_url.contains("instagram.com/") {
-                                        if user_handle == "Unknown" {
-                                            if let (Some(h), _) = ig_handle_and_id(&processed_url) {
-                                                user_handle = h;
-                                            }
-                                        }
-                                        if clean_name.is_empty() || clean_name.eq_ignore_ascii_case("unknown") {
-                                            if let (_, Some(id)) = ig_handle_and_id(&processed_url) {
-                                                clean_name = id;
-                                            }
+                                for (mut user_handle, clean_name, mut file_path) in files {
+                                    // Ensure handle from URL for IG
+                                    if processed_url.contains("instagram.com/") && user_handle == "Unknown" {
+                                        if let (Some(h), _) = ig_handle_and_id(&processed_url) {
+                                            user_handle = h;
                                         }
                                     }
 
-                                    // Ensure we never store empty path
                                     if file_path.is_empty() {
-                                        // As a last resort, try to join the hinted dir with a probed filename
                                         file_path = "unknown_path".to_string();
                                     }
 
