@@ -1,62 +1,42 @@
-// ===== src/app.rs (replace the whole file with this version) =====
+// ===== src/app.rs (single drag-drop listener + de-dupe, frontend no-ops after DB import) =====
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
 use yew_icons::{Icon, IconId};
 use crate::pages; // declared in main.rs
 use crate::types::{ClipRow, Platform, ContentType};
 use yew::prelude::*;
+use std::cell::RefCell;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Tauri v2 JS bridges (NO nesting of extern blocks)
+// Tauri v2 JS bridges
 
-// Tauri core.invoke returns a Promise -> mark async so we can .await it.
+// add `catch` so rejected Promises (backend Err(...)) don't panic WASM.
 #[wasm_bindgen]
 extern "C" {
-    #[wasm_bindgen(js_namespace = ["window", "__TAURI__", "core"])]
-    async fn invoke(cmd: &str, args: JsValue) -> JsValue;
+    #[wasm_bindgen(catch, js_namespace = ["window", "__TAURI__", "core"])]
+    async fn invoke(cmd: &str, args: JsValue) -> Result<JsValue, JsValue>;
 }
 
-// Tauri event.listen returns a Promise<UnlistenFn> -> async is fine.
 #[wasm_bindgen]
 extern "C" {
     #[wasm_bindgen(js_namespace = ["window", "__TAURI__", "event"])]
     async fn listen(event: &str, f: &Closure<dyn FnMut(JsValue)>) -> JsValue;
 }
 
-// Webview helper: returns a Webview object synchronously.
 #[wasm_bindgen]
 extern "C" {
     #[wasm_bindgen(js_namespace = ["window","__TAURI__","webview"])]
     fn getCurrentWebview() -> JsValue;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// Small helper to log an invoke error
+fn log_invoke_err(cmd: &str, e: JsValue) {
+    web_sys::console::error_2(&format!("invoke({cmd}) failed").into(), &e);
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Page {Home, Downloads, Library, Settings}
 
-// [FRONTEND] [app.rs] [parse_csv]
-// Parse CSV text into ClipRow structs for UI preview display
-// Used to show imported items immediately in the downloads page before database operations complete
-// Expected CSV format: Platform,Type,Handle,Media,link columns
-fn parse_csv(csv_text: &str) -> Vec<ClipRow> {
-    println!("[FRONTEND] [app.rs] [parse_csv]");
-    let mut reader = csv::ReaderBuilder::new()
-        .trim(csv::Trim::All)
-        .has_headers(true)
-        .from_reader(csv_text.as_bytes());
-
-    let mut rows: Vec<ClipRow> = Vec::new();
-    for record in reader.deserialize::<ClipRow>() {
-        match record {
-            Ok(row) => rows.push(row),
-            Err(err) => web_sys::console::error_1(&format!("CSV parse error: {err}").into()),
-        }
-    }
-    rows
-}
-
-// Pretty-log a JsValue to the console as JSON (best-effort).
 fn log_json(label: &str, v: &JsValue) {
     let s = js_sys::JSON::stringify(v)
         .ok()
@@ -65,20 +45,61 @@ fn log_json(label: &str, v: &JsValue) {
     web_sys::console::log_2(&JsValue::from_str(label), &JsValue::from_str(&s));
 }
 
-// Start BOTH listeners: (A) official onDragDropEvent, (B) raw event fallback.
-async fn start_dragdrop_listener(q: UseStateHandle<Vec<ClipRow>>, page: UseStateHandle<Page>) {
-    web_sys::console::log_1(&"🧩 init drag-drop listeners".into());
+// ─────────────────────────────────────────────────────────────────────────────
+// Drop de-dupe guard: ignore the same path twice within 1s
+thread_local! {
+    static LAST_DROP: RefCell<(String, f64)> = RefCell::new(("".to_string(), 0.0)); // (path, timestamp_ms)
+}
 
-    // A) Helper API on the Webview object (SYNC getter; do NOT await).
+// Use Date.now() to avoid needing the web-sys Performance feature.
+fn now_ms() -> f64 {
+    js_sys::Date::now()
+}
+
+fn should_handle_drop(path: &str) -> bool {
+    let t = now_ms();
+    let mut allow = true;
+    LAST_DROP.with(|cell| {
+        let mut prev = cell.borrow_mut();
+        let same = prev.0 == path;
+        let recent = t - prev.1 < 1000.0; // 1 second window
+        if same && recent {
+            allow = false;
+        } else {
+            *prev = (path.to_string(), t);
+        }
+    });
+    allow
+}
+
+// Spawn the backend import for a given filesystem path.
+// We ignore the return (frontend no-ops after DB save).
+fn spawn_import_from_path(path: String) {
+    if !should_handle_drop(&path) {
+        web_sys::console::log_1(&format!("⏭️ Ignored duplicate drop for {}", path).into());
+        return;
+    }
+    spawn_local(async move {
+        let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "path": path })).unwrap();
+        match invoke("read_csv_from_path", args).await {
+            Ok(_) => web_sys::console::log_1(&"✅ Imported CSV from drop (backend)".into()),
+            Err(e) => log_invoke_err("read_csv_from_path", e),
+        }
+    });
+}
+
+// Start ONE drag-drop listener: prefer onDragDropEvent; otherwise use raw tauri events.
+async fn start_dragdrop_listener() {
+    web_sys::console::log_1(&"🧩 init drag-drop listener".into());
+
+    let mut attached = false;
+
+    // Try Webview helper API first
     let webview = getCurrentWebview();
     if !webview.is_undefined() && !webview.is_null() {
         if let Ok(on_fn) = js_sys::Reflect::get(&webview, &JsValue::from_str("onDragDropEvent")) {
             if on_fn.is_function() {
                 let on = js_sys::Function::from(on_fn);
-                let handler_q = q.clone();
-                let handler_page = page.clone();
-
-                // Explicit type removes E0283 ambiguity.
                 let handler = Closure::<dyn FnMut(JsValue)>::new(move |event: JsValue| {
                     web_sys::console::log_1(&"🔥 onDragDropEvent fired".into());
                     log_json("event", &event);
@@ -88,131 +109,67 @@ async fn start_dragdrop_listener(q: UseStateHandle<Vec<ClipRow>>, page: UseState
 
                     let typ = js_sys::Reflect::get(&payload, &JsValue::from_str("type"))
                         .ok().and_then(|v| v.as_string()).unwrap_or_default();
-                    web_sys::console::log_1(&JsValue::from_str(&format!("type={}", typ)));
-
                     if typ == "drop" {
                         if let Ok(paths) = js_sys::Reflect::get(&payload, &JsValue::from_str("paths")) {
                             let arr = js_sys::Array::from(&paths);
-                            web_sys::console::log_1(&JsValue::from_str(&format!("paths len={}", arr.length())));
                             if arr.length() > 0 {
                                 if let Some(path) = arr.get(0).as_string() {
-                                    // Spawning a task to handle the async file reading
-                                    let q_clone = handler_q.clone();
-                                    let page_clone = handler_page.clone();
-                                    spawn_local(async move {
-                                        let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "path": path })).unwrap();
-                                        let csv_js = invoke("read_csv_from_path", args).await;
-                                        if let Some(csv_text) = csv_js.as_string() {
-                                            // NEW: send to backend to import into DB
-                                            let import_args = serde_wasm_bindgen::to_value(
-                                                &serde_json::json!({ "csv_text": csv_text })
-                                            ).unwrap();
-                                            let imported = invoke("import_csv_to_db", import_args).await;
-                                            if let Some(n) = imported.as_f64() {
-                                                web_sys::console::log_1(&format!("✅ Imported {} rows", n as u64).into());
-                                            } else {
-                                                web_sys::console::error_1(&"⚠️ import_csv_to_db returned non-number".into());
-                                                web_sys::console::error_1(&imported);
-                                            }
-
-                                            // Keep the existing preview in UI
-                                            let rows = parse_csv(&csv_text);
-                                            q_clone.set(rows);
-                                            page_clone.set(Page::Downloads);
-                                        }
-                                    });
+                                    spawn_import_from_path(path);
                                 }
                             }
                         }
                     }
                 });
 
-                // Call onDragDropEvent(handler)
                 let _ = on.call1(&webview, handler.as_ref().unchecked_ref());
-                handler.forget(); // keep alive
-                web_sys::console::log_1(&"✅ onDragDropEvent listener attached".into());
-            } else {
-                web_sys::console::log_1(&"ℹ️ onDragDropEvent is not a function; using raw event fallback".into());
+                handler.forget();
+                attached = true;
+                web_sys::console::log_1(&"✅ attached onDragDropEvent listener".into());
             }
         }
     }
 
-    // B) Raw event fallback (Tauri v2 DRAG_* events).
-    let fallback_q = q.clone();
-    let fallback_page = page.clone();
-    let raw = Closure::<dyn FnMut(JsValue)>::new(move |evt: JsValue| {
-        web_sys::console::log_1(&"🔥 raw listen('tauri://drag-drop') fired".into());
-        log_json("evt", &evt);
-        if let Ok(obj) = evt.dyn_into::<js_sys::Object>() {
-            if let Ok(payload) = js_sys::Reflect::get(&obj, &JsValue::from_str("payload")) {
-                log_json("payload", &payload);
-                let typ = js_sys::Reflect::get(&payload, &JsValue::from_str("type"))
-                    .ok().and_then(|v| v.as_string()).unwrap_or_default();
-                web_sys::console::log_1(&JsValue::from_str(&format!("type={}", typ)));
-                if typ == "drop" {
+    // If helper API not available, attach the raw fallback
+    if !attached {
+        let raw = Closure::<dyn FnMut(JsValue)>::new(move |evt: JsValue| {
+            web_sys::console::log_1(&"🔥 raw listen('tauri://drag-drop') fired".into());
+            log_json("evt", &evt);
+            if let Ok(obj) = evt.dyn_into::<js_sys::Object>() {
+                if let Ok(payload) = js_sys::Reflect::get(&obj, &JsValue::from_str("payload")) {
                     if let Ok(paths) = js_sys::Reflect::get(&payload, &JsValue::from_str("paths")) {
                         let arr = js_sys::Array::from(&paths);
-                        web_sys::console::log_1(&JsValue::from_str(&format!("paths len={}", arr.length())));
                         if arr.length() > 0 {
                             if let Some(path) = arr.get(0).as_string() {
-                                // Spawning a task to handle the async file reading
-                                let q_clone = fallback_q.clone();
-                                let page_clone = fallback_page.clone();
-                                spawn_local(async move {
-                                    let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "path": path })).unwrap();
-                                    let csv_js = invoke("read_csv_from_path", args).await;
-                                    if let Some(csv_text) = csv_js.as_string() {
-                                        // NEW: import to DB
-                                        let import_args = serde_wasm_bindgen::to_value(
-                                            &serde_json::json!({ "csv_text": csv_text })
-                                        ).unwrap();
-                                        let imported = invoke("import_csv_to_db", import_args).await;
-                                        if let Some(n) = imported.as_f64() {
-                                            web_sys::console::log_1(&format!("✅ Imported {} rows", n as u64).into());
-                                        } else {
-                                            web_sys::console::error_1(&"⚠️ import_csv_to_db returned non-number".into());
-                                            web_sys::console::error_1(&imported);
-                                        }
-
-                                        let rows = parse_csv(&csv_text);
-                                        q_clone.set(rows);
-                                        page_clone.set(Page::Downloads);
-                                    }
-                                });
+                                spawn_import_from_path(path);
                             }
                         }
                     }
                 }
             }
-        }
-    });
-    let _ = listen("tauri://drag-drop", &raw).await;
-    raw.forget();
-    web_sys::console::log_1(&"✅ raw tauri://drag-drop listener attached".into());
+        });
+        let _ = listen("tauri://drag-drop", &raw).await;
+        raw.forget();
+        web_sys::console::log_1(&"✅ attached raw tauri://drag-drop listener".into());
 
-    // Optional visibility while dragging over the window
-    let enter = Closure::<dyn FnMut(JsValue)>::new(move |_| {
-        web_sys::console::log_1(&"🟢 tauri://drag-enter".into());
-    });
-    let _ = listen("tauri://drag-enter", &enter).await;
-    enter.forget();
+        // optional: log the other raw drag states
+        let enter = Closure::<dyn FnMut(JsValue)>::new(move |_| {
+            web_sys::console::log_1(&"🟢 tauri://drag-enter".into());
+        });
+        let _ = listen("tauri://drag-enter", &enter).await;
+        enter.forget();
 
-    let over = Closure::<dyn FnMut(JsValue)>::new(move |_| {
-        web_sys::console::log_1(&"🟡 tauri://drag-over".into());
-    });
-    let _ = listen("tauri://drag-over", &over).await;
-    over.forget();
+        let over = Closure::<dyn FnMut(JsValue)>::new(move |_| {
+            web_sys::console::log_1(&"🟡 tauri://drag-over".into());
+        });
+        let _ = listen("tauri://drag-over", &over).await;
+        over.forget();
 
-    let leave = Closure::<dyn FnMut(JsValue)>::new(move |_| {
-        web_sys::console::log_1(&"⚪ tauri://drag-leave".into());
-    });
-    let _ = listen("tauri://drag-leave", &leave).await;
-    leave.forget();
-}
-
-#[derive(serde::Serialize)]
-struct ReadCsvFromPathArgs<'a> {
-    path: &'a str,
+        let leave = Closure::<dyn FnMut(JsValue)>::new(move |_| {
+            web_sys::console::log_1(&"⚪ tauri://drag-leave".into());
+        });
+        let _ = listen("tauri://drag-leave", &leave).await;
+        leave.forget();
+    }
 }
 
 pub enum DeleteItem {
@@ -224,11 +181,8 @@ pub enum DeleteItem {
 #[function_component(App)]
 pub fn app() -> Html {
     println!("[FRONTEND] [app.rs] [app component]");
-    let _greet_input_ref = use_node_ref();
-
     let page = use_state(|| Page::Home);
-    // Downloads page manages its own expand state
-    let queue_rows = use_state(|| Vec::<ClipRow>::new());
+    let queue_rows = use_state(|| Vec::<ClipRow>::new()); // UI no-ops after DB import.
 
     let on_delete = {
         let queue_rows = queue_rows.clone();
@@ -243,71 +197,28 @@ pub fn app() -> Html {
         })
     };
 
-    // [FRONTEND] [app.rs] [on_csv_load callback]
-    // Main CSV processing callback - handles both file picker and drag-drop imports
-    // When CSV text is received (from file picker or drag-drop), this function:
-    // 1. Imports the CSV data to the database in the background
-    // 2. Parses the CSV for immediate UI preview
-    // 3. Updates the UI state to show the imported items in the downloads page
+    // No-op: backend imports; nothing else in UI afterwards.
     let on_csv_load = {
-        println!("[FRONTEND] [app.rs] [on_csv_load callback]");
-        let queue_rows = queue_rows.clone();
-        let page = page.clone();
-        Callback::from(move |csv_text: String| {
-            // Import CSV data to database asynchronously in the background
-            // This saves all URLs to the database with status "Backlog" for later downloading
-            spawn_local({
-                let csv_text_clone = csv_text.clone();
-                async move {
-                    let args = serde_wasm_bindgen::to_value(
-                        &serde_json::json!({ "csv_text": csv_text_clone })
-                    ).unwrap();
-                    // Call backend function to parse CSV and insert records into database
-                    let res = invoke("import_csv_to_db", args).await;
-                    if let Some(n) = res.as_f64() {
-                        web_sys::console::log_1(&format!("✅ Imported {} rows", n as u64).into());
-                    } else {
-                        web_sys::console::error_1(&"⚠️ import_csv_to_db returned non-number".into());
-                        web_sys::console::error_1(&res);
-                    }
-                }
-            });
-
-            // Parse CSV for immediate UI preview display
-            // Show the imported items in the downloads page before they are actually downloaded
-            let rows = parse_csv(&csv_text);
-            queue_rows.set(rows);
-            // Navigate to downloads page to show the imported items
-            page.set(Page::Downloads);
+        Callback::from(move |_csv_text: String| {
+            // intentionally empty
         })
     };
 
-    // [FRONTEND] [app.rs] [on_open_file callback]
-    // Callback triggered when user clicks "Import list" button
-    // Opens a file picker dialog to select a CSV file, reads its contents,
-    // and passes the CSV text to on_csv_load for processing and database import
+    // "Import list" -> open picker in backend, which imports; we only log success/failure.
     let on_open_file = {
-        println!("[FRONTEND] [app.rs] [on_open_file callback]");
-        let on_csv_load = on_csv_load.clone();
         Callback::from(move |_: ()| {
-            let on_csv_load = on_csv_load.clone();
             spawn_local(async move {
-                // Invoke backend command to open file picker and read CSV file
-                let csv_js = invoke("pick_csv_and_read", JsValue::NULL).await;
-                if let Some(csv_text) = csv_js.as_string() {
-                    // Pass CSV content to import processing function
-                    on_csv_load.emit(csv_text);
+                match invoke("pick_csv_and_read", JsValue::NULL).await {
+                    Ok(_) => web_sys::console::log_1(&"✅ Imported CSV from picker (backend)".into()),
+                    Err(e) => log_invoke_err("pick_csv_and_read", e),
                 }
             });
         })
     };
 
-    // Start listeners at mount
     {
-        let q = queue_rows.clone();
-        let p = page.clone();
         use_effect_with((), move |_| {
-            spawn_local(start_dragdrop_listener(q.clone(), p.clone()));
+            spawn_local(start_dragdrop_listener());
             || ()
         });
     }

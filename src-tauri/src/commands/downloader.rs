@@ -50,8 +50,7 @@ pub async fn download_url(
                     "instagram"
                 } else if processed_url.contains("tiktok.com") {
                     "tiktok"
-                } else if processed_url.contains("youtube.com") || processed_url.contains("youtu.be")
-                {
+                } else if processed_url.contains("youtube.com") || processed_url.contains("youtu.be") {
                     "youtube"
                 } else {
                     "other"
@@ -146,10 +145,7 @@ pub async fn download_url(
                                 return;
                             }
                             Ok(output) => {
-                                eprintln!(
-                                    "[tauri] gallery-dl failed with {browser}\nstderr:\n{}",
-                                    String::from_utf8_lossy(&output.stderr)
-                                );
+                                eprintln!("[tauri] gallery-dl failed with {browser}\nstderr:\n{}", String::from_utf8_lossy(&output.stderr));
                             }
                             Err(e) => {
                                 eprintln!("[tauri] gallery-dl error with {browser}: {e}");
@@ -203,7 +199,6 @@ pub async fn download_url(
 
                             emit_status(&window, true, message);
                             // println!("[tauri] yt-dlp ok with {browser}");
-
                             if let Ok(db) = crate::database::Database::new() {
                                 let mut files = parse_multiple_filenames_from_output(
                                     &output,
@@ -275,10 +270,7 @@ pub async fn download_url(
                             return;
                         }
                         Ok((false, output)) => {
-                            eprintln!(
-                                "[tauri] yt-dlp failed with browser: {browser}\noutput:\n{}",
-                                output
-                            );
+                            eprintln!("[tauri] yt-dlp failed with browser: {browser}\noutput:\n{}", output);
                         }
                         Err(e) => {
                             eprintln!("[tauri] Failed to exec yt-dlp for {browser}: {e}");
@@ -289,11 +281,7 @@ pub async fn download_url(
                 if wants_images {
                     emit_status(&window, false, "Failed to fetch images. Ensure `gallery-dl` is installed/up-to-date and your chosen browser is logged in.");
                 } else {
-                    emit_status(
-                        &window,
-                        false,
-                        "Failed to download with any available browser's cookies.",
-                    );
+                    emit_status(&window, false, "Failed to download with any available browser's cookies.");
                 }
                 *state_clone.0.lock().unwrap() = None;
             }
