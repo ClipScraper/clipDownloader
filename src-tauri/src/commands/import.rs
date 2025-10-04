@@ -17,7 +17,7 @@ use chrono::Utc;
 #[tauri::command]
 pub async fn import_csv_to_db(csv_text: String) -> Result<u64, String> {
     println!("[BACKEND] [commands/import.rs] [import_csv_to_db]");
-    println!("Importing CSV to DB: {}", csv_text);
+    // println!("Importing CSV to DB: {}", csv_text);
     let mut rdr = csv::ReaderBuilder::new()
         .trim(csv::Trim::All)
         .has_headers(true)

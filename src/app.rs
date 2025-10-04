@@ -210,11 +210,6 @@ async fn start_dragdrop_listener(q: UseStateHandle<Vec<ClipRow>>, page: UseState
     leave.forget();
 }
 
-#[derive(serde::Serialize)]
-struct ReadCsvFromPathArgs<'a> {
-    path: &'a str,
-}
-
 pub enum DeleteItem {
     Platform(Platform),
     Collection(Platform, String, ContentType),
@@ -224,8 +219,6 @@ pub enum DeleteItem {
 #[function_component(App)]
 pub fn app() -> Html {
     println!("[FRONTEND] [app.rs] [app component]");
-    let _greet_input_ref = use_node_ref();
-
     let page = use_state(|| Page::Home);
     // Downloads page manages its own expand state
     let queue_rows = use_state(|| Vec::<ClipRow>::new());
@@ -250,11 +243,7 @@ pub fn app() -> Html {
     // 2. Parses the CSV for immediate UI preview
     // 3. Updates the UI state to show the imported items in the downloads page
 
-    // Main CSV processing callback - handles both file picker and drag-drop imports
-    // When CSV text is received (from file picker or drag-drop), this function:
-    // 1. Imports the CSV data to the database in the background
-    // 2. Parses the CSV for immediate UI preview
-    // 3. Updates the UI state to show the imported items in the downloads page
+    // Put this inside App::app(), replacing your current `on_csv_load` closure.
     let on_csv_load = {
         println!("[FRONTEND] [app.rs] [on_csv_load callback]");
         let queue_rows = queue_rows.clone();
@@ -264,9 +253,9 @@ pub fn app() -> Html {
             spawn_local({
                 let csv_text_clone = csv_text.clone();
                 async move {
-                    // ✅ Tauri v2 expects camelCase arg keys → use `csvText`
+                    // ✅ MUST match the Rust param name exactly: `csv_text`
                     let args = serde_wasm_bindgen::to_value(
-                        &serde_json::json!({ "csvText": csv_text_clone })
+                        &serde_json::json!({ "csv_text": csv_text_clone })
                     ).unwrap();
                     let res = invoke("import_csv_to_db", args).await;
                     if let Some(n) = res.as_f64() {
