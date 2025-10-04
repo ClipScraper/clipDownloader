@@ -249,20 +249,25 @@ pub fn app() -> Html {
     // 1. Imports the CSV data to the database in the background
     // 2. Parses the CSV for immediate UI preview
     // 3. Updates the UI state to show the imported items in the downloads page
+
+    // Main CSV processing callback - handles both file picker and drag-drop imports
+    // When CSV text is received (from file picker or drag-drop), this function:
+    // 1. Imports the CSV data to the database in the background
+    // 2. Parses the CSV for immediate UI preview
+    // 3. Updates the UI state to show the imported items in the downloads page
     let on_csv_load = {
         println!("[FRONTEND] [app.rs] [on_csv_load callback]");
         let queue_rows = queue_rows.clone();
         let page = page.clone();
         Callback::from(move |csv_text: String| {
             // Import CSV data to database asynchronously in the background
-            // This saves all URLs to the database with status "Backlog" for later downloading
             spawn_local({
                 let csv_text_clone = csv_text.clone();
                 async move {
+                    // ✅ Tauri v2 expects camelCase arg keys → use `csvText`
                     let args = serde_wasm_bindgen::to_value(
-                        &serde_json::json!({ "csv_text": csv_text_clone })
+                        &serde_json::json!({ "csvText": csv_text_clone })
                     ).unwrap();
-                    // Call backend function to parse CSV and insert records into database
                     let res = invoke("import_csv_to_db", args).await;
                     if let Some(n) = res.as_f64() {
                         web_sys::console::log_1(&format!("✅ Imported {} rows", n as u64).into());
@@ -274,10 +279,8 @@ pub fn app() -> Html {
             });
 
             // Parse CSV for immediate UI preview display
-            // Show the imported items in the downloads page before they are actually downloaded
             let rows = parse_csv(&csv_text);
             queue_rows.set(rows);
-            // Navigate to downloads page to show the imported items
             page.set(Page::Downloads);
         })
     };
