@@ -86,13 +86,7 @@ fn probe_filename(cookie_arg: &str, processed_url: &str, is_ig_images: bool) -> 
 
 /// If policy is CreateNew, compute a unique output *pattern* (no directory here).
 /// We pass the directory separately via `-P <dir>` to guarantee location.
-fn choose_output_template(
-    yt_out_dir: &Path,
-    cookie_arg: &str,
-    processed_url: &str,
-    is_ig_images: bool,
-    on_duplicate: &OnDuplicate,
-) -> std::io::Result<String> {
+fn choose_output_template(yt_out_dir: &Path, cookie_arg: &str, processed_url: &str, is_ig_images: bool, on_duplicate: &OnDuplicate) -> std::io::Result<String> {
     // For IG reels and posts handled by yt-dlp, we want filename = "%(id)s"
     let id_only = processed_url.contains("instagram.com/")
         && (processed_url.contains("/reel/") || processed_url.contains("/p/"));
@@ -145,17 +139,7 @@ fn choose_output_template(
     }
 }
 
-pub fn run_yt_dlp_with_progress<F>(
-    yt_out_dir: &Path,
-    cookie_arg: &str,
-    processed_url: &str,
-    is_ig_images: bool,
-    on_duplicate: &OnDuplicate,
-    mut progress_callback: F,
-) -> std::io::Result<(bool, String)>
-where
-    F: FnMut(&str),
-{
+pub fn run_yt_dlp_with_progress<F>(yt_out_dir: &Path, cookie_arg: &str, processed_url: &str, is_ig_images: bool, on_duplicate: &OnDuplicate, mut progress_callback: F) -> std::io::Result<(bool, String)> where F: FnMut(&str) {
     // Start with the common args
     let mut args = common_ytdlp_args(cookie_arg, is_ig_images);
 

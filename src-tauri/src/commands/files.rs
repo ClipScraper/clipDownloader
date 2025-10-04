@@ -32,7 +32,6 @@ pub async fn pick_csv_and_read(app: tauri::AppHandle) -> Result<String, String> 
 #[tauri::command]
 pub async fn read_csv_from_path(path: String) -> Result<String, String> {
     println!("[BACKEND] [commands/files.rs] [read_csv_from_path] {}", path);
-    println!("[tauri] read_csv_from_path: {}", path);
     std_fs::read_to_string(path).map_err(|e| e.to_string())
 }
 
