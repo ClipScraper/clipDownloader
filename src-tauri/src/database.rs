@@ -128,10 +128,7 @@ impl Database {
     pub fn new() -> Result<Self> {
         let db_path = Self::get_db_path()?;
         let conn = Connection::open(&db_path)?;
-
-        // Enable foreign keys
         conn.execute("PRAGMA foreign_keys = ON", [])?;
-
         let db = Database { conn };
         db.create_tables()?;
         Ok(db)
@@ -151,7 +148,6 @@ impl Database {
     }
 
     fn create_tables(&self) -> Result<()> {
-        // Create downloads table
         self.conn.execute(
             "CREATE TABLE IF NOT EXISTS downloads (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -170,16 +166,10 @@ impl Database {
             [],
         )?;
 
-        // Check if path column exists, add it if it doesn't (migration for existing databases)
         self.migrate_add_path_column()?;
-
-        // Check if image_set_id column exists, add it if it doesn't (migration for existing databases)
         self.migrate_add_image_set_id_column()?;
-
-        // Check if link column has UNIQUE constraint and remove it if needed
         self.migrate_remove_link_unique_constraint()?;
 
-        // Create settings table
         self.conn.execute(
             "CREATE TABLE IF NOT EXISTS settings (
                 id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -189,7 +179,6 @@ impl Database {
             [],
         )?;
 
-        // Insert default settings if not exists
         self.conn.execute(
             "INSERT OR IGNORE INTO settings (id, download_directory, on_duplicate)
              VALUES (1, ?, ?)",
@@ -222,10 +211,7 @@ impl Database {
 
         if !has_image_set_id_column {
             // Add the image_set_id column if it doesn't exist
-            self.conn.execute(
-                "ALTER TABLE downloads ADD COLUMN image_set_id TEXT",
-                [],
-            )?;
+            self.conn.execute("ALTER TABLE downloads ADD COLUMN image_set_id TEXT", [])?;
         }
 
         Ok(())
@@ -326,7 +312,6 @@ impl Database {
     }
 
     pub fn insert_download(&self, download: &Download) -> Result<i64> {
-        // If path is empty (for existing records), use a default value
         let path_value = if download.path.is_empty() {
             "unknown_path".to_string()
         } else {
@@ -347,20 +332,11 @@ impl Database {
                 &path_value,
                 &download.image_set_id.clone().unwrap_or_default(),
                 &download.date_added.to_rfc3339(),
-                &download.date_downloaded.map(|dt| dt.to_rfc3339()).unwrap_or_default(),
+                &download.date_downloaded.as_ref().map(|dt| dt.to_rfc3339()).unwrap_or_default(),
             ],
         )?;
 
         Ok(self.conn.last_insert_rowid())
-    }
-
-    pub fn update_download_status(&self, link: &str, status: DownloadStatus) -> Result<()> {
-        let now = Utc::now().to_rfc3339();
-        self.conn.execute(
-            "UPDATE downloads SET status = ?1, date_downloaded = ?2 WHERE link = ?3",
-            [&format!("{:?}", status).to_lowercase(), &now, link],
-        )?;
-        Ok(())
     }
 
     pub fn get_settings(&self) -> Result<Settings> {
@@ -382,98 +358,5 @@ impl Database {
             [&settings.download_directory, &format!("{:?}", settings.on_duplicate).to_lowercase()],
         )?;
         Ok(())
-    }
-
-    pub fn get_downloads(&self) -> Result<Vec<Download>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, platform, name, media, user_handle, origin, link, status, path, image_set_id, date_added, date_downloaded
-             FROM downloads ORDER BY date_added DESC"
-        )?;
-
-        let downloads = stmt.query_map([], |row| {
-            let date_added_str: String = row.get(10)?;
-            let date_added = DateTime::parse_from_rfc3339(&date_added_str)
-                .map_err(|_| rusqlite::Error::InvalidColumnType(10, date_added_str.clone(), rusqlite::types::Type::Text))?
-                .with_timezone(&Utc);
-
-            let date_downloaded = if let Some(date_str) = row.get::<_, Option<String>>(11)? {
-                Some(DateTime::parse_from_rfc3339(&date_str)
-                    .map_err(|_| rusqlite::Error::InvalidColumnType(11, date_str.clone(), rusqlite::types::Type::Text))?
-                    .with_timezone(&Utc))
-            } else {
-                None
-            };
-
-            let path: String = row.get(8)?;
-            let path = if path.is_empty() { "unknown_path".to_string() } else { path };
-
-            Ok(Download {
-                id: Some(row.get(0)?),
-                platform: Platform::from(row.get::<_, String>(1)?),
-                name: row.get(2)?,
-                media: MediaKind::from(row.get::<_, String>(3)?),
-                user: row.get(4)?,
-                origin: Origin::from(row.get::<_, String>(5)?),
-                link: row.get(6)?,
-                status: DownloadStatus::from(row.get::<_, String>(7)?),
-                path,
-                image_set_id: row.get(9)?,
-                date_added,
-                date_downloaded,
-            })
-        })?;
-
-        let mut result = Vec::new();
-        for download in downloads {
-            result.push(download?);
-        }
-
-        Ok(result)
-    }
-
-    pub fn get_download_by_link(&self, link: &str) -> Result<Option<Download>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, platform, name, media, user_handle, origin, link, status, path, image_set_id, date_added, date_downloaded
-             FROM downloads WHERE link = ?1"
-        )?;
-
-        let result = stmt.query_row([link], |row| {
-            let date_added_str: String = row.get(10)?;
-            let date_added = DateTime::parse_from_rfc3339(&date_added_str)
-                .map_err(|_| rusqlite::Error::InvalidColumnType(10, date_added_str.clone(), rusqlite::types::Type::Text))?
-                .with_timezone(&Utc);
-
-            let date_downloaded = if let Some(date_str) = row.get::<_, Option<String>>(11)? {
-                Some(DateTime::parse_from_rfc3339(&date_str)
-                    .map_err(|_| rusqlite::Error::InvalidColumnType(11, date_str.clone(), rusqlite::types::Type::Text))?
-                    .with_timezone(&Utc))
-            } else {
-                None
-            };
-
-            let path: String = row.get(8)?;
-            let path = if path.is_empty() { "unknown_path".to_string() } else { path };
-
-            Ok(Download {
-                id: Some(row.get(0)?),
-                platform: Platform::from(row.get::<_, String>(1)?),
-                name: row.get(2)?,
-                media: MediaKind::from(row.get::<_, String>(3)?),
-                user: row.get(4)?,
-                origin: Origin::from(row.get::<_, String>(5)?),
-                link: row.get(6)?,
-                status: DownloadStatus::from(row.get::<_, String>(7)?),
-                path,
-                image_set_id: row.get(9)?,
-                date_added,
-                date_downloaded,
-            })
-        });
-
-        match result {
-            Ok(download) => Ok(Some(download)),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(e),
-        }
     }
 }

@@ -16,8 +16,6 @@ fn main() {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() {
-    eprintln!(
-        "This crate targets WebAssembly. Use `tauri dev` (runs `trunk serve`) or `trunk serve` to run the frontend. Do not `cargo run` this crate natively."
-    );
+    eprintln!("This crate targets WebAssembly. Use `tauri dev` (runs `trunk serve`) or `trunk serve` to run the frontend. Do not `cargo run` this crate natively.");
     std::process::exit(1);
 }
