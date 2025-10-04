@@ -12,6 +12,8 @@ settings:
 - button:
     - allow db duplicate / replace db duplicaet
 
+make sure image/videos have same settings code
+
 #################################### Bug:
 - Using download url on a playlist like: https://www.youtube.com/watch?v=wD0Mm6WIcYs&list=RD0vb1CtGkqtw&index=3 downloads the entire playlist without adding the videos in the database
 - Cancel to interrupt DL of videos doesn't work, it kept downloading the full playlist even after clicking Cancel
