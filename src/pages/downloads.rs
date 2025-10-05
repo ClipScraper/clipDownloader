@@ -10,7 +10,6 @@ pub struct Props {
 }
 
 /* ───────────────────────── label helpers ───────────────────────── */
-
 fn url_after_domain(url: &str) -> String {
     let no_scheme = url.split("//").nth(1).unwrap_or(url);
     match no_scheme.find('/') {
@@ -90,10 +89,10 @@ fn display_label_for_row(row: &ClipRow) -> String {
 
 fn platform_icon_src(p: &str) -> &'static str {
     match p {
-        "instagram" => "public/instagram.webp",
-        "tiktok" => "public/tiktok.webp",
-        "youtube" => "public/youtube.webp",
-        _ => "",
+        "instagram"     => "public/instagram.webp",
+        "tiktok"        => "public/tiktok.webp",
+        "youtube"       => "public/youtube.webp",
+        _               => "",
     }
 }
 
@@ -105,8 +104,7 @@ pub fn downloads_page(props: &Props) -> Html {
     use std::collections::{BTreeMap, HashSet};
 
     // platform -> (handle, type, Platform, ContentType) -> rows
-    let mut map: BTreeMap<String, BTreeMap<(String, String, Platform, ContentType), Vec<ClipRow>>> =
-        BTreeMap::new();
+    let mut map: BTreeMap<String, BTreeMap<(String, String, Platform, ContentType), Vec<ClipRow>>> = BTreeMap::new();
 
     // De-dupe by (platform, handle, content_type, link)
     let mut seen = HashSet::<String>::new();
@@ -116,13 +114,7 @@ pub fn downloads_page(props: &Props) -> Html {
         let plat = platform_str(&r.platform).to_string();
         let typ = content_type_str(&r.content_type).to_string();
 
-        let dedup_key = format!(
-            "{}|{}|{}|{}",
-            plat,
-            r.handle.to_lowercase().trim(),
-            typ,
-            r.link.trim()
-        );
+        let dedup_key = format!("{}|{}|{}|{}", plat, r.handle.to_lowercase().trim(), typ, r.link.trim());
         if !seen.insert(dedup_key) {
             continue; // skip duplicates
         }
@@ -162,10 +154,10 @@ pub fn downloads_page(props: &Props) -> Html {
                         let on_delete_platform = {
                             let on_delete = props.on_delete.clone();
                             let platform = match plat_label.as_str() {
-                                "instagram" => Platform::Instagram,
-                                "tiktok" => Platform::Tiktok,
-                                "youtube" => Platform::Youtube,
-                                _ => Platform::Tiktok,
+                                "instagram"     => Platform::Instagram,
+                                "tiktok"        => Platform::Tiktok,
+                                "youtube"       => Platform::Youtube,
+                                _               => Platform::Tiktok,
                             };
                             Callback::from(move |e: MouseEvent| {
                                 e.stop_propagation();

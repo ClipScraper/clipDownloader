@@ -6,10 +6,11 @@
 
 /* Cards */
 .platform-block { margin-bottom: 10px; }
-.platform-item, .collection-item {
+.platform-item,
+.collection-item {
   display: flex;
   justify-content: space-between;
-  align-items: center;             /* centers icons vertically */
+  align-items: center;
   padding: 10px 12px;
   border-radius: 10px;
   cursor: pointer;
@@ -19,10 +20,25 @@
   transition: background-color 0.2s ease;
 }
 .collection-block { margin-left: 16px; }
-.platform-item:hover, .collection-item:hover { background-color: rgba(255,255,255,0.12); }
+.platform-item:hover,
+.collection-item:hover { background-color: rgba(255,255,255,0.12); }
 
-.item-left { display: flex; align-items: center; gap: 10px; }
-.item-right { display: flex; align-items: center; gap: 10px; }
+/* Left/Right areas inside card headers */
+.item-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1 1 auto;              /* take remaining space */
+  min-width: 0;                /* allow text to shrink */
+}
+.item-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;           /* ✅ stick to the far right */
+  flex-shrink: 0;              /* prevent collapsing */
+}
+
 .item-title { font-weight: 600; }
 .brand-icon { width: 18px; height: 18px; border-radius: 4px; }
 
@@ -39,30 +55,34 @@
 .rows { list-style: none; padding-left: 0; margin: 0; }
 .row-line {
   display: flex;
-  align-items: center;             /* ← exact vertical centering */
+  align-items: center;
   gap: 10px;
-  height: 40px;                    /* consistent with header cards */
+  height: 40px;
 }
 
-/* keep the text vertically centered like the icons */
+/* Make the link text take remaining space and ellipsis,
+   so the action icons can stay pinned on the right. */
 .rows .link-text {
   display: flex;
   align-items: center;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-  min-width: 420px;
+  flex: 1 1 auto;              /* ✅ fill available space */
+  min-width: 0;                /* allow shrinking */
   line-height: 1.1;
 }
 
-/* right-side action area so both buttons line up perfectly */
+/* Right-side action area (trash + download) */
 .row-actions {
   display: flex;
   align-items: center;
   gap: 8px;
+  margin-left: auto;           /* ✅ push to far right */
+  flex-shrink: 0;
 }
 
-/* shared icon button */
+/* Shared icon button */
 .icon-btn {
   padding: 0;
   width: 32px;

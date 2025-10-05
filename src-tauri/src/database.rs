@@ -361,27 +361,6 @@ impl Database {
         Ok(self.conn.last_insert_rowid())
     }
 
-    pub fn get_settings(&self) -> Result<Settings> {
-        let mut stmt = self.conn.prepare("SELECT download_directory, on_duplicate FROM settings WHERE id = 1")?;
-        let settings = stmt.query_row([], |row| {
-            Ok(Settings {
-                id: Some(1),
-                download_directory: row.get(0)?,
-                on_duplicate: OnDuplicate::from(row.get::<_, String>(1)?),
-            })
-        })?;
-
-        Ok(settings)
-    }
-
-    pub fn update_settings(&self, settings: &Settings) -> Result<()> {
-        self.conn.execute(
-            "UPDATE settings SET download_directory = ?1, on_duplicate = ?2 WHERE id = 1",
-            [&settings.download_directory, &format!("{:?}", settings.on_duplicate).to_lowercase()],
-        )?;
-        Ok(())
-    }
-
     /// Fetch rows with `status = 'backlog'`, already normalized for the UI.
     /// Ordering is by platform → handle → type → name (all case-insensitive),
     /// so the frontend can just render in order and still be "sorted by name".
