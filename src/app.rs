@@ -1,7 +1,7 @@
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
 use yew_icons::{Icon, IconId};
-use crate::pages; // declared in main.rs
+use crate::pages;
 use crate::types::{ClipRow, Platform, ContentType};
 use yew::prelude::*;
 use std::cell::RefCell;
@@ -9,7 +9,6 @@ use std::cell::RefCell;
 // ─────────────────────────────────────────────────────────────────────────────
 // Tauri v2 JS bridges
 
-// add `catch` so rejected Promises (backend Err(...)) don't panic WASM.
 #[wasm_bindgen]
 extern "C" {
     #[wasm_bindgen(catch, js_namespace = ["window", "__TAURI__", "core"])]
@@ -40,10 +39,7 @@ fn log_json(label: &str, v: &JsValue) {
 thread_local! {
     static LAST_DROP: RefCell<(String, f64)> = RefCell::new(("".to_string(), 0.0));
 }
-fn now_ms() -> f64 {
-    js_sys::Date::now()
-}
-
+fn now_ms() -> f64 { js_sys::Date::now() }
 fn should_handle_drop(path: &str) -> bool {
     let t = now_ms();
     let mut allow = true;
@@ -60,11 +56,9 @@ fn should_handle_drop(path: &str) -> bool {
     allow
 }
 
-// Spawn the backend import for a given filesystem path.
-// We ignore the return (frontend no-ops after DB save).
 fn spawn_import_from_path(path: String) {
     if !should_handle_drop(&path) {
-        web_sys::console::log_1(&format!("⏭️ Ignored duplicate drop for {}", path).into());
+        web_sys::console::log_1(&format!("⏭️ Ignored duplicate drop for {path}").into());
         return;
     }
     spawn_local(async move {
@@ -76,7 +70,6 @@ fn spawn_import_from_path(path: String) {
     });
 }
 
-// Start one drag-drop listener
 async fn start_dragdrop_listener() {
     web_sys::console::log_1(&"🧩 init drag-drop listener".into());
     let mut attached = false;
@@ -111,7 +104,7 @@ async fn start_dragdrop_listener() {
         }
     }
 
-    if (!attached) {
+    if !attached {
         let raw = Closure::<dyn FnMut(JsValue)>::new(move |evt: JsValue| {
             web_sys::console::log_1(&"🔥 raw listen('tauri://drag-drop') fired".into());
             if let Ok(obj) = evt.dyn_into::<js_sys::Object>() {
@@ -133,7 +126,13 @@ async fn start_dragdrop_listener() {
     }
 }
 
+/* ---------------- movement to Queue types ---------------- */
 pub enum DeleteItem {
+    Platform(Platform),
+    Collection(Platform, String, ContentType),
+    Row(String),
+}
+pub enum MoveItem {
     Platform(Platform),
     Collection(Platform, String, ContentType),
     Row(String),
@@ -142,24 +141,27 @@ pub enum DeleteItem {
 #[function_component(App)]
 pub fn app() -> Html {
     let page = use_state(|| Page::Home);
-    let queue_rows = use_state(|| Vec::<ClipRow>::new());
 
-    // Load backlog when page switches to Downloads (Yew 0.21: use_effect_with)
+    let backlog_rows = use_state(|| Vec::<ClipRow>::new());
+    let queue_rows   = use_state(|| Vec::<ClipRow>::new());
+
+    // Load both sections when entering Downloads
     {
+        let backlog_rows = backlog_rows.clone();
         let queue_rows = queue_rows.clone();
-        let dep = *page; // copy value for PartialEq dep
+        let dep = *page;
         use_effect_with(dep, move |p| {
             if *p == Page::Downloads {
                 spawn_local(async move {
-                    match invoke("list_backlog", JsValue::NULL).await {
-                        Ok(js) => {
-                            if let Ok(rows) = serde_wasm_bindgen::from_value::<Vec<ClipRow>>(js) {
-                                queue_rows.set(rows);
-                            } else {
-                                web_sys::console::error_1(&"Failed to decode backlog rows".into());
-                            }
+                    if let Ok(js) = invoke("list_backlog", JsValue::NULL).await {
+                        if let Ok(rows) = serde_wasm_bindgen::from_value::<Vec<ClipRow>>(js) {
+                            backlog_rows.set(rows);
                         }
-                        Err(e) => log_invoke_err("list_backlog", e),
+                    }
+                    if let Ok(js) = invoke("list_queue", JsValue::NULL).await {
+                        if let Ok(rows) = serde_wasm_bindgen::from_value::<Vec<ClipRow>>(js) {
+                            queue_rows.set(rows);
+                        }
                     }
                 });
             }
@@ -168,15 +170,93 @@ pub fn app() -> Html {
     }
 
     let on_delete = {
+        let backlog_rows = backlog_rows.clone();
         let queue_rows = queue_rows.clone();
         Callback::from(move |item: DeleteItem| {
-            let current_rows = (*queue_rows).clone();
-            let new_rows = match item {
-                DeleteItem::Platform(plat) => current_rows.into_iter().filter(|r| r.platform != plat).collect(),
-                DeleteItem::Collection(plat, handle, ctype) => current_rows.into_iter().filter(|r| r.platform != plat || r.handle != handle || r.content_type != ctype).collect(),
-                DeleteItem::Row(link) => current_rows.into_iter().filter(|r| r.link != link).collect(),
+            // Delete only affects the currently shown lists in-memory.
+            let mut trim = |v: Vec<ClipRow>| -> Vec<ClipRow> {
+                match &item {
+                    DeleteItem::Platform(p) => v.into_iter().filter(|r| r.platform != *p).collect(),
+                    DeleteItem::Collection(p, h, t) => v.into_iter().filter(|r| !(r.platform == *p && r.handle == *h && r.content_type == *t)).collect(),
+                    DeleteItem::Row(link) => v.into_iter().filter(|r| r.link != *link).collect(),
+                }
             };
-            queue_rows.set(new_rows);
+            backlog_rows.set(trim((*backlog_rows).clone()));
+            queue_rows.set(trim((*queue_rows).clone()));
+        })
+    };
+
+    let on_move_to_queue = {
+        let backlog_rows = backlog_rows.clone();
+        let queue_rows = queue_rows.clone();
+        Callback::from(move |item: MoveItem| {
+            match item {
+                MoveItem::Platform(plat) => {
+                    let plat_str = crate::types::platform_str(&plat).to_string();
+                    // backend mutation
+                    spawn_local(async move {
+                        let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "platform": plat_str })).unwrap();
+                        let _ = invoke("move_platform_to_queue", args).await;
+                    });
+                    // front-end state move
+                    let mut moved = Vec::new();
+                    let mut kept  = Vec::new();
+                    for r in (*backlog_rows).clone() {
+                        if r.platform == plat { moved.push(r); } else { kept.push(r); }
+                    }
+                    if !moved.is_empty() {
+                        let mut q = (*queue_rows).clone();
+                        q.extend(moved);
+                        queue_rows.set(q);
+                    }
+                    backlog_rows.set(kept);
+                }
+                MoveItem::Collection(plat, handle, ctype) => {
+                    let p = crate::types::platform_str(&plat).to_string();
+                    let t = crate::types::content_type_str(&ctype).to_string();
+                    let h = handle.clone();
+                    spawn_local(async move {
+                        let args = serde_wasm_bindgen::to_value(&serde_json::json!({"platform": p, "handle": h, "content_type": t})).unwrap();
+                        let _ = invoke("move_collection_to_queue", args).await;
+                    });
+
+                    let mut moved = Vec::new();
+                    let mut kept  = Vec::new();
+                    for r in (*backlog_rows).clone() {
+                        if r.platform == plat && r.handle == handle && r.content_type == ctype { moved.push(r); } else { kept.push(r); }
+                    }
+                    if !moved.is_empty() {
+                        let mut q = (*queue_rows).clone();
+                        q.extend(moved);
+                        queue_rows.set(q);
+                    }
+                    backlog_rows.set(kept);
+                }
+                MoveItem::Row(link) => {
+                    let link_for_backend = link.clone();
+                    spawn_local(async move {
+                        let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "link": link_for_backend })).unwrap();
+                        let _ = invoke("move_link_to_queue", args).await;
+                    });
+
+                    let mut moved_one: Option<ClipRow> = None;
+                    let kept: Vec<ClipRow> = (*backlog_rows).clone().into_iter().filter(|r| {
+                        if r.link == link && moved_one.is_none() {
+                            moved_one = Some(r.clone());
+                            false
+                        } else {
+                            true
+                        }
+                    }).collect();
+
+                    if let Some(row) = moved_one {
+                        let mut q = (*queue_rows).clone();
+                        q.push(row);
+                        queue_rows.set(q);
+                    }
+                    backlog_rows.set(kept);
+                }
+            }
         })
     };
 
@@ -190,9 +270,7 @@ pub fn app() -> Html {
         });
     });
 
-    {
-        use_effect_with((), move |_| { spawn_local(start_dragdrop_listener()); || () });
-    }
+    { use_effect_with((), move |_| { spawn_local(start_dragdrop_listener()); || () }); }
 
     let set_page = |p: Page, page: UseStateHandle<Page>| Callback::from(move |_| page.set(p));
 
@@ -200,27 +278,19 @@ pub fn app() -> Html {
         let page = page.clone();
         html! {
             <aside class="sidebar">
-                <button class="nav-btn" onclick={set_page(Page::Home, page.clone())} title="Home">
-                    <Icon icon_id={IconId::LucideHome} width={"28"} height={"28"} />
-                </button>
-                <button class="nav-btn" onclick={set_page(Page::Downloads, page.clone())} title="Downloads">
-                    <Icon icon_id={IconId::LucideDownload} width={"28"} height={"28"} />
-                </button>
-                <button class="nav-btn" onclick={set_page(Page::Library, page.clone())} title="Library">
-                    <Icon icon_id={IconId::LucideLibrary} width={"28"} height={"28"} />
-                </button>
-                <button class="nav-btn" onclick={set_page(Page::Settings, page.clone())} title="Settings">
-                    <Icon icon_id={IconId::LucideSettings} width={"28"} height={"28"} />
-                </button>
+                <button class="nav-btn" onclick={set_page(Page::Home, page.clone())} title="Home"><Icon icon_id={IconId::LucideHome} width={"28"} height={"28"} /></button>
+                <button class="nav-btn" onclick={set_page(Page::Downloads, page.clone())} title="Downloads"><Icon icon_id={IconId::LucideDownload} width={"28"} height={"28"} /></button>
+                <button class="nav-btn" onclick={set_page(Page::Library, page.clone())} title="Library"><Icon icon_id={IconId::LucideLibrary} width={"28"} height={"28"} /></button>
+                <button class="nav-btn" onclick={set_page(Page::Settings, page.clone())} title="Settings"><Icon icon_id={IconId::LucideSettings} width={"28"} height={"28"} /></button>
             </aside>
         }
     };
 
     let body = match *page {
-        Page::Home => html! { <pages::home::HomePage on_open_file={on_open_file} on_csv_load={on_csv_load.clone()} /> },
-        Page::Downloads => html! { <pages::downloads::DownloadsPage rows={(*queue_rows).clone()} on_delete={on_delete} /> },
-        Page::Library => html! { <pages::library::LibraryPage /> },
-        Page::Settings => html! { <pages::settings::SettingsPage /> },
+        Page::Home          => html! { <pages::home::HomePage on_open_file={on_open_file} on_csv_load={on_csv_load.clone()} /> },
+        Page::Downloads     => html! { <pages::downloads::DownloadsPage backlog={(*backlog_rows).clone()} queue={(*queue_rows).clone()} on_delete={on_delete} on_move_to_queue={on_move_to_queue} />},
+        Page::Library       => html! { <pages::library::LibraryPage /> },
+        Page::Settings      => html! { <pages::settings::SettingsPage /> },
     };
 
     html! { <>{ sidebar }{ body }</> }
