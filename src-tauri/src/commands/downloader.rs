@@ -17,12 +17,7 @@ fn ensure_parent_dir(p: &Path) {
 }
 
 /// Returns (Some(final_path), "Created new"/"Overwrote") or (None, "Skipped")
-fn move_with_policy(
-    src: &Path,
-    dest_dir: &Path,
-    file_name: &str,
-    on_duplicate: &crate::database::OnDuplicate,
-) -> io::Result<(Option<String>, &'static str)> {
+fn move_with_policy(src: &Path, dest_dir: &Path, file_name: &str, on_duplicate: &crate::database::OnDuplicate) -> io::Result<(Option<String>, &'static str)> {
     // split name
     let (stem, ext) = match file_name.rsplit_once('.') {
         Some((s, e)) if !s.is_empty() && !e.is_empty() => (s.to_string(), e.to_string()),
@@ -75,12 +70,7 @@ fn move_with_policy(
 
 /// Move every file from `tmp` into `dest_dir` with `on_duplicate`.
 /// Returns (moved_any, final_paths).
-fn move_tmp_into_site_dir(
-    tmp: &Path,
-    dest_dir: &Path,
-    on_duplicate: &crate::database::OnDuplicate,
-    mut notify: impl FnMut(String),
-) -> io::Result<(bool, Vec<String>)> {
+fn move_tmp_into_site_dir(tmp: &Path, dest_dir: &Path, on_duplicate: &crate::database::OnDuplicate, mut notify: impl FnMut(String)) -> io::Result<(bool, Vec<String>)> {
     let mut moved_any = false;
     let mut finals = Vec::new();
 
@@ -93,12 +83,7 @@ fn move_tmp_into_site_dir(
         let src = entry.path();
 
         // Flatten tmp structure: keep just the filename.
-        // If you prefer to keep the relative subfolder(s), compute it from `src.strip_prefix(tmp)`.
-        let file_name = src
-            .file_name()
-            .and_then(|s| s.to_str())
-            .unwrap_or("image.bin");
-
+        let file_name = src.file_name().and_then(|s| s.to_str()).unwrap_or("image.bin");
         match move_with_policy(src, dest_dir, file_name, on_duplicate) {
             Ok((Some(fp), action)) => {
                 moved_any = true;
@@ -106,17 +91,10 @@ fn move_tmp_into_site_dir(
                 finals.push(fp);
             }
             Ok((None, _)) => {
-                notify(format!(
-                    "Skipped (exists): {}",
-                    dest_dir.join(file_name).display()
-                ));
+                notify(format!("Skipped (exists): {}", dest_dir.join(file_name).display()));
             }
             Err(e) => {
-                notify(format!(
-                    "Failed to move {} → {}: {e}",
-                    src.display(),
-                    dest_dir.join(file_name).display()
-                ));
+                notify(format!("Failed to move {} → {}: {e}", src.display(), dest_dir.join(file_name).display()));
             }
         }
     }
@@ -125,13 +103,8 @@ fn move_tmp_into_site_dir(
 }
 
 #[tauri::command]
-pub async fn download_url(
-    app: tauri::AppHandle,
-    url: String,
-    state: State<'_, crate::DownloadState>,
-) -> Result<(), String> {
+pub async fn download_url(app: tauri::AppHandle, url: String, state: State<'_, crate::DownloadState>) -> Result<(), String> {
     println!("[BACKEND][DOWNLOADER] download_url called with: {}", url);
-
     if let Some(window) = app.get_webview_window("main") {
         // Normalize minimally: strip IG query params
         let mut processed_url = url.clone();
@@ -141,12 +114,7 @@ pub async fn download_url(
             }
         }
 
-        emit_status(
-            &window,
-            false,
-            format!("Starting download for {}...", processed_url),
-        );
-
+        emit_status(&window, false, format!("Starting download for {}...", processed_url));
         let state_clone = state.inner().clone();
         let handle = tokio::spawn({
             let window = window.clone();
@@ -158,11 +126,7 @@ pub async fn download_url(
                 let download_root = PathBuf::from(s.download_directory.clone());
                 let on_duplicate = s.on_duplicate.clone();
 
-                println!(
-                    "[DOWNLOADER] settings: root={} policy={:?}",
-                    download_root.display(),
-                    on_duplicate
-                );
+                println!("[DOWNLOADER] settings: root={} policy={:?}", download_root.display(),on_duplicate);
 
                 if let Err(e) = std_fs::create_dir_all(&download_root) {
                     emit_status(&window, false, format!("Failed to create download dir: {e}"));
@@ -193,10 +157,7 @@ pub async fn download_url(
                 let browsers = crate::utils::os::installed_browsers();
 
                 'browser_loop: for (browser, cookie_arg) in &browsers {
-                    println!(
-                        "[DOWNLOADER] trying with cookies from {browser}; site_dir={}",
-                        site_out_dir.display()
-                    );
+                    println!("[DOWNLOADER] trying with cookies from {browser}; site_dir={}", site_out_dir.display());
 
                     // ─── Instagram: try yt-dlp first; if /p/ fails, fallback to gallery-dl ───
                     if is_instagram {
@@ -212,16 +173,7 @@ pub async fn download_url(
                             },
                         ) {
                             Ok((true, output)) => {
-                                emit_status(
-                                    &window,
-                                    true,
-                                    format!(
-                                        "Saved (video) to {} [policy={:?}]",
-                                        site_out_dir.display(),
-                                        on_duplicate
-                                    ),
-                                );
-
+                                emit_status(&window, true, format!("Saved (video) to {} [policy={:?}]", site_out_dir.display(), on_duplicate));
                                 if let Ok(db) = crate::database::Database::new() {
                                     let mut files = parse_multiple_filenames_from_output(&output, &processed_url, Some(&site_out_dir));
                                     for (_, _, fp) in &files {
@@ -275,15 +227,8 @@ pub async fn download_url(
                             // if yt-dlp failed AND it's an IG /p/ (images), fallback to gallery-dl
                             Ok((false, _)) | Err(_) => {
                                 if is_ig_post_p {
-                                    println!(
-                                        "[DOWNLOADER][IMAGES] IG /p/ fallback via gallery-dl; policy={:?}",
-                                        on_duplicate
-                                    );
-                                    match crate::download::image::run_gallery_dl_to_temp(
-                                        &download_root,
-                                        &processed_url,
-                                        cookie_arg,
-                                    ) {
+                                    println!("[DOWNLOADER][IMAGES] IG /p/ fallback via gallery-dl; policy={:?}", on_duplicate);
+                                    match crate::download::image::run_gallery_dl_to_temp(&download_root, &processed_url, cookie_arg) {
                                         Ok((output, tmp_dir)) if output.status.success() => {
                                             // Move with policy
                                             let (moved_any, finals) = move_tmp_into_site_dir(
@@ -342,34 +287,20 @@ pub async fn download_url(
                                                 emit_status(
                                                     &window,
                                                     true,
-                                                    format!(
-                                                        "Saved images under {} [policy={:?}]",
-                                                        site_out_dir.display(),
-                                                        on_duplicate
-                                                    ),
+                                                    format!("Saved images under {} [policy={:?}]", site_out_dir.display(), on_duplicate),
                                                 );
                                                 *state_clone.0.lock().unwrap() = None;
                                                 return;
                                             } else {
-                                                eprintln!(
-                                                    "[DOWNLOADER][IMAGES] No files moved from {} -> {}",
-                                                    tmp_dir.display(),
-                                                    site_out_dir.display()
-                                                );
+                                                eprintln!("[DOWNLOADER][IMAGES] No files moved from {} -> {}", tmp_dir.display(), site_out_dir.display());
                                             }
                                         }
                                         Ok((output, tmp_dir)) => {
-                                            eprintln!(
-                                                "[tauri] gallery-dl failed (IG fallback) with {browser}; tmp={}\nstderr:\n{}",
-                                                tmp_dir.display(),
-                                                String::from_utf8_lossy(&output.stderr)
-                                            );
+                                            eprintln!("[tauri] gallery-dl failed (IG fallback) with {browser}; tmp={}\nstderr:\n{}", tmp_dir.display(), String::from_utf8_lossy(&output.stderr));
                                             let _ = fs::remove_dir_all(&tmp_dir);
                                         }
                                         Err(e) => {
-                                            eprintln!(
-                                                "[tauri] gallery-dl error (IG fallback) with {browser}: {e}"
-                                            );
+                                            eprintln!("[tauri] gallery-dl error (IG fallback) with {browser}: {e}");
                                         }
                                     }
                                 }
@@ -386,11 +317,7 @@ pub async fn download_url(
                             "[DOWNLOADER][IMAGES] TikTok photo via gallery-dl; policy={:?}",
                             on_duplicate
                         );
-                        match crate::download::image::run_gallery_dl_to_temp(
-                            &download_root,
-                            &processed_url,
-                            cookie_arg,
-                        ) {
+                        match crate::download::image::run_gallery_dl_to_temp(&download_root, &processed_url, cookie_arg) {
                             Ok((output, tmp_dir)) if output.status.success() => {
                                 let (moved_any, finals) = move_tmp_into_site_dir(
                                     &tmp_dir,
@@ -433,31 +360,15 @@ pub async fn download_url(
                                         }
                                     }
 
-                                    emit_status(
-                                        &window,
-                                        true,
-                                        format!(
-                                            "Saved images under {} [policy={:?}]",
-                                            site_out_dir.display(),
-                                            on_duplicate
-                                        ),
-                                    );
+                                    emit_status(&window, true, format!("Saved images under {} [policy={:?}]", site_out_dir.display(), on_duplicate));
                                     *state_clone.0.lock().unwrap() = None;
                                     return;
                                 } else {
-                                    eprintln!(
-                                        "[DOWNLOADER][IMAGES] No files moved from {} -> {}",
-                                        tmp_dir.display(),
-                                        site_out_dir.display()
-                                    );
+                                    eprintln!("[DOWNLOADER][IMAGES] No files moved from {} -> {}", tmp_dir.display(), site_out_dir.display());
                                 }
                             }
                             Ok((output, tmp_dir)) => {
-                                eprintln!(
-                                    "[tauri] gallery-dl failed (TT photo) with {browser}; tmp={}\nstderr:\n{}",
-                                    tmp_dir.display(),
-                                    String::from_utf8_lossy(&output.stderr)
-                                );
+                                eprintln!("[tauri] gallery-dl failed (TT photo) with {browser}; tmp={}\nstderr:\n{}", tmp_dir.display(), String::from_utf8_lossy(&output.stderr));
                                 let _ = fs::remove_dir_all(&tmp_dir);
                             }
                             Err(e) => {
@@ -481,23 +392,9 @@ pub async fn download_url(
                         },
                     ) {
                         Ok((true, output)) => {
-                            emit_status(
-                                &window,
-                                true,
-                                format!(
-                                    "Saved (video) to {} [policy={:?}]",
-                                    site_out_dir.display(),
-                                    on_duplicate
-                                ),
-                            );
-
+                            emit_status(&window, true, format!("Saved (video) to {} [policy={:?}]", site_out_dir.display(), on_duplicate));
                             if let Ok(db) = crate::database::Database::new() {
-                                let files = parse_multiple_filenames_from_output(
-                                    &output,
-                                    &processed_url,
-                                    Some(&site_out_dir),
-                                );
-
+                                let files = parse_multiple_filenames_from_output(&output, &processed_url, Some(&site_out_dir));
                                 let image_set_id = if files.len() > 1 {
                                     Some(uuid::Uuid::new_v4().to_string())
                                 } else {
@@ -541,10 +438,7 @@ pub async fn download_url(
                             return;
                         }
                         Ok((false, output)) => {
-                            eprintln!(
-                                "[tauri] yt-dlp failed with browser: {browser}\noutput:\n{}",
-                                output
-                            );
+                            eprintln!("[tauri] yt-dlp failed with browser: {browser}\noutput:\n{}", output);
                         }
                         Err(e) => {
                             eprintln!("[tauri] Failed to exec yt-dlp for {browser}: {e}");
@@ -554,17 +448,9 @@ pub async fn download_url(
 
                 // All browsers failed
                 if is_instagram || is_tt_photo {
-                    emit_status(
-                        &window,
-                        false,
-                        "Failed to fetch media. Ensure `yt-dlp`/`gallery-dl` are installed and your chosen browser is logged in.",
-                    );
+                    emit_status(&window, false, "Failed to fetch media. Ensure `yt-dlp`/`gallery-dl` are installed and your chosen browser is logged in.");
                 } else {
-                    emit_status(
-                        &window,
-                        false,
-                        "Failed to download with any available browser's cookies.",
-                    );
+                    emit_status(&window, false, "Failed to download with any available browser's cookies.");
                 }
                 *state_clone.0.lock().unwrap() = None;
             }
