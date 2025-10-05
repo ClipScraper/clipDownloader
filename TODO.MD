@@ -1,4 +1,3 @@
-- save files in db
 - handle errors
 - get collections from extension
 - add tests
@@ -7,6 +6,7 @@
 - create a button to put next to DL button in /home | Queue button, to put a download for later
 - rename greet var from home
 
+- pause bulk download in /download
 
 settings: 
 - button:

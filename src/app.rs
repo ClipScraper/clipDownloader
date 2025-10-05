@@ -1,4 +1,3 @@
-// src/app.rs
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
 use yew_icons::{Icon, IconId};
@@ -150,6 +149,7 @@ pub fn app() -> Html {
     let active_download = use_state(|| Option::<ClipRow>::None);
     let download_progress = use_state(|| String::new());
     let is_downloading = use_state(|| false);
+    let is_paused = use_state(|| false); // ← queue pause/resume
 
     // Load both sections when entering Downloads
     {
@@ -223,10 +223,11 @@ pub fn app() -> Html {
         let active_download = active_download.clone();
         let download_progress = download_progress.clone();
         let is_downloading = is_downloading.clone();
+        let is_paused = is_paused.clone();
         use_effect_with(
-            ((*page), (*queue_rows).len(), (*active_download).is_some(), *is_downloading),
-            move |(p, qlen, has_active, busy)| {
-                if *p == Page::Downloads && !*busy && !*has_active && *qlen > 0 {
+            ((*page), (*queue_rows).len(), (*active_download).is_some(), *is_downloading, *is_paused),
+            move |(p, qlen, has_active, busy, paused)| {
+                if *p == Page::Downloads && !*busy && !*has_active && *qlen > 0 && !*paused {
                     if let Some(next) = (*queue_rows).get(0).cloned() {
                         // Remove from queue visually
                         let mut q = (*queue_rows).clone();
@@ -248,6 +249,31 @@ pub fn app() -> Html {
             }
         );
     }
+
+    // Pause / Resume control
+    let on_toggle_pause = {
+        let is_paused = is_paused.clone();
+        let is_downloading = is_downloading.clone();
+        let active_download = active_download.clone();
+        let queue_rows = queue_rows.clone();
+        Callback::from(move |_| {
+            let going_to_pause = !*is_paused;
+            if going_to_pause && *is_downloading {
+                // Cancel current and put it back on top of the queue
+                if let Some(row) = (*active_download).clone() {
+                    let mut q = (*queue_rows).clone();
+                    q.insert(0, row);
+                    queue_rows.set(q);
+                }
+                let _ = spawn_local(async {
+                    let _ = invoke("cancel_download", JsValue::NULL).await;
+                });
+                is_downloading.set(false);
+                active_download.set(None);
+            }
+            is_paused.set(!*is_paused);
+        })
+    };
 
     let on_delete = {
         let backlog_rows = backlog_rows.clone();
@@ -377,6 +403,8 @@ pub fn app() -> Html {
                         pages::downloads::ActiveDownload{ row, progress: (*download_progress).clone() }
                     )
                 }
+                paused = {*is_paused}
+                on_toggle_pause={on_toggle_pause}
                 on_delete={on_delete}
                 on_move_to_queue={on_move_to_queue}
             />

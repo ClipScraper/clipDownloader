@@ -7,8 +7,10 @@ use crate::app::{DeleteItem, MoveItem};
 pub struct Props {
     pub backlog: Vec<ClipRow>,
     pub queue: Vec<ClipRow>,
-    /// Optional currently running job with progress text.
+    /// Optional currently running job (progress text is intentionally NOT shown).
     pub active: Option<ActiveDownload>,
+    pub paused: bool,
+    pub on_toggle_pause: Callback<()>,
     pub on_delete: Callback<DeleteItem>,
     pub on_move_to_queue: Callback<MoveItem>,
 }
@@ -16,7 +18,7 @@ pub struct Props {
 #[derive(Clone, PartialEq)]
 pub struct ActiveDownload {
     pub row: ClipRow,
-    pub progress: String,
+    pub progress: String, // ignored in UI per requirements
 }
 
 /* ───────────────────────── label helpers ───────────────────────── */
@@ -56,26 +58,24 @@ fn last_two_path_segments(url: &str) -> String {
     }
 }
 
-fn display_label_for_row(row: &ClipRow) -> String {
+/// Collection display name: "{handle} | {type}"
+fn collection_title(row: &ClipRow) -> String {
+    let handle = if row.handle.trim().is_empty() { "Unknown" } else { &row.handle };
+    let typ = content_type_str(&row.content_type);
+    format!("{handle} | {typ}")
+}
+
+/// Item label without the user/collection - just the content token/id
+fn item_label_for_row(row: &ClipRow) -> String {
     let link = row.link.trim();
     let platform = platform_str(&row.platform);
-
-    let mut user = row.handle.trim().to_string();
-    if user.is_empty() || user.eq_ignore_ascii_case("unknown") {
-        if platform == "tiktok" {
-            if let Some(h) = tik_tok_handle_from_url(link) { user = h; }
-        } else if platform == "instagram" {
-            if let Some(h) = instagram_handle_from_url(link) { user = h; }
-        }
-    }
-
-    let content = if platform == "instagram" {
+    if platform == "instagram" {
         let tail = url_after_domain(link);
         let mut parts = tail.split('/').filter(|s| !s.is_empty());
         let _maybe_user = parts.next().unwrap_or_default();
         let b = parts.next().unwrap_or_default(); // "p" or "reel"
         let c = parts.next().unwrap_or_default(); // id
-        if (b == "p" || b == "reel") && !c.is_empty() { format!("{}/{}", b, c) } else { last_two_path_segments(link) }
+        if (b == "p" || b == "reel") && !c.is_empty() { format!("{b}/{c}") } else { last_two_path_segments(link) }
     } else if platform == "tiktok" {
         let tail = url_after_domain(link);
         let pieces: Vec<&str> = tail.split('/').filter(|s| !s.is_empty()).collect();
@@ -86,12 +86,6 @@ fn display_label_for_row(row: &ClipRow) -> String {
         }
     } else {
         last_two_path_segments(link)
-    };
-
-    if !user.is_empty() && !user.eq_ignore_ascii_case("unknown") {
-        format!("{} - {}", user, content)
-    } else {
-        content
     }
 }
 
@@ -113,6 +107,12 @@ pub fn downloads_page(props: &Props) -> Html {
     // Shared across both sections, but now keys are *namespaced by section*.
     let expanded_platforms = use_state(|| std::collections::HashSet::<String>::new());
     let expanded_collections = use_state(|| std::collections::HashSet::<String>::new());
+
+    // Wrap () -> () into MouseEvent -> () for the pause/resume button
+    let on_toggle_pause_click = {
+        let cb = props.on_toggle_pause.clone();
+        Callback::from(move |_e: MouseEvent| cb.emit(()))
+    };
 
     let render_section = {
         let expanded_platforms = expanded_platforms.clone();
@@ -154,7 +154,7 @@ pub fn downloads_page(props: &Props) -> Html {
                         {
                             for map.into_iter().map(|(plat_label, mut col_map)| {
                                 for rows in col_map.values_mut() {
-                                    rows.sort_by(|a, b| display_label_for_row(a).cmp(&display_label_for_row(b)));
+                                    rows.sort_by(|a, b| item_label_for_row(a).cmp(&item_label_for_row(b)));
                                 }
 
                                 let collections_count = col_map.len();
@@ -320,7 +320,9 @@ pub fn downloads_page(props: &Props) -> Html {
                                                                                                     MediaKind::Pictures => html!{ <Icon icon_id={IconId::LucideImage} width={"16"} height={"16"} /> },
                                                                                                     MediaKind::Video    => html!{ <Icon icon_id={IconId::LucideVideo} width={"16"} height={"16"} /> },
                                                                                                 }}
-                                                                                                <a class="link-text" href={row.link.clone()} target="_blank">{ display_label_for_row(&row) }</a>
+                                                                                                <a class="link-text" href={row.link.clone()} target="_blank">
+                                                                                                    { item_label_for_row(&row) }
+                                                                                                </a>
                                                                                                 <div class="row-actions">
                                                                                                     <button class="icon-btn" type_="button" title="Delete" onclick={on_delete_row}>
                                                                                                         <Icon icon_id={IconId::LucideTrash2} width={"18"} height={"18"} />
@@ -388,24 +390,26 @@ pub fn downloads_page(props: &Props) -> Html {
 
     html! {
         <main class="container downloads" style="padding-top: 10vh;">
+            // ─── queue control (icon-only) ───
+            <div class="rows-card" style="margin-left:16px; display:flex; align-items:center; gap:8px;">
+                <button class="icon-btn" type_="button" onclick={on_toggle_pause_click} title={ if props.paused { "Play" } else { "Pause" } }>
+                    { if props.paused { html!{ <Icon icon_id={IconId::LucidePlay}  width={"18"} height={"18"} /> } }
+                      else            { html!{ <Icon icon_id={IconId::LucidePause} width={"18"} height={"18"} /> } } }
+                </button>
+            </div>
+
             {
                 if let Some(active) = &props.active {
+                    let plat_label = platform_str(&active.row.platform).to_string();
                     html!{
                         <>
                             <h2 style="margin: 24px 0 8px 16px;">{"Downloading"}</h2>
                             <div class="rows-card" style="margin-left:16px;">
                                 <ul class="rows">
                                     <li class="row-line">
-                                        {
-                                            match active.row.media {
-                                                MediaKind::Pictures => html!{ <Icon icon_id={IconId::LucideImage} width={"16"} height={"16"} /> },
-                                                MediaKind::Video    => html!{ <Icon icon_id={IconId::LucideVideo} width={"16"} height={"16"} /> },
-                                            }
-                                        }
-                                        <a class="link-text" href={active.row.link.clone()} target="_blank">
-                                            { display_label_for_row(&active.row) }
-                                        </a>
-                                        <span style="font-family:monospace; font-size:12px; opacity:0.9;">{ active.progress.clone() }</span>
+                                        <img class="brand-icon" src={platform_icon_src(&plat_label)} />
+                                        <span class="link-text">{ collection_title(&active.row) }</span>
+                                        <span class="link-text" style="opacity:0.9;">{" - "}{ item_label_for_row(&active.row) }</span>
                                     </li>
                                 </ul>
                             </div>
@@ -413,6 +417,7 @@ pub fn downloads_page(props: &Props) -> Html {
                     }
                 } else { html!{} }
             }
+
             { render_section(props.backlog.clone(), "Backlog", true) }
             { render_section(props.queue.clone(),   "Queue",   false) }
         </main>
