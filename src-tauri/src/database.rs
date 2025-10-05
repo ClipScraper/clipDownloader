@@ -1,5 +1,5 @@
 use chrono::{DateTime, Utc};
-use rusqlite::{Connection, Result};
+use rusqlite::{Connection, Result, params};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -150,6 +150,28 @@ pub struct Settings {
     pub on_duplicate: OnDuplicate,
 }
 
+/* ----------------------------- util: link normalize ----------------------------- */
+fn normalize_link(mut s: String) -> String {
+    // strip scheme
+    if let Some(idx) = s.find("://") {
+        s = s[idx + 3..].to_string();
+    }
+    // lowercase host part
+    if let Some(idx) = s.find('/') {
+        let (host, rest) = s.split_at(idx);
+        s = format!("{}{}", host.to_lowercase(), rest);
+    } else {
+        s = s.to_lowercase();
+    }
+    // remove "www."
+    if s.starts_with("www.") { s = s.trim_start_matches("www.").to_string(); }
+    // drop query
+    if let Some((base, _q)) = s.split_once('?') { s = base.to_string(); }
+    // trim trailing slash
+    while s.ends_with('/') { s.pop(); }
+    s
+}
+
 /* -------------------------------- database -------------------------------- */
 impl Database {
     pub fn new() -> Result<Self> {
@@ -217,6 +239,80 @@ impl Database {
         Ok(())
     }
 
+    /// Migration: Add image_set_id column to existing databases that don't have it
+    fn migrate_add_image_set_id_column(&self) -> Result<()> {
+        let mut stmt = self.conn.prepare("PRAGMA table_info(downloads)")?;
+        let columns = stmt.query_map([], |row| Ok(row.get::<_, String>(1)?))?;
+        let mut column_names = Vec::new();
+        for column in columns {
+            column_names.push(column?);
+        }
+        if !column_names.iter().any(|n| n == "image_set_id") {
+            self.conn.execute("ALTER TABLE downloads ADD COLUMN image_set_id TEXT", [])?;
+        }
+        Ok(())
+    }
+
+    /// Migration: Remove UNIQUE constraint from link column if it exists
+    fn migrate_remove_link_unique_constraint(&self) -> Result<()> {
+        let mut stmt = self.conn.prepare("PRAGMA table_info(downloads)")?;
+        let columns = stmt.query_map([], |row| Ok(row.get::<_, String>(1)?))?;
+        let column_names: Vec<String> = columns.collect::<Result<Vec<_>, _>>()?;
+        if column_names.iter().any(|n| n == "link") {
+            let mut stmt = self.conn.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='downloads'")?;
+            let schema: Option<String> = stmt.query_row([], |row| row.get(0)).unwrap_or(None);
+            if let Some(sql) = schema {
+                if sql.contains("UNIQUE") && sql.contains("link") {
+                    self.recreate_downloads_table_without_unique_constraint()?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn recreate_downloads_table_without_unique_constraint(&self) -> Result<()> {
+        self.conn.execute(
+            "CREATE TABLE downloads_new (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                platform TEXT NOT NULL,
+                name TEXT NOT NULL,
+                media TEXT NOT NULL,
+                user_handle TEXT NOT NULL,
+                origin TEXT NOT NULL,
+                link TEXT NOT NULL,
+                status TEXT NOT NULL,
+                path TEXT NOT NULL,
+                image_set_id TEXT,
+                date_added TEXT NOT NULL,
+                date_downloaded TEXT
+            )",
+            [],
+        )?;
+        self.conn.execute(
+            "INSERT INTO downloads_new (id, platform, name, media, user_handle, origin, link, status, path, image_set_id, date_added, date_downloaded)
+             SELECT id, platform, name, media, user_handle, origin, link, status, path, image_set_id, date_added, date_downloaded
+             FROM downloads",
+            [],
+        )?;
+        self.conn.execute("DROP TABLE downloads", [])?;
+        self.conn.execute("ALTER TABLE downloads_new RENAME TO downloads", [])?;
+        Ok(())
+    }
+
+    /// Migration: Add path column to existing databases that don't have it
+    fn migrate_add_path_column(&self) -> Result<()> {
+        let mut stmt = self.conn.prepare("PRAGMA table_info(downloads)")?;
+        let columns = stmt.query_map([], |row| Ok(row.get::<_, String>(1)?))?;
+        let mut column_names = Vec::new();
+        for column in columns {
+            column_names.push(column?);
+        }
+        if !column_names.iter().any(|n| n == "path") {
+            self.conn.execute("ALTER TABLE downloads ADD COLUMN path TEXT NOT NULL DEFAULT ''", [])?;
+        }
+        Ok(())
+    }
+
     /* ----------------------------- write helpers ----------------------------- */
 
     pub fn insert_download(&self, download: &Download) -> Result<i64> {
@@ -247,51 +343,66 @@ impl Database {
     }
 
     /// Mark the first queued row for this link as done; set its path and date_downloaded.
+    /// Uses a *loose* match (normalized URL) so minor URL differences (e.g. IG query params) still resolve.
     pub fn mark_link_done(&self, link: &str, path: &str) -> Result<usize> {
-        let path_value = if path.is_empty() { "unknown_path" } else { path };
+        let path_value = if path.is_empty() { "unknown_path".to_string() } else { path.to_string() };
         let now = Utc::now().to_rfc3339();
-        let n = self.conn.execute(
-            "UPDATE downloads
-               SET status='done', path=?2, date_downloaded=?3
-             WHERE id = (
-               SELECT id FROM downloads
-                WHERE link=?1 AND status='queue'
-                ORDER BY id
-                LIMIT 1
-             )",
-            [link, path_value, &now],
-        )?;
+        let norm = normalize_link(link.to_string());
+
+        // find oldest queued row whose normalized link matches
+        let mut stmt = self.conn.prepare("SELECT id, link FROM downloads WHERE status='queue' ORDER BY id")?;
+        let mut rows = stmt.query([])?;
+        let mut target_id: Option<i64> = None;
+        while let Some(row) = rows.next()? {
+            let id: i64 = row.get(0)?;
+            let db_link: String = row.get(1)?;
+            if normalize_link(db_link) == norm {
+                target_id = Some(id);
+                break;
+            }
+        }
+
+        let n = if let Some(id) = target_id {
+            self.conn.execute(
+                "UPDATE downloads SET status='done', path=?1, date_downloaded=?2 WHERE id=?3",
+                params![path_value, now, id],
+            )?
+        } else {
+            // fallback: strict equality (in case there is an exact match)
+            self.conn.execute(
+                "UPDATE downloads SET status='done', path=?2, date_downloaded=?3 WHERE link=?1 AND status='queue' LIMIT 1",
+                [&link.to_string(), &path_value, &now],
+            )?
+        };
+
         Ok(n)
     }
 
     /* ------------------------------ read helpers ----------------------------- */
 
     /// Preferred collection (platform, origin, user_handle) for a given link.
-    /// Priority: queue → backlog → done (oldest id first).
+    /// Priority: queue → backlog → done (oldest id first). Uses normalized-link matching.
     pub fn collection_for_link(&self, link: &str) -> Result<Option<CollectionInfo>> {
+        let norm = normalize_link(link.to_string());
         let mut stmt = self.conn.prepare(
-            "SELECT platform, origin, user_handle
+            "SELECT platform, origin, user_handle, link, status, id
                FROM downloads
-              WHERE link = ?1
               ORDER BY CASE status
                          WHEN 'queue' THEN 0
                          WHEN 'backlog' THEN 1
                          ELSE 2
                        END,
-                       id
-              LIMIT 1",
+                       id"
         )?;
-
-        let mut rows = stmt.query([link])?;
-        if let Some(row) = rows.next()? {
-            let platform: String    = row.get(0)?;
-            let origin: String      = row.get(1)?;
-            let user_handle: String = row.get(2)?;
-            return Ok(Some(CollectionInfo {
-                platform,
-                origin,
-                user_handle,
-            }));
+        let mut rows = stmt.query([])?;
+        while let Some(r) = rows.next()? {
+            let platform: String    = r.get(0)?;
+            let origin: String      = r.get(1)?;
+            let user_handle: String = r.get(2)?;
+            let db_link: String     = r.get(3)?;
+            if normalize_link(db_link) == norm {
+                return Ok(Some(CollectionInfo { platform, origin, user_handle }));
+            }
         }
         Ok(None)
     }
