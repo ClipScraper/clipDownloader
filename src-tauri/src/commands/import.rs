@@ -1,4 +1,3 @@
-/// [BACKEND] [commands/import.rs] [import_csv_to_db]
 /// Import a CSV (as text) and add all rows into the DB with status=Backlog.
 /// This is the core function that processes CSV files imported via "Import list" button or drag-and-drop.
 /// Expected CSV header format: Platform,Type,Handle,Media,link
@@ -11,8 +10,6 @@
 /// All imported items are stored in the database with status "Backlog" for later downloading.
 /// Returns the number of successfully imported rows.
 
-// src-tauri/src/commands/import.rs
-
 #[tauri::command]
 pub async fn import_csv_to_db(csv_text: Option<String>, csvText: Option<String>) -> Result<u64, String> {
     // Accept both snake_case and camelCase keys from JS.
@@ -22,10 +19,7 @@ pub async fn import_csv_to_db(csv_text: Option<String>, csvText: Option<String>)
 
     println!("[BACKEND] [commands/import.rs] [import_csv_to_db]");
 
-    let mut rdr = csv::ReaderBuilder::new()
-        .trim(csv::Trim::All)
-        .has_headers(true)
-        .from_reader(csv_text.as_bytes());
+    let mut rdr = csv::ReaderBuilder::new().trim(csv::Trim::All).has_headers(true).from_reader(csv_text.as_bytes());
 
     // Initialize database connection
     let db = crate::database::Database::new().map_err(|e| e.to_string())?;

@@ -9,7 +9,9 @@
 - Cancel download
 - preview next download
 - parallel downloads
-
+- refactor
+- sanitize logs
+- fix icon
 
 settings: 
 - button:
