@@ -69,7 +69,6 @@ fn display_label_for_row(row: &ClipRow) -> String {
         let c = parts.next().unwrap_or_default(); // id
         if (b == "p" || b == "reel") && !c.is_empty() { format!("{}/{}", b, c) } else { last_two_path_segments(link) }
     } else if platform == "tiktok" {
-        // FIX: avoid temporary String borrow (E0716)
         let tail = url_after_domain(link);
         let pieces: Vec<&str> = tail.split('/').filter(|s| !s.is_empty()).collect();
         if let Some(pos) = pieces.iter().position(|p| *p == "photo" || *p == "video") {
@@ -103,6 +102,7 @@ fn platform_icon_src(p: &str) -> &'static str {
 
 #[function_component(DownloadsPage)]
 pub fn downloads_page(props: &Props) -> Html {
+    // Shared across both sections, but now keys are *namespaced by section*.
     let expanded_platforms = use_state(|| std::collections::HashSet::<String>::new());
     let expanded_collections = use_state(|| std::collections::HashSet::<String>::new());
 
@@ -115,11 +115,13 @@ pub fn downloads_page(props: &Props) -> Html {
         move |rows_in: Vec<ClipRow>, title: &str, enable_queue_action: bool| -> Html {
             use std::collections::{BTreeMap, HashSet};
 
+            let section_id = title.to_lowercase(); // "backlog" or "queue"
+
             // platform -> (handle, type, Platform, ContentType) -> rows
             let mut map: BTreeMap<String, BTreeMap<(String, String, Platform, ContentType), Vec<ClipRow>>> =
                 BTreeMap::new();
 
-            // De-dupe by (platform, handle, content_type, link)
+            // De-dupe by (platform, handle, type, link) within this section
             let mut seen = HashSet::<String>::new();
 
             for mut r in rows_in {
@@ -150,12 +152,13 @@ pub fn downloads_page(props: &Props) -> Html {
                                 let collections_count = col_map.len();
                                 let bookmarks_count: usize = col_map.values().map(|v| v.len()).sum();
 
-                                let key = plat_label.clone();
-                                let is_open = expanded_platforms.contains(&key);
+                                /* ---- platform open state (namespaced) ---- */
+                                let platform_key = format!("{}::{}", section_id, plat_label);
+                                let is_open = expanded_platforms.contains(&platform_key);
 
                                 let on_platform_click = {
                                     let expanded_platforms = expanded_platforms.clone();
-                                    let k = key.clone();
+                                    let k = platform_key.clone();
                                     Callback::from(move |_| {
                                         let mut set = (*expanded_platforms).clone();
                                         if !set.insert(k.clone()) { set.remove(&k); }
@@ -172,6 +175,7 @@ pub fn downloads_page(props: &Props) -> Html {
                                         _ => Platform::Tiktok,
                                     };
                                     Callback::from(move |e: MouseEvent| {
+                                        e.prevent_default();
                                         e.stop_propagation();
                                         on_delete.emit(DeleteItem::Platform(platform));
                                     })
@@ -186,6 +190,7 @@ pub fn downloads_page(props: &Props) -> Html {
                                         _ => Platform::Tiktok,
                                     };
                                     Callback::from(move |e: MouseEvent| {
+                                        e.prevent_default();
                                         e.stop_propagation();
                                         if enable_queue_action { on_move.emit(MoveItem::Platform(platform)); }
                                     })
@@ -196,7 +201,8 @@ pub fn downloads_page(props: &Props) -> Html {
                                         <div>
                                             {
                                                 for col_map.into_iter().map(|((handle, typ_str, plat, ctype), rows)| {
-                                                    let col_key = format!("{}::{}::{}", plat_label, handle, typ_str);
+                                                    /* ---- collection open state (namespaced) ---- */
+                                                    let col_key = format!("{}::{}::{}::{}", section_id, plat_label, handle, typ_str);
                                                     let col_open = expanded_collections.contains(&col_key);
 
                                                     let on_col_click = {
@@ -215,6 +221,7 @@ pub fn downloads_page(props: &Props) -> Html {
                                                         let handle = handle.clone();
                                                         let ctype = ctype.clone();
                                                         Callback::from(move |e: MouseEvent| {
+                                                            e.prevent_default();
                                                             e.stop_propagation();
                                                             on_delete.emit(DeleteItem::Collection(plat.clone(), handle.clone(), ctype.clone()));
                                                         })
@@ -226,6 +233,7 @@ pub fn downloads_page(props: &Props) -> Html {
                                                         let handle_s = handle.clone();
                                                         let typ_s = typ_str.clone();
                                                         Callback::from(move |e: MouseEvent| {
+                                                            e.prevent_default();
                                                             e.stop_propagation();
                                                             if enable_queue_action {
                                                                 on_move.emit(MoveItem::Collection(
@@ -251,20 +259,20 @@ pub fn downloads_page(props: &Props) -> Html {
                                                     };
 
                                                     html!{
-                                                        <div class="collection-block">
+                                                        <div class="collection-block" key={col_key.clone()}>
                                                             <div class="collection-item" onclick={on_col_click}>
                                                                 <div class="item-left">
                                                                     <span class="item-title">{ format!("{} | {}", handle, typ_str) }</span>
                                                                 </div>
                                                                 <div class="item-right">
                                                                     <span>{ format!("{} bookmarks", rows.len()) }</span>
-                                                                    <button class="icon-btn" title="Delete" onclick={on_delete_collection}>
+                                                                    <button class="icon-btn" type_="button" title="Delete" onclick={on_delete_collection}>
                                                                         <Icon icon_id={IconId::LucideTrash2} width={"18"} height={"18"} />
                                                                     </button>
                                                                     {
                                                                         if enable_queue_action {
                                                                             html!{
-                                                                                <button class="icon-btn" title="Queue" onclick={on_queue_collection.clone()}>
+                                                                                <button class="icon-btn" type_="button" title="Queue" onclick={on_queue_collection.clone()}>
                                                                                     <img class="brand-icon" src="assets/download.svg" />
                                                                                 </button>
                                                                             }
@@ -284,6 +292,7 @@ pub fn downloads_page(props: &Props) -> Html {
                                                                                             let on_delete = on_delete_prop.clone();
                                                                                             let link = row.link.clone();
                                                                                             Callback::from(move |e: MouseEvent| {
+                                                                                                e.prevent_default();
                                                                                                 e.stop_propagation();
                                                                                                 on_delete.emit(DeleteItem::Row(link.clone()));
                                                                                             })
@@ -292,25 +301,26 @@ pub fn downloads_page(props: &Props) -> Html {
                                                                                             let on_move = on_move_prop.clone();
                                                                                             let link = row.link.clone();
                                                                                             Callback::from(move |e: MouseEvent| {
+                                                                                                e.prevent_default();
                                                                                                 e.stop_propagation();
                                                                                                 if enable_queue_action { on_move.emit(MoveItem::Row(link.clone())); }
                                                                                             })
                                                                                         };
                                                                                         html!{
-                                                                                            <li class="row-line">
+                                                                                            <li class="row-line" key={row.link.clone()}>
                                                                                                 { match row.media {
                                                                                                     MediaKind::Pictures => html!{ <Icon icon_id={IconId::LucideImage} width={"16"} height={"16"} /> },
                                                                                                     MediaKind::Video    => html!{ <Icon icon_id={IconId::LucideVideo} width={"16"} height={"16"} /> },
                                                                                                 }}
                                                                                                 <a class="link-text" href={row.link.clone()} target="_blank">{ display_label_for_row(&row) }</a>
                                                                                                 <div class="row-actions">
-                                                                                                    <button class="icon-btn" title="Delete" onclick={on_delete_row}>
+                                                                                                    <button class="icon-btn" type_="button" title="Delete" onclick={on_delete_row}>
                                                                                                         <Icon icon_id={IconId::LucideTrash2} width={"18"} height={"18"} />
                                                                                                     </button>
                                                                                                     {
                                                                                                         if enable_queue_action {
                                                                                                             html!{
-                                                                                                                <button class="icon-btn" title="Queue" onclick={on_queue_row}>
+                                                                                                                <button class="icon-btn" type_="button" title="Queue" onclick={on_queue_row}>
                                                                                                                     <img class="brand-icon" src="assets/download.svg" />
                                                                                                                 </button>
                                                                                                             }
@@ -335,7 +345,7 @@ pub fn downloads_page(props: &Props) -> Html {
                                 } else { html!{} };
 
                                 html! {
-                                    <div class="platform-block">
+                                    <div class="platform-block" key={platform_key.clone()}>
                                         <div class="platform-item" onclick={on_platform_click}>
                                             <div class="item-left">
                                                 <img class="brand-icon" src={platform_icon_src(&plat_label)} />
@@ -343,13 +353,13 @@ pub fn downloads_page(props: &Props) -> Html {
                                             </div>
                                             <div class="item-right">
                                                 <span>{ format!("{} collections | {} bookmarks", collections_count, bookmarks_count) }</span>
-                                                <button class="icon-btn" title="Delete" onclick={on_delete_platform}>
+                                                <button class="icon-btn" type_="button" title="Delete" onclick={on_delete_platform}>
                                                     <Icon icon_id={IconId::LucideTrash2} width={"18"} height={"18"} />
                                                 </button>
                                                 {
                                                     if enable_queue_action {
                                                         html!{
-                                                            <button class="icon-btn" title="Queue" onclick={on_queue_platform}>
+                                                            <button class="icon-btn" type_="button" title="Queue" onclick={on_queue_platform}>
                                                                 <img class="brand-icon" src="assets/download.svg" />
                                                             </button>
                                                         }
