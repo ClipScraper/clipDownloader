@@ -65,7 +65,7 @@ fn collection_title(row: &ClipRow) -> String {
     format!("{handle} | {typ}")
 }
 
-/// Item label without the user/collection - just the content token/id
+/// Item label without the user/collection – just the content token/id
 fn item_label_for_row(row: &ClipRow) -> String {
     let link = row.link.trim();
     let platform = platform_str(&row.platform);
@@ -104,12 +104,16 @@ fn platform_icon_src(p: &str) -> &'static str {
 
 #[function_component(DownloadsPage)]
 pub fn downloads_page(props: &Props) -> Html {
-    // Shared across both sections, but now keys are *namespaced by section*.
+    // Shared across both sections, but keys are namespaced by section.
     let expanded_platforms = use_state(|| std::collections::HashSet::<String>::new());
     let expanded_collections = use_state(|| std::collections::HashSet::<String>::new());
 
-    // Wrap () -> () into MouseEvent -> () for the pause/resume button
-    let on_toggle_pause_click = {
+    // Wrap () -> () into MouseEvent -> () for Play/Pause buttons
+    let on_toggle_pause_click_header = {
+        let cb = props.on_toggle_pause.clone();
+        Callback::from(move |_e: MouseEvent| cb.emit(()))
+    };
+    let on_toggle_pause_click_row = {
         let cb = props.on_toggle_pause.clone();
         Callback::from(move |_e: MouseEvent| cb.emit(()))
     };
@@ -390,11 +394,17 @@ pub fn downloads_page(props: &Props) -> Html {
 
     html! {
         <main class="container downloads" style="padding-top: 10vh;">
-            // ─── queue control (icon-only) ───
-            <div class="rows-card" style="margin-left:16px; display:flex; align-items:center; gap:8px;">
-                <button class="icon-btn" type_="button" onclick={on_toggle_pause_click} title={ if props.paused { "Play" } else { "Pause" } }>
-                    { if props.paused { html!{ <Icon icon_id={IconId::LucidePlay}  width={"18"} height={"18"} /> } }
-                      else            { html!{ <Icon icon_id={IconId::LucidePause} width={"18"} height={"18"} /> } } }
+            // ─── Section 1: Downloading (always show header + play/pause) ───
+            <div style="display:flex; align-items:center; gap:8px; margin: 24px 0 8px 16px;">
+                <h2 style="margin:0;">{"Downloading"}</h2>
+                <button class="icon-btn" type_="button" onclick={on_toggle_pause_click_header} title={ if props.paused { "Play" } else { "Pause" } }>
+                    {
+                        if props.paused {
+                            html!{ <Icon icon_id={IconId::LucidePlay}  width={"18"} height={"18"} /> }
+                        } else {
+                            html!{ <Icon icon_id={IconId::LucidePause} width={"18"} height={"18"} /> }
+                        }
+                    }
                 </button>
             </div>
 
@@ -402,24 +412,39 @@ pub fn downloads_page(props: &Props) -> Html {
                 if let Some(active) = &props.active {
                     let plat_label = platform_str(&active.row.platform).to_string();
                     html!{
-                        <>
-                            <h2 style="margin: 24px 0 8px 16px;">{"Downloading"}</h2>
-                            <div class="rows-card" style="margin-left:16px;">
-                                <ul class="rows">
-                                    <li class="row-line">
-                                        <img class="brand-icon" src={platform_icon_src(&plat_label)} />
-                                        <span class="link-text">{ collection_title(&active.row) }</span>
-                                        <span class="link-text" style="opacity:0.9;">{" - "}{ item_label_for_row(&active.row) }</span>
-                                    </li>
-                                </ul>
-                            </div>
-                        </>
+                        <div class="rows-card" style="margin-left:16px;">
+                            <ul class="rows">
+                                <li class="row-line">
+                                    <img class="brand-icon" src={platform_icon_src(&plat_label)} />
+                                    <span class="link-text">{ collection_title(&active.row) }</span>
+                                    <span class="link-text" style="opacity:0.9;">{" – "}{ item_label_for_row(&active.row) }</span>
+                                    <div class="row-actions">
+                                        <button class="icon-btn" type_="button" title={ if props.paused { "Play" } else { "Pause" } } onclick={on_toggle_pause_click_row}>
+                                            {
+                                                if props.paused {
+                                                    html!{ <Icon icon_id={IconId::LucidePlay}  width={"18"} height={"18"} /> }
+                                                } else {
+                                                    html!{ <Icon icon_id={IconId::LucidePause} width={"18"} height={"18"} /> }
+                                                }
+                                            }
+                                        </button>
+                                    </div>
+                                </li>
+                            </ul>
+                        </div>
                     }
                 } else { html!{} }
             }
 
+            // ─── Section 2: Queue (hidden if empty) ───
+            {
+                if !props.queue.is_empty() {
+                    html!{ { render_section(props.queue.clone(), "Queue", false) } }
+                } else { html!{} }
+            }
+
+            // ─── Section 3: Backlog ───
             { render_section(props.backlog.clone(), "Backlog", true) }
-            { render_section(props.queue.clone(),   "Queue",   false) }
         </main>
     }
 }
