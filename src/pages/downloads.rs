@@ -9,14 +9,10 @@ pub struct Props {
     pub on_delete: Callback<DeleteItem>,
 }
 
-/* ──────────────────────────────────────────────────────────────
-   Helpers to build nice, readable labels for each backlog row
-   ────────────────────────────────────────────────────────────── */
+/* ───────────────────────── label helpers ───────────────────────── */
 
 fn url_after_domain(url: &str) -> String {
-    // strip scheme
     let no_scheme = url.split("//").nth(1).unwrap_or(url);
-    // take path + query
     match no_scheme.find('/') {
         Some(i) => no_scheme[i + 1..].to_string(),
         None => String::new(),
@@ -24,93 +20,62 @@ fn url_after_domain(url: &str) -> String {
 }
 
 fn tik_tok_handle_from_url(url: &str) -> Option<String> {
-    // formats like: https://www.tiktok.com/@handle/photo/123 ... or /video/123 ...
     let tail = url_after_domain(url);
-    if let Some(idx) = tail.find("@") {
+    if let Some(idx) = tail.find('@') {
         let rest = &tail[idx + 1..];
         let handle = rest.split('/').next().unwrap_or("");
-        if !handle.is_empty() {
-            return Some(handle.to_string());
-        }
+        if !handle.is_empty() { return Some(handle.to_string()); }
     }
     None
 }
 
 fn instagram_handle_from_url(url: &str) -> Option<String> {
-    // https://www.instagram.com/<handle>/(p|reel)/ID
     let tail = url_after_domain(url);
     let mut it = tail.split('/');
     let first = it.next().unwrap_or("");
-    if !first.is_empty() && first != "p" && first != "reel" {
-        return Some(first.to_string());
-    }
-    None
+    if !first.is_empty() && first != "p" && first != "reel" { Some(first.to_string()) } else { None }
 }
 
 fn last_two_path_segments(url: &str) -> String {
     let tail = url_after_domain(url);
-    if tail.is_empty() {
-        return url.to_string();
-    }
     let parts: Vec<&str> = tail.split('/').filter(|s| !s.is_empty()).collect();
-    if parts.is_empty() {
-        return tail;
+    match parts.len() {
+        0 => tail,
+        1 => parts[0].to_string(),
+        _ => format!("{}/{}", parts[parts.len()-2], parts[parts.len()-1]),
     }
-    if parts.len() == 1 {
-        return parts[0].to_string();
-    }
-    format!("{}/{}", parts[parts.len() - 2], parts[parts.len() - 1])
 }
 
-// Build a readable label. If we can identify a handle/username, prefix it.
 fn display_label_for_row(row: &ClipRow) -> String {
     let link = row.link.trim();
     let platform = platform_str(&row.platform);
 
-    // Prefer the explicit handle if present and non-empty
     let mut user = row.handle.trim().to_string();
     if user.is_empty() || user.eq_ignore_ascii_case("unknown") {
-        // Derive from URL per platform if needed
         if platform == "tiktok" {
-            if let Some(h) = tik_tok_handle_from_url(link) {
-                user = h;
-            }
+            if let Some(h) = tik_tok_handle_from_url(link) { user = h; }
         } else if platform == "instagram" {
-            if let Some(h) = instagram_handle_from_url(link) {
-                user = h;
-            }
+            if let Some(h) = instagram_handle_from_url(link) { user = h; }
         }
     }
 
-    // Build the content part after domain
     let content = if platform == "instagram" {
-        // Prefer "p/<id>" or "reel/<id>"
         let tail = url_after_domain(link);
         let mut parts = tail.split('/').filter(|s| !s.is_empty());
-        let a = parts.next().unwrap_or_default();
+        let _maybe_user = parts.next().unwrap_or_default();
         let b = parts.next().unwrap_or_default(); // "p" or "reel"
         let c = parts.next().unwrap_or_default(); // id
-        if (b == "p" || b == "reel") && !c.is_empty() {
-            format!("{}/{}", b, c)
-        } else {
-            last_two_path_segments(link)
-        }
+        if (b == "p" || b == "reel") && !c.is_empty() { format!("{}/{}", b, c) } else { last_two_path_segments(link) }
     } else if platform == "tiktok" {
-        // Want "photo/<id>" or "video/<id>"
+        // ✅ keep the owner String alive while we hold &str slices
         let tail = url_after_domain(link);
         let pieces: Vec<&str> = tail.split('/').filter(|s| !s.is_empty()).collect();
-        // Try to locate "photo" or "video" then take its id
         if let Some(pos) = pieces.iter().position(|p| *p == "photo" || *p == "video") {
-            if pos + 1 < pieces.len() {
-                format!("{}/{}", pieces[pos], pieces[pos + 1])
-            } else {
-                last_two_path_segments(link)
-            }
+            if pos + 1 < pieces.len() { format!("{}/{}", pieces[pos], pieces[pos + 1]) } else { last_two_path_segments(link) }
         } else {
             last_two_path_segments(link)
         }
     } else {
-        // YouTube and others → keep the last two segments (works well for /watch?v=...)
         last_two_path_segments(link)
     };
 
@@ -121,9 +86,7 @@ fn display_label_for_row(row: &ClipRow) -> String {
     }
 }
 
-/* ──────────────────────────────────────────────────────────────
-   Downloads page
-   ────────────────────────────────────────────────────────────── */
+/* ───────────────────────── component ───────────────────────── */
 
 fn platform_icon_src(p: &str) -> &'static str {
     match p {
@@ -136,23 +99,34 @@ fn platform_icon_src(p: &str) -> &'static str {
 
 #[function_component(DownloadsPage)]
 pub fn downloads_page(props: &Props) -> Html {
-    // Track expanded/collapsed state
     let expanded_platforms = use_state(|| std::collections::HashSet::<String>::new());
     let expanded_collections = use_state(|| std::collections::HashSet::<String>::new());
 
-    // Group rows by platform -> (handle, content type) -> rows
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, HashSet};
+
+    // platform -> (handle, type, Platform, ContentType) -> rows
     let mut map: BTreeMap<String, BTreeMap<(String, String, Platform, ContentType), Vec<ClipRow>>> =
         BTreeMap::new();
 
+    // De-dupe by (platform, handle, content_type, link)
+    let mut seen = HashSet::<String>::new();
+
     for mut r in props.rows.clone() {
-        // keep things deterministic: sort by name (link field is fine as a fallback)
-        // We'll do a small normalization: name may be empty in CSV; use link for tie-break.
-        if r.handle.trim().is_empty() {
-            r.handle = "Unknown".into();
-        }
+        if r.handle.trim().is_empty() { r.handle = "Unknown".into(); }
         let plat = platform_str(&r.platform).to_string();
         let typ = content_type_str(&r.content_type).to_string();
+
+        let dedup_key = format!(
+            "{}|{}|{}|{}",
+            plat,
+            r.handle.to_lowercase().trim(),
+            typ,
+            r.link.trim()
+        );
+        if !seen.insert(dedup_key) {
+            continue; // skip duplicates
+        }
+
         map.entry(plat)
             .or_default()
             .entry((r.handle.clone(), typ, r.platform, r.content_type))
@@ -165,7 +139,6 @@ pub fn downloads_page(props: &Props) -> Html {
             <div class="summary">
                 {
                     for map.into_iter().map(|(plat_label, mut col_map)| {
-                        // sort items inside each collection by the rendered label
                         for rows in col_map.values_mut() {
                             rows.sort_by(|a, b| display_label_for_row(a).cmp(&display_label_for_row(b)));
                         }
@@ -246,42 +219,45 @@ pub fn downloads_page(props: &Props) -> Html {
                                                         </div>
                                                     </div>
 
-                                                    { if col_open {
-                                                        html!{
-                                                            <div class="rows-card">
-                                                                <ul class="rows">
-                                                                    {
-                                                                        for rows.into_iter().map(|row| {
-                                                                            let on_delete_row = {
-                                                                                let on_delete = props.on_delete.clone();
-                                                                                let link = row.link.clone();
-                                                                                Callback::from(move |e: MouseEvent| {
-                                                                                    e.stop_propagation();
-                                                                                    on_delete.emit(DeleteItem::Row(link.clone()));
-                                                                                })
-                                                                            };
-
-                                                                            html!{
-                                                                                <li class="row-line">
-                                                                                    { match row.media {
-                                                                                        MediaKind::Pictures => html!{ <Icon icon_id={IconId::LucideImage} width={"16"} height={"16"} /> },
-                                                                                        MediaKind::Video    => html!{ <Icon icon_id={IconId::LucideVideo} width={"16"} height={"16"} /> },
-                                                                                    }}
-                                                                                    <a class="link-text" href={row.link.clone()} target="_blank">{ display_label_for_row(&row) }</a>
-                                                                                    <button class="icon-btn" title="Delete" onclick={on_delete_row}>
-                                                                                        <Icon icon_id={IconId::LucideTrash2} width={"18"} height={"18"} />
-                                                                                    </button>
-                                                                                    <button class="icon-btn" title="Download">
-                                                                                        <img class="brand-icon" src="assets/download.svg" />
-                                                                                    </button>
-                                                                                </li>
-                                                                            }
-                                                                        })
-                                                                    }
-                                                                </ul>
-                                                            </div>
-                                                        }
-                                                    } else { html!{} } }
+                                                    {
+                                                        if col_open {
+                                                            html!{
+                                                                <div class="rows-card">
+                                                                    <ul class="rows">
+                                                                        {
+                                                                            for rows.into_iter().map(|row| {
+                                                                                let on_delete_row = {
+                                                                                    let on_delete = props.on_delete.clone();
+                                                                                    let link = row.link.clone();
+                                                                                    Callback::from(move |e: MouseEvent| {
+                                                                                        e.stop_propagation();
+                                                                                        on_delete.emit(DeleteItem::Row(link.clone()));
+                                                                                    })
+                                                                                };
+                                                                                html!{
+                                                                                    <li class="row-line">
+                                                                                        { match row.media {
+                                                                                            MediaKind::Pictures => html!{ <Icon icon_id={IconId::LucideImage} width={"16"} height={"16"} /> },
+                                                                                            MediaKind::Video    => html!{ <Icon icon_id={IconId::LucideVideo} width={"16"} height={"16"} /> },
+                                                                                        }}
+                                                                                        <a class="link-text" href={row.link.clone()} target="_blank">{ display_label_for_row(&row) }</a>
+                                                                                        <div class="row-actions">
+                                                                                            <button class="icon-btn" title="Delete" onclick={on_delete_row}>
+                                                                                                <Icon icon_id={IconId::LucideTrash2} width={"18"} height={"18"} />
+                                                                                            </button>
+                                                                                            <button class="icon-btn" title="Download">
+                                                                                                <img class="brand-icon" src="assets/download.svg" />
+                                                                                            </button>
+                                                                                        </div>
+                                                                                    </li>
+                                                                                }
+                                                                            })
+                                                                        }
+                                                                    </ul>
+                                                                </div>
+                                                            }
+                                                        } else { html!{} }
+                                                    }
                                                 </div>
                                             }
                                         })

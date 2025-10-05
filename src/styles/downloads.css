@@ -1,18 +1,15 @@
-/* Left-align the downloads page (without changing other pages) */
-.container.downloads {
-  text-align: left;
-  align-items: stretch;
-}
+/* Left-align only this page */
+.container.downloads { text-align: left; align-items: stretch; }
 
 /* Top level summary layout */
 .summary { width: calc(100% - 160px); margin: 0 auto; }
 
-/* Platform + collection cards */
+/* Cards */
 .platform-block { margin-bottom: 10px; }
 .platform-item, .collection-item {
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  align-items: center;             /* centers icons vertically */
   padding: 10px 12px;
   border-radius: 10px;
   cursor: pointer;
@@ -29,10 +26,10 @@
 .item-title { font-weight: 600; }
 .brand-icon { width: 18px; height: 18px; border-radius: 4px; }
 
-/* Rows container: card look to “nest” the links under a collection */
+/* Rows container card */
 .rows-card {
-  margin: 8px 0 16px 32px;          /* indent under the collection card */
-  padding: 10px 12px;
+  margin: 8px 0 16px 32px;
+  padding: 8px 10px;
   border-radius: 10px;
   background-color: rgba(255,255,255,0.06);
   box-shadow: 0 2px 2px rgba(0,0,0,0.2);
@@ -42,19 +39,30 @@
 .rows { list-style: none; padding-left: 0; margin: 0; }
 .row-line {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 0;
+  align-items: center;             /* ← exact vertical centering */
+  gap: 10px;
+  height: 40px;                    /* consistent with header cards */
 }
+
+/* keep the text vertically centered like the icons */
 .rows .link-text {
-  flex: 1;
+  display: flex;
+  align-items: center;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
   min-width: 420px;
+  line-height: 1.1;
 }
 
-/* compact icon button used on the right of each line */
+/* right-side action area so both buttons line up perfectly */
+.row-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* shared icon button */
 .icon-btn {
   padding: 0;
   width: 32px;
@@ -82,7 +90,6 @@
 .icon-btn > img.brand-icon[src$="download.svg"] { filter: invert(1) brightness(1.8); }
 .icon-btn:hover { color: #ffffff; border-color: #ffffff; }
 
-/* Light/dark tweaks */
 @media (prefers-color-scheme: dark) {
   .platform-item:hover, .collection-item:hover {
     background-color: rgba(255,255,255,0.10);
