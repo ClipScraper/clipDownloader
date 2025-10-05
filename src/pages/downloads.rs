@@ -7,8 +7,18 @@ use crate::app::{DeleteItem, MoveItem};
 pub struct Props {
     pub backlog: Vec<ClipRow>,
     pub queue: Vec<ClipRow>,
+    /// Optional currently running job (progress text is intentionally NOT shown).
+    pub active: Option<ActiveDownload>,
+    pub paused: bool,
+    pub on_toggle_pause: Callback<()>,
     pub on_delete: Callback<DeleteItem>,
     pub on_move_to_queue: Callback<MoveItem>,
+}
+
+#[derive(Clone, PartialEq)]
+pub struct ActiveDownload {
+    pub row: ClipRow,
+    pub progress: String, // ignored in UI per requirements
 }
 
 /* ───────────────────────── label helpers ───────────────────────── */
@@ -48,26 +58,23 @@ fn last_two_path_segments(url: &str) -> String {
     }
 }
 
-fn display_label_for_row(row: &ClipRow) -> String {
+/// Collection display name: "{handle} | {type}"
+fn collection_title(row: &ClipRow) -> String {
+    let handle = if row.handle.trim().is_empty() { "Unknown" } else { &row.handle };
+    let typ = content_type_str(&row.content_type);
+    format!("{handle} | {typ}")
+}
+
+fn item_label_for_row(row: &ClipRow) -> String {
     let link = row.link.trim();
     let platform = platform_str(&row.platform);
-
-    let mut user = row.handle.trim().to_string();
-    if user.is_empty() || user.eq_ignore_ascii_case("unknown") {
-        if platform == "tiktok" {
-            if let Some(h) = tik_tok_handle_from_url(link) { user = h; }
-        } else if platform == "instagram" {
-            if let Some(h) = instagram_handle_from_url(link) { user = h; }
-        }
-    }
-
-    let content = if platform == "instagram" {
+    if platform == "instagram" {
         let tail = url_after_domain(link);
         let mut parts = tail.split('/').filter(|s| !s.is_empty());
         let _maybe_user = parts.next().unwrap_or_default();
         let b = parts.next().unwrap_or_default(); // "p" or "reel"
         let c = parts.next().unwrap_or_default(); // id
-        if (b == "p" || b == "reel") && !c.is_empty() { format!("{}/{}", b, c) } else { last_two_path_segments(link) }
+        if (b == "p" || b == "reel") && !c.is_empty() { format!("{b}/{c}") } else { last_two_path_segments(link) }
     } else if platform == "tiktok" {
         let tail = url_after_domain(link);
         let pieces: Vec<&str> = tail.split('/').filter(|s| !s.is_empty()).collect();
@@ -78,12 +85,6 @@ fn display_label_for_row(row: &ClipRow) -> String {
         }
     } else {
         last_two_path_segments(link)
-    };
-
-    if !user.is_empty() && !user.eq_ignore_ascii_case("unknown") {
-        format!("{} - {}", user, content)
-    } else {
-        content
     }
 }
 
@@ -91,20 +92,29 @@ fn display_label_for_row(row: &ClipRow) -> String {
 
 fn platform_icon_src(p: &str) -> &'static str {
     match p {
-        "instagram" => "public/instagram.webp",
-        "tiktok" => "public/tiktok.webp",
-        "youtube" => "public/youtube.webp",
-        _ => "",
+        "instagram"         => "public/instagram.webp",
+        "tiktok"            => "public/tiktok.webp",
+        "youtube"           => "public/youtube.webp",
+        _                   => "",
     }
 }
 
 /* ───────────────────────── component ───────────────────────── */
-
 #[function_component(DownloadsPage)]
 pub fn downloads_page(props: &Props) -> Html {
-    // Shared across both sections, but now keys are *namespaced by section*.
+    // Shared across both sections, but keys are namespaced by section.
     let expanded_platforms = use_state(|| std::collections::HashSet::<String>::new());
     let expanded_collections = use_state(|| std::collections::HashSet::<String>::new());
+
+    // Wrap () -> () into MouseEvent -> () for Play/Pause buttons
+    let on_toggle_pause_click_header = {
+        let cb = props.on_toggle_pause.clone();
+        Callback::from(move |_e: MouseEvent| cb.emit(()))
+    };
+    let on_toggle_pause_click_row = {
+        let cb = props.on_toggle_pause.clone();
+        Callback::from(move |_e: MouseEvent| cb.emit(()))
+    };
 
     let render_section = {
         let expanded_platforms = expanded_platforms.clone();
@@ -118,8 +128,7 @@ pub fn downloads_page(props: &Props) -> Html {
             let section_id = title.to_lowercase(); // "backlog" or "queue"
 
             // platform -> (handle, type, Platform, ContentType) -> rows
-            let mut map: BTreeMap<String, BTreeMap<(String, String, Platform, ContentType), Vec<ClipRow>>> =
-                BTreeMap::new();
+            let mut map: BTreeMap<String, BTreeMap<(String, String, Platform, ContentType), Vec<ClipRow>>> = BTreeMap::new();
 
             // De-dupe by (platform, handle, type, link) within this section
             let mut seen = HashSet::<String>::new();
@@ -146,7 +155,7 @@ pub fn downloads_page(props: &Props) -> Html {
                         {
                             for map.into_iter().map(|(plat_label, mut col_map)| {
                                 for rows in col_map.values_mut() {
-                                    rows.sort_by(|a, b| display_label_for_row(a).cmp(&display_label_for_row(b)));
+                                    rows.sort_by(|a, b| item_label_for_row(a).cmp(&item_label_for_row(b)));
                                 }
 
                                 let collections_count = col_map.len();
@@ -238,20 +247,20 @@ pub fn downloads_page(props: &Props) -> Html {
                                                             if enable_queue_action {
                                                                 on_move.emit(MoveItem::Collection(
                                                                     match plat_label_s.as_str() {
-                                                                        "instagram" => Platform::Instagram,
-                                                                        "tiktok" => Platform::Tiktok,
-                                                                        "youtube" => Platform::Youtube,
-                                                                        _ => Platform::Tiktok,
+                                                                        "instagram"         => Platform::Instagram,
+                                                                        "tiktok"            => Platform::Tiktok,
+                                                                        "youtube"           => Platform::Youtube,
+                                                                        _                   => Platform::Tiktok,
                                                                     },
                                                                     handle_s.clone(),
                                                                     match typ_s.as_str() {
-                                                                        "liked" => ContentType::Liked,
-                                                                        "reposts" => ContentType::Reposts,
-                                                                        "profile" => ContentType::Profile,
-                                                                        "bookmarks" => ContentType::Bookmarks,
-                                                                        "playlist" => ContentType::Playlist,
-                                                                        "recommendation" => ContentType::Recommendation,
-                                                                        _ => ContentType::Other,
+                                                                        "liked"             => ContentType::Liked,
+                                                                        "reposts"           => ContentType::Reposts,
+                                                                        "profile"           => ContentType::Profile,
+                                                                        "bookmarks"         => ContentType::Bookmarks,
+                                                                        "playlist"          => ContentType::Playlist,
+                                                                        "recommendation"    => ContentType::Recommendation,
+                                                                        _                   => ContentType::Other,
                                                                     }
                                                                 ));
                                                             }
@@ -276,7 +285,9 @@ pub fn downloads_page(props: &Props) -> Html {
                                                                                     <img class="brand-icon" src="assets/download.svg" />
                                                                                 </button>
                                                                             }
-                                                                        } else { html!{} }
+                                                                        } else {
+                                                                            html!{} 
+                                                                        }
                                                                     }
                                                                 </div>
                                                             </div>
@@ -312,7 +323,9 @@ pub fn downloads_page(props: &Props) -> Html {
                                                                                                     MediaKind::Pictures => html!{ <Icon icon_id={IconId::LucideImage} width={"16"} height={"16"} /> },
                                                                                                     MediaKind::Video    => html!{ <Icon icon_id={IconId::LucideVideo} width={"16"} height={"16"} /> },
                                                                                                 }}
-                                                                                                <a class="link-text" href={row.link.clone()} target="_blank">{ display_label_for_row(&row) }</a>
+                                                                                                <a class="link-text" href={row.link.clone()} target="_blank">
+                                                                                                    { item_label_for_row(&row) }
+                                                                                                </a>
                                                                                                 <div class="row-actions">
                                                                                                     <button class="icon-btn" type_="button" title="Delete" onclick={on_delete_row}>
                                                                                                         <Icon icon_id={IconId::LucideTrash2} width={"18"} height={"18"} />
@@ -324,7 +337,9 @@ pub fn downloads_page(props: &Props) -> Html {
                                                                                                                     <img class="brand-icon" src="assets/download.svg" />
                                                                                                                 </button>
                                                                                                             }
-                                                                                                        } else { html!{} }
+                                                                                                        } else {
+                                                                                                            html!{} 
+                                                                                                        }
                                                                                                     }
                                                                                                 </div>
                                                                                             </li>
@@ -380,8 +395,65 @@ pub fn downloads_page(props: &Props) -> Html {
 
     html! {
         <main class="container downloads" style="padding-top: 10vh;">
+            // ─── Section 1: Downloading (always show header + play/pause) ───
+            <div style="display:flex; align-items:center; gap:8px; margin: 24px 0 8px 16px;">
+                <h2 style="margin:0;">{"Downloading"}</h2>
+                <button class="icon-btn" type_="button" onclick={on_toggle_pause_click_header} title={ if props.paused { "Play" } else { "Pause" } }>
+                    {
+                        if props.paused {
+                            html!{ <Icon icon_id={IconId::LucidePlay}  width={"18"} height={"18"} /> }
+                        } else {
+                            html!{ <Icon icon_id={IconId::LucidePause} width={"18"} height={"18"} /> }
+                        }
+                    }
+                </button>
+            </div>
+
+            {
+                if let Some(active) = &props.active {
+                    let plat_label = platform_str(&active.row.platform).to_string();
+                    html!{
+                        <div class="summary">
+                            <div class="rows-card">
+                                <ul class="rows">
+                                    <li class="row-line">
+                                        <img class="brand-icon" src={platform_icon_src(&plat_label)} />
+                                        <span class="link-text">{ collection_title(&active.row) }</span>
+                                        <span class="link-text" style="opacity:0.9;">{" - "}{ item_label_for_row(&active.row) }</span>
+                                        <div class="row-actions">
+                                            <button class="icon-btn" type_="button" title={ if props.paused { "Play" } else { "Pause" } } onclick={on_toggle_pause_click_row}>
+                                                {
+                                                    if props.paused {
+                                                        html!{<Icon icon_id={IconId::LucidePlay}  width={"18"} height={"18"} />}
+                                                    } else {
+                                                        html!{<Icon icon_id={IconId::LucidePause} width={"18"} height={"18"} />}
+                                                    }
+                                                }
+                                            </button>
+                                        </div>
+                                    </li>
+                                </ul>
+                            </div>
+                        </div>
+                    }
+                } else { html!{} }
+            }
+
+            // ─── Section 2: Queue (hidden if empty) ───
+            {
+                if !props.queue.is_empty() {
+                    html!{
+                        {
+                            render_section(props.queue.clone(), "Queue", false)
+                        }
+                    }
+                } else {
+                    html!{}
+                }
+            }
+
+            // ─── Section 3: Backlog ───
             { render_section(props.backlog.clone(), "Backlog", true) }
-            { render_section(props.queue.clone(),   "Queue",   false) }
         </main>
     }
 }

@@ -16,6 +16,15 @@ fn ensure_parent_dir(p: &Path) {
     }
 }
 
+fn sanitize_for_fs<S: Into<String>>(s: S) -> String {
+    s.into()
+        .replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|'], "_")
+        .replace(['\n', '\r', '\t'], " ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// Returns (Some(final_path), "Created new"/"Overwrote") or (None, "Skipped")
 fn move_with_policy(src: &Path, dest_dir: &Path, file_name: &str, on_duplicate: &crate::database::OnDuplicate) -> io::Result<(Option<String>, &'static str)> {
     // split name
@@ -102,6 +111,53 @@ fn move_tmp_into_site_dir(tmp: &Path, dest_dir: &Path, on_duplicate: &crate::dat
     Ok((moved_any, finals))
 }
 
+fn tiktok_handle_from_url(url: &str) -> Option<String> {
+    if let Some(idx) = url.find("tiktok.com/@") {
+        let tail = &url[idx + "tiktok.com/@".len()..];
+        let handle = tail.split(['/','?','&']).next().unwrap_or("").trim();
+        if !handle.is_empty() { return Some(handle.to_string()); }
+    }
+    None
+}
+fn youtube_handle_from_url(url: &str) -> Option<String> {
+    if let Some(idx) = url.find("youtube.com/@") {
+        let tail = &url[idx + "youtube.com/@".len()..];
+        let handle = tail.split(['/','?','&']).next().unwrap_or("").trim();
+        if !handle.is_empty() { return Some(handle.to_string()); }
+    }
+    None
+}
+
+/// Decide the **collection directory** for a given URL based on DB.
+/// Folder is exactly: `{origin} - {user_handle}` under the global download root.
+fn resolve_collection_dir(download_root: &Path, link: &str) -> PathBuf {
+    let mut origin = "manual".to_string();
+    let mut handle = "Unknown".to_string();
+
+    if let Ok(db) = crate::database::Database::new() {
+        if let Ok(Some(info)) = db.collection_for_link(link) {
+            origin = info.origin;
+            handle = info.user_handle;
+        } else {
+            if link.contains("instagram.com/") {
+                if let (Some(h), _) = ig_handle_and_id(link) {
+                    handle = h;
+                }
+                origin = "recommendation".into(); // fallback token
+            } else if link.contains("tiktok.com/") {
+                if let Some(h) = tiktok_handle_from_url(link) { handle = h; }
+                origin = "recommendation".into();
+            } else if link.contains("youtube.com/") || link.contains("youtu.be/") {
+                if let Some(h) = youtube_handle_from_url(link) { handle = h; }
+                origin = "recommendation".into();
+            }
+        }
+    }
+
+    let label = crate::database::Database::collection_folder_label(&origin, &handle);
+    download_root.join(sanitize_for_fs(label))
+}
+
 #[tauri::command]
 pub async fn download_url(app: tauri::AppHandle, url: String, state: State<'_, crate::DownloadState>) -> Result<(), String> {
     println!("[BACKEND][DOWNLOADER] download_url called with: {}", url);
@@ -114,11 +170,13 @@ pub async fn download_url(app: tauri::AppHandle, url: String, state: State<'_, c
             }
         }
 
-        emit_status(&window, false, format!("Starting download for {}...", processed_url));
+        // Intentionally no "Starting download ..." emit — keep UI concise.
+
         let state_clone = state.inner().clone();
         let handle = tokio::spawn({
             let window = window.clone();
             let processed_url = processed_url.clone();
+            let original_url = url.clone();
 
             async move {
                 // Load settings
@@ -134,7 +192,7 @@ pub async fn download_url(app: tauri::AppHandle, url: String, state: State<'_, c
                     return;
                 }
 
-                // Compute site directory
+                // Compute platform name
                 let site = if processed_url.contains("instagram.com") {
                     "instagram"
                 } else if processed_url.contains("tiktok.com") {
@@ -146,9 +204,18 @@ pub async fn download_url(app: tauri::AppHandle, url: String, state: State<'_, c
                     "other"
                 };
 
-                // yt-dlp/gallery-dl final output dir: "<root>/<site>/..."
-                let site_out_dir = download_root.join(site);
-                let _ = std_fs::create_dir_all(&site_out_dir);
+                // Determine collection folder (origin - user_handle) under the platform
+                let collection_dir_label = match crate::database::Database::new()
+                    .ok()
+                    .and_then(|db| db.collection_for_link(&original_url).ok().flatten())
+                {
+                    Some(info) => crate::database::Database::collection_folder_label(&info.origin, &info.user_handle),
+                    None => crate::database::Database::collection_folder_label("manual", "Unknown"),
+                };
+
+                // Final destination: <root>/<platform>/<origin - user_handle>
+                let dest_dir = download_root.join(site).join(collection_dir_label);
+                let _ = std_fs::create_dir_all(&dest_dir);
 
                 let is_instagram = processed_url.contains("instagram.com/");
                 let is_ig_post_p = is_instagram && processed_url.contains("/p/");
@@ -157,13 +224,13 @@ pub async fn download_url(app: tauri::AppHandle, url: String, state: State<'_, c
                 let browsers = crate::utils::os::installed_browsers();
 
                 'browser_loop: for (browser, cookie_arg) in &browsers {
-                    println!("[DOWNLOADER] trying with cookies from {browser}; site_dir={}", site_out_dir.display());
+                    println!("[DOWNLOADER] trying with cookies from {browser}; dest={}", dest_dir.display());
 
                     // ─── Instagram: try yt-dlp first; if /p/ fails, fallback to gallery-dl ───
                     if is_instagram {
                         let window_clone = window.clone();
                         match crate::download::video::run_yt_dlp_with_progress(
-                            &site_out_dir,
+                            &dest_dir,
                             cookie_arg,
                             &processed_url,
                             /* is_ig_images = */ false,
@@ -173,52 +240,11 @@ pub async fn download_url(app: tauri::AppHandle, url: String, state: State<'_, c
                             },
                         ) {
                             Ok((true, output)) => {
-                                emit_status(&window, true, format!("Saved (video) to {} [policy={:?}]", site_out_dir.display(), on_duplicate));
+                                emit_status(&window, true, format!("Saved (video)"));
                                 if let Ok(db) = crate::database::Database::new() {
-                                    let mut files = parse_multiple_filenames_from_output(&output, &processed_url, Some(&site_out_dir));
-                                    for (_, _, fp) in &files {
-                                        if !fp.is_empty() {
-                                            println!("[DOWNLOADER][VIDEO] policy={:?} saved='{}'", on_duplicate, fp);
-                                        }
-                                    }
-                                    if let (_, Some(id)) = ig_handle_and_id(&processed_url) {
-                                        for f in files.iter_mut() {
-                                            f.1 = id.clone();
-                                        }
-                                    }
-
-                                    let image_set_id = if files.len() > 1 {
-                                        Some(uuid::Uuid::new_v4().to_string())
-                                    } else {
-                                        None
-                                    };
-
-                                    for (mut user_handle, clean_name, mut file_path) in files {
-                                        if user_handle == "Unknown" {
-                                            if let (Some(h), _) = ig_handle_and_id(&processed_url) {
-                                                user_handle = h;
-                                            }
-                                        }
-                                        if file_path.is_empty() {
-                                            file_path = "unknown_path".to_string();
-                                        }
-
-                                        let download = crate::database::Download {
-                                            id: None,
-                                            platform: crate::database::Platform::Instagram,
-                                            name: clean_name,
-                                            media: crate::database::MediaKind::Video,
-                                            user: user_handle,
-                                            origin: crate::database::Origin::Manual,
-                                            link: processed_url.clone(),
-                                            status: crate::database::DownloadStatus::Done,
-                                            path: file_path,
-                                            image_set_id: image_set_id.clone(),
-                                            date_added: Utc::now(),
-                                            date_downloaded: Some(Utc::now()),
-                                        };
-                                        let _ = db.insert_download(&download);
-                                    }
+                                    let files = parse_multiple_filenames_from_output(&output, &processed_url, Some(&dest_dir));
+                                    let first_path = files.get(0).map(|t| t.2.clone()).unwrap_or_default();
+                                    let _ = db.mark_link_done(&original_url, &first_path);
                                 }
 
                                 *state_clone.0.lock().unwrap() = None;
@@ -233,7 +259,7 @@ pub async fn download_url(app: tauri::AppHandle, url: String, state: State<'_, c
                                             // Move with policy
                                             let (moved_any, finals) = move_tmp_into_site_dir(
                                                 &tmp_dir,
-                                                &site_out_dir,
+                                                &dest_dir,
                                                 &on_duplicate,
                                                 |line| {
                                                     println!("[DOWNLOADER][IMAGES] {line}");
@@ -246,53 +272,15 @@ pub async fn download_url(app: tauri::AppHandle, url: String, state: State<'_, c
 
                                             if moved_any {
                                                 if let Ok(db) = crate::database::Database::new() {
-                                                    let image_set_id =
-                                                        if finals.len() > 1 {
-                                                            Some(uuid::Uuid::new_v4().to_string())
-                                                        } else {
-                                                            None
-                                                        };
-
-                                                    for fp in finals {
-                                                        let (mut user_handle, mut clean_name) =
-                                                            ("Unknown".to_string(), "Unknown".to_string());
-                                                        if let (Some(h), id) =
-                                                            ig_handle_and_id(&processed_url)
-                                                        {
-                                                            user_handle = h;
-                                                            if let Some(id) = id {
-                                                                clean_name = id;
-                                                            }
-                                                        }
-
-                                                        let download =
-                                                            crate::database::Download {
-                                                                id: None,
-                                                                platform: crate::database::Platform::Instagram,
-                                                                name: clean_name,
-                                                                media: crate::database::MediaKind::Image,
-                                                                user: user_handle,
-                                                                origin: crate::database::Origin::Manual,
-                                                                link: processed_url.clone(),
-                                                                status: crate::database::DownloadStatus::Done,
-                                                                path: fp.clone(),
-                                                                image_set_id: image_set_id.clone(),
-                                                                date_added: Utc::now(),
-                                                                date_downloaded: Some(Utc::now()),
-                                                            };
-                                                        let _ = db.insert_download(&download);
-                                                    }
+                                                    let first = finals.get(0).cloned().unwrap_or_default();
+                                                    let _ = db.mark_link_done(&original_url, &first);
                                                 }
 
-                                                emit_status(
-                                                    &window,
-                                                    true,
-                                                    format!("Saved images under {} [policy={:?}]", site_out_dir.display(), on_duplicate),
-                                                );
+                                                emit_status(&window, true, format!("Saved images"));
                                                 *state_clone.0.lock().unwrap() = None;
                                                 return;
                                             } else {
-                                                eprintln!("[DOWNLOADER][IMAGES] No files moved from {} -> {}", tmp_dir.display(), site_out_dir.display());
+                                                eprintln!("[DOWNLOADER][IMAGES] No files moved from {} -> {}", tmp_dir.display(), dest_dir.display());
                                             }
                                         }
                                         Ok((output, tmp_dir)) => {
@@ -321,7 +309,7 @@ pub async fn download_url(app: tauri::AppHandle, url: String, state: State<'_, c
                             Ok((output, tmp_dir)) if output.status.success() => {
                                 let (moved_any, finals) = move_tmp_into_site_dir(
                                     &tmp_dir,
-                                    &site_out_dir,
+                                    &dest_dir,
                                     &on_duplicate,
                                     |line| {
                                         println!("[DOWNLOADER][IMAGES] {line}");
@@ -334,37 +322,15 @@ pub async fn download_url(app: tauri::AppHandle, url: String, state: State<'_, c
 
                                 if moved_any {
                                     if let Ok(db) = crate::database::Database::new() {
-                                        let image_set_id = if finals.len() > 1 {
-                                            Some(uuid::Uuid::new_v4().to_string())
-                                        } else {
-                                            None
-                                        };
-
-                                        for fp in finals {
-                                            // We could parse TT id; keeping simple here.
-                                            let download = crate::database::Download {
-                                                id: None,
-                                                platform: crate::database::Platform::Tiktok,
-                                                name: "image".into(),
-                                                media: crate::database::MediaKind::Image,
-                                                user: "Unknown".into(),
-                                                origin: crate::database::Origin::Manual,
-                                                link: processed_url.clone(),
-                                                status: crate::database::DownloadStatus::Done,
-                                                path: fp.clone(),
-                                                image_set_id: image_set_id.clone(),
-                                                date_added: Utc::now(),
-                                                date_downloaded: Some(Utc::now()),
-                                            };
-                                            let _ = db.insert_download(&download);
-                                        }
+                                        let first = finals.get(0).cloned().unwrap_or_default();
+                                        let _ = db.mark_link_done(&original_url, &first);
                                     }
 
-                                    emit_status(&window, true, format!("Saved images under {} [policy={:?}]", site_out_dir.display(), on_duplicate));
+                                    emit_status(&window, true, format!("Saved images"));
                                     *state_clone.0.lock().unwrap() = None;
                                     return;
                                 } else {
-                                    eprintln!("[DOWNLOADER][IMAGES] No files moved from {} -> {}", tmp_dir.display(), site_out_dir.display());
+                                    eprintln!("[DOWNLOADER][IMAGES] No files moved from {} -> {}", tmp_dir.display(), dest_dir.display());
                                 }
                             }
                             Ok((output, tmp_dir)) => {
@@ -382,7 +348,7 @@ pub async fn download_url(app: tauri::AppHandle, url: String, state: State<'_, c
                     // ─── Generic yt-dlp (YouTube, TikTok video, etc.) ───
                     let window_clone = window.clone();
                     match crate::download::video::run_yt_dlp_with_progress(
-                        &site_out_dir,
+                        &dest_dir,
                         cookie_arg,
                         &processed_url,
                         /* is_ig_images = */ false,
@@ -392,46 +358,11 @@ pub async fn download_url(app: tauri::AppHandle, url: String, state: State<'_, c
                         },
                     ) {
                         Ok((true, output)) => {
-                            emit_status(&window, true, format!("Saved (video) to {} [policy={:?}]", site_out_dir.display(), on_duplicate));
+                            emit_status(&window, true, format!("Saved (video)"));
                             if let Ok(db) = crate::database::Database::new() {
-                                let files = parse_multiple_filenames_from_output(&output, &processed_url, Some(&site_out_dir));
-                                let image_set_id = if files.len() > 1 {
-                                    Some(uuid::Uuid::new_v4().to_string())
-                                } else {
-                                    None
-                                };
-
-                                for (user_handle, clean_name, mut file_path) in files {
-                                    if file_path.is_empty() {
-                                        file_path = "unknown_path".to_string();
-                                    }
-
-                                    let platform = if processed_url.contains("youtube.com")
-                                        || processed_url.contains("youtu.be")
-                                    {
-                                        crate::database::Platform::Youtube
-                                    } else if processed_url.contains("tiktok.com") {
-                                        crate::database::Platform::Tiktok
-                                    } else {
-                                        crate::database::Platform::Youtube
-                                    };
-
-                                    let download = crate::database::Download {
-                                        id: None,
-                                        platform,
-                                        name: clean_name,
-                                        media: crate::database::MediaKind::Video,
-                                        user: user_handle,
-                                        origin: crate::database::Origin::Manual,
-                                        link: processed_url.clone(),
-                                        status: crate::database::DownloadStatus::Done,
-                                        path: file_path,
-                                        image_set_id: image_set_id.clone(),
-                                        date_added: Utc::now(),
-                                        date_downloaded: Some(Utc::now()),
-                                    };
-                                    let _ = db.insert_download(&download);
-                                }
+                                let files = parse_multiple_filenames_from_output(&output, &processed_url, Some(&dest_dir));
+                                let first_path = files.get(0).map(|t| t.2.clone()).unwrap_or_default();
+                                let _ = db.mark_link_done(&original_url, &first_path);
                             }
 
                             *state_clone.0.lock().unwrap() = None;

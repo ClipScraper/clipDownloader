@@ -2,10 +2,15 @@
 <html>
   <head>
     <meta charset="utf-8" />
-    <title>Tauri + Yew App</title>
-    <link data-trunk rel="css" href="src/styles/base.css" />
-    <link data-trunk rel="css" href="src/styles/sidebar.css" />
-    <link data-trunk rel="css" href="src/styles/downloads.css" />
+    <meta http-equiv="x-ua-compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>clip-downloader</title>
+
+    <!-- Inline the styles so Safari doesn't perform a (buggy) SRI check on them -->
+    <link data-trunk rel="css" href="src/styles/base.css" data-inline />
+    <link data-trunk rel="css" href="src/styles/sidebar.css" data-inline />
+    <link data-trunk rel="css" href="src/styles/downloads.css" data-inline />
+
     <link data-trunk rel="copy-dir" href="public" />
     <link data-trunk rel="copy-dir" href="assets" />
   </head>

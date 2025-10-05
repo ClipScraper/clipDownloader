@@ -145,6 +145,12 @@ pub fn app() -> Html {
     let backlog_rows = use_state(|| Vec::<ClipRow>::new());
     let queue_rows   = use_state(|| Vec::<ClipRow>::new());
 
+    // Auto-downloader state
+    let active_download = use_state(|| Option::<ClipRow>::None);
+    let download_progress = use_state(|| String::new());
+    let is_downloading = use_state(|| false);
+    let is_paused = use_state(|| false); // ← queue pause/resume
+
     // Load both sections when entering Downloads
     {
         let backlog_rows = backlog_rows.clone();
@@ -169,6 +175,106 @@ pub fn app() -> Html {
         });
     }
 
+    // Listener for downloader progress/completion
+    {
+        let download_progress = download_progress.clone();
+        let active_download = active_download.clone();
+        let is_downloading = is_downloading.clone();
+        let queue_rows = queue_rows.clone();
+        use_effect_with((), move |_| {
+            spawn_local(async move {
+                #[derive(serde::Deserialize)]
+                struct DownloadResult { success: bool, message: String }
+                let handler = Closure::<dyn FnMut(JsValue)>::new(move |event: JsValue| {
+                    let payload = js_sys::Reflect::get(&event, &JsValue::from_str("payload"))
+                        .unwrap_or(event.clone());
+                    if let Ok(dr) = serde_wasm_bindgen::from_value::<DownloadResult>(payload) {
+                        let msg = dr.message.clone();
+                        let is_complete =
+                            msg.starts_with("Saved") ||
+                            msg.starts_with("Failed") ||
+                            msg.starts_with("File already exists");
+                        if is_complete {
+                            is_downloading.set(false);
+                            if !dr.success {
+                                if let Some(row) = (*active_download).clone() {
+                                    let mut q = (*queue_rows).clone();
+                                    q.insert(0, row);
+                                    queue_rows.set(q);
+                                }
+                            }
+                            active_download.set(None);
+                        } else {
+                            download_progress.set(msg);
+                        }
+                    }
+                });
+                let _ = listen("download-status", &handler).await;
+                handler.forget();
+            });
+            || ()
+        });
+    }
+
+    // Auto-start next queued item while on Downloads page
+    {
+        let page = page.clone();
+        let queue_rows = queue_rows.clone();
+        let active_download = active_download.clone();
+        let download_progress = download_progress.clone();
+        let is_downloading = is_downloading.clone();
+        let is_paused = is_paused.clone();
+        use_effect_with(
+            ((*page), (*queue_rows).len(), (*active_download).is_some(), *is_downloading, *is_paused),
+            move |(p, qlen, has_active, busy, paused)| {
+                if *p == Page::Downloads && !*busy && !*has_active && *qlen > 0 && !*paused {
+                    if let Some(next) = (*queue_rows).get(0).cloned() {
+                        // Remove from queue visually
+                        let mut q = (*queue_rows).clone();
+                        q.remove(0);
+                        queue_rows.set(q);
+                        // Mark active and kick off
+                        active_download.set(Some(next.clone()));
+                        is_downloading.set(true);
+                        download_progress.set("Starting download...".to_string());
+                        spawn_local(async move {
+                            let args = serde_wasm_bindgen::to_value(
+                                &serde_json::json!({ "url": next.link })
+                            ).unwrap();
+                            let _ = invoke("download_url", args).await;
+                        });
+                    }
+                }
+                || ()
+            }
+        );
+    }
+
+    // Pause / Resume control
+    let on_toggle_pause = {
+        let is_paused = is_paused.clone();
+        let is_downloading = is_downloading.clone();
+        let active_download = active_download.clone();
+        let queue_rows = queue_rows.clone();
+        Callback::from(move |_| {
+            let going_to_pause = !*is_paused;
+            if going_to_pause && *is_downloading {
+                // Cancel current and put it back on top of the queue
+                if let Some(row) = (*active_download).clone() {
+                    let mut q = (*queue_rows).clone();
+                    q.insert(0, row);
+                    queue_rows.set(q);
+                }
+                let _ = spawn_local(async {
+                    let _ = invoke("cancel_download", JsValue::NULL).await;
+                });
+                is_downloading.set(false);
+                active_download.set(None);
+            }
+            is_paused.set(!*is_paused);
+        })
+    };
+
     let on_delete = {
         let backlog_rows = backlog_rows.clone();
         let queue_rows = queue_rows.clone();
@@ -189,7 +295,7 @@ pub fn app() -> Html {
     let on_move_to_queue = {
         let backlog_rows = backlog_rows.clone();
         let queue_rows = queue_rows.clone();
-        Callback::from(move |item: MoveItem| {
+        Callback::from(move |item: crate::app::MoveItem| {
             match item {
                 MoveItem::Platform(plat) => {
                     let plat_str = crate::types::platform_str(&plat).to_string();
@@ -288,7 +394,21 @@ pub fn app() -> Html {
 
     let body = match *page {
         Page::Home          => html! { <pages::home::HomePage on_open_file={on_open_file} on_csv_load={on_csv_load.clone()} /> },
-        Page::Downloads     => html! { <pages::downloads::DownloadsPage backlog={(*backlog_rows).clone()} queue={(*queue_rows).clone()} on_delete={on_delete} on_move_to_queue={on_move_to_queue} />},
+        Page::Downloads     => html! {
+            <pages::downloads::DownloadsPage
+                backlog={(*backlog_rows).clone()}
+                queue={(*queue_rows).clone()}
+                active={
+                    (*active_download).clone().map(|row|
+                        pages::downloads::ActiveDownload{ row, progress: (*download_progress).clone() }
+                    )
+                }
+                paused = {*is_paused}
+                on_toggle_pause={on_toggle_pause}
+                on_delete={on_delete}
+                on_move_to_queue={on_move_to_queue}
+            />
+        },
         Page::Library       => html! { <pages::library::LibraryPage /> },
         Page::Settings      => html! { <pages::settings::SettingsPage /> },
     };
