@@ -21,14 +21,19 @@ pub fn run() {
             commands::settings_cmd::load_settings,
             commands::settings_cmd::save_settings,
 
-            // HOME
+            // HOME / DOWNLOAD
             commands::downloader::download_url,
+            commands::downloader::cancel_download,
+
+            // FILES / IMPORT
             commands::files::pick_csv_and_read,
             commands::files::read_csv_from_path,
             commands::files::pick_directory,
             commands::files::open_directory,
-            commands::downloader::cancel_download,
             commands::import::import_csv_to_db,
+
+            // LIBRARY / LIST
+            commands::list::list_backlog,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

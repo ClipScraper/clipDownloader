@@ -1,4 +1,3 @@
-// ===== src/app.rs (single drag-drop listener + de-dupe, frontend no-ops after DB import) =====
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
 use yew_icons::{Icon, IconId};
@@ -15,21 +14,12 @@ use std::cell::RefCell;
 extern "C" {
     #[wasm_bindgen(catch, js_namespace = ["window", "__TAURI__", "core"])]
     async fn invoke(cmd: &str, args: JsValue) -> Result<JsValue, JsValue>;
-}
-
-#[wasm_bindgen]
-extern "C" {
     #[wasm_bindgen(js_namespace = ["window", "__TAURI__", "event"])]
     async fn listen(event: &str, f: &Closure<dyn FnMut(JsValue)>) -> JsValue;
-}
-
-#[wasm_bindgen]
-extern "C" {
     #[wasm_bindgen(js_namespace = ["window","__TAURI__","webview"])]
     fn getCurrentWebview() -> JsValue;
 }
 
-// Small helper to log an invoke error
 fn log_invoke_err(cmd: &str, e: JsValue) {
     web_sys::console::error_2(&format!("invoke({cmd}) failed").into(), &e);
 }
@@ -46,12 +36,10 @@ fn log_json(label: &str, v: &JsValue) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Drop de-dupe guard: ignore the same path twice within 1s
+// Drop de-dupe guard
 thread_local! {
-    static LAST_DROP: RefCell<(String, f64)> = RefCell::new(("".to_string(), 0.0)); // (path, timestamp_ms)
+    static LAST_DROP: RefCell<(String, f64)> = RefCell::new(("".to_string(), 0.0));
 }
-
-// Use Date.now() to avoid needing the web-sys Performance feature.
 fn now_ms() -> f64 {
     js_sys::Date::now()
 }
@@ -62,7 +50,7 @@ fn should_handle_drop(path: &str) -> bool {
     LAST_DROP.with(|cell| {
         let mut prev = cell.borrow_mut();
         let same = prev.0 == path;
-        let recent = t - prev.1 < 1000.0; // 1 second window
+        let recent = t - prev.1 < 1000.0;
         if same && recent {
             allow = false;
         } else {
@@ -88,13 +76,11 @@ fn spawn_import_from_path(path: String) {
     });
 }
 
-// Start ONE drag-drop listener: prefer onDragDropEvent; otherwise use raw tauri events.
+// Start one drag-drop listener
 async fn start_dragdrop_listener() {
     web_sys::console::log_1(&"🧩 init drag-drop listener".into());
-
     let mut attached = false;
 
-    // Try Webview helper API first
     let webview = getCurrentWebview();
     if !webview.is_undefined() && !webview.is_null() {
         if let Ok(on_fn) = js_sys::Reflect::get(&webview, &JsValue::from_str("onDragDropEvent")) {
@@ -102,11 +88,8 @@ async fn start_dragdrop_listener() {
                 let on = js_sys::Function::from(on_fn);
                 let handler = Closure::<dyn FnMut(JsValue)>::new(move |event: JsValue| {
                     web_sys::console::log_1(&"🔥 onDragDropEvent fired".into());
-                    log_json("event", &event);
                     let payload = js_sys::Reflect::get(&event, &JsValue::from_str("payload"))
-                        .unwrap_or(JsValue::UNDEFINED);
-                    log_json("payload", &payload);
-
+                        .unwrap_or(event.clone());
                     let typ = js_sys::Reflect::get(&payload, &JsValue::from_str("type"))
                         .ok().and_then(|v| v.as_string()).unwrap_or_default();
                     if typ == "drop" {
@@ -120,7 +103,6 @@ async fn start_dragdrop_listener() {
                         }
                     }
                 });
-
                 let _ = on.call1(&webview, handler.as_ref().unchecked_ref());
                 handler.forget();
                 attached = true;
@@ -129,11 +111,9 @@ async fn start_dragdrop_listener() {
         }
     }
 
-    // If helper API not available, attach the raw fallback
-    if !attached {
+    if (!attached) {
         let raw = Closure::<dyn FnMut(JsValue)>::new(move |evt: JsValue| {
             web_sys::console::log_1(&"🔥 raw listen('tauri://drag-drop') fired".into());
-            log_json("evt", &evt);
             if let Ok(obj) = evt.dyn_into::<js_sys::Object>() {
                 if let Ok(payload) = js_sys::Reflect::get(&obj, &JsValue::from_str("payload")) {
                     if let Ok(paths) = js_sys::Reflect::get(&payload, &JsValue::from_str("paths")) {
@@ -150,25 +130,6 @@ async fn start_dragdrop_listener() {
         let _ = listen("tauri://drag-drop", &raw).await;
         raw.forget();
         web_sys::console::log_1(&"✅ attached raw tauri://drag-drop listener".into());
-
-        // optional: log the other raw drag states
-        let enter = Closure::<dyn FnMut(JsValue)>::new(move |_| {
-            web_sys::console::log_1(&"🟢 tauri://drag-enter".into());
-        });
-        let _ = listen("tauri://drag-enter", &enter).await;
-        enter.forget();
-
-        let over = Closure::<dyn FnMut(JsValue)>::new(move |_| {
-            web_sys::console::log_1(&"🟡 tauri://drag-over".into());
-        });
-        let _ = listen("tauri://drag-over", &over).await;
-        over.forget();
-
-        let leave = Closure::<dyn FnMut(JsValue)>::new(move |_| {
-            web_sys::console::log_1(&"⚪ tauri://drag-leave".into());
-        });
-        let _ = listen("tauri://drag-leave", &leave).await;
-        leave.forget();
     }
 }
 
@@ -180,9 +141,31 @@ pub enum DeleteItem {
 
 #[function_component(App)]
 pub fn app() -> Html {
-    println!("[FRONTEND] [app.rs] [app component]");
     let page = use_state(|| Page::Home);
-    let queue_rows = use_state(|| Vec::<ClipRow>::new()); // UI no-ops after DB import.
+    let queue_rows = use_state(|| Vec::<ClipRow>::new());
+
+    // Load backlog when page switches to Downloads (Yew 0.21: use_effect_with)
+    {
+        let queue_rows = queue_rows.clone();
+        let dep = *page; // copy value for PartialEq dep
+        use_effect_with(dep, move |p| {
+            if *p == Page::Downloads {
+                spawn_local(async move {
+                    match invoke("list_backlog", JsValue::NULL).await {
+                        Ok(js) => {
+                            if let Ok(rows) = serde_wasm_bindgen::from_value::<Vec<ClipRow>>(js) {
+                                queue_rows.set(rows);
+                            } else {
+                                web_sys::console::error_1(&"Failed to decode backlog rows".into());
+                            }
+                        }
+                        Err(e) => log_invoke_err("list_backlog", e),
+                    }
+                });
+            }
+            || ()
+        });
+    }
 
     let on_delete = {
         let queue_rows = queue_rows.clone();
@@ -197,30 +180,18 @@ pub fn app() -> Html {
         })
     };
 
-    // No-op: backend imports; nothing else in UI afterwards.
-    let on_csv_load = {
-        Callback::from(move |_csv_text: String| {
-            // intentionally empty
-        })
-    };
-
-    // "Import list" -> open picker in backend, which imports; we only log success/failure.
-    let on_open_file = {
-        Callback::from(move |_: ()| {
-            spawn_local(async move {
-                match invoke("pick_csv_and_read", JsValue::NULL).await {
-                    Ok(_) => web_sys::console::log_1(&"✅ Imported CSV from picker (backend)".into()),
-                    Err(e) => log_invoke_err("pick_csv_and_read", e),
-                }
-            });
-        })
-    };
+    let on_csv_load = Callback::from(move |_csv_text: String| {});
+    let on_open_file = Callback::from(move |_: ()| {
+        spawn_local(async move {
+            match invoke("pick_csv_and_read", JsValue::NULL).await {
+                Ok(_) => web_sys::console::log_1(&"✅ Imported CSV from picker (backend)".into()),
+                Err(e) => log_invoke_err("pick_csv_and_read", e),
+            }
+        });
+    });
 
     {
-        use_effect_with((), move |_| {
-            spawn_local(start_dragdrop_listener());
-            || ()
-        });
+        use_effect_with((), move |_| { spawn_local(start_dragdrop_listener()); || () });
     }
 
     let set_page = |p: Page, page: UseStateHandle<Page>| Callback::from(move |_| page.set(p));
@@ -252,10 +223,5 @@ pub fn app() -> Html {
         Page::Settings => html! { <pages::settings::SettingsPage /> },
     };
 
-    html! {
-        <>
-            { sidebar }
-            { body }
-        </>
-    }
+    html! { <>{ sidebar }{ body }</> }
 }
