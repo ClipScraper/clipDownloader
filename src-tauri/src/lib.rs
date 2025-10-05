@@ -34,6 +34,12 @@ pub fn run() {
 
             // LIBRARY / LIST
             commands::list::list_backlog,
+            commands::list::list_queue,
+
+            // STATUS MUTATIONS
+            commands::list::move_link_to_queue,
+            commands::list::move_collection_to_queue,
+            commands::list::move_platform_to_queue,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

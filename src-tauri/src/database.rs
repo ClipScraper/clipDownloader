@@ -67,7 +67,7 @@ pub struct UiBacklogRow {
     pub handle: String,
     #[serde(rename = "Media")]              /// "pictures" | "video"
     pub media: String,
-    pub link: String,                       /// original URL
+    pub link: String,
 
 }
 
@@ -371,14 +371,12 @@ impl Database {
             let origin: String  = row.get(2)?;
             let media: String   = row.get(3)?;
             let link: String    = row.get(4)?;
-            let _name: String   = row.get(5)?; // included for ORDER BY; not exposed
+            let _name: String   = row.get(5)?;
 
-            // Normalize to the frontend enum tokens
             let content_type = match origin.as_str() {
                 "recommendation" | "playlist" | "profile" | "bookmarks" | "liked" | "reposts" => origin.clone(),
-                _ => "recommendation".to_string(), // map unknown "other" → "recommendation"
+                _ => "recommendation".to_string(),
             };
-            // UI expects "pictures" | "video"
             let media_token = if media == "image" || media == "images" {
                 "pictures".to_string()
             } else {
@@ -393,5 +391,79 @@ impl Database {
             out.push(r?);
         }
         Ok(out)
+    }
+
+    /// Fetch rows with `status = 'queue'`, normalized for UI.
+    pub fn list_queue_ui(&self) -> Result<Vec<UiBacklogRow>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT platform, user_handle, origin, media, link, name
+             FROM downloads
+             WHERE status = 'queue'
+             ORDER BY platform COLLATE NOCASE,
+                      user_handle COLLATE NOCASE,
+                      origin COLLATE NOCASE,
+                      name COLLATE NOCASE",
+        )?;
+
+        let rows = stmt.query_map([], |row| {
+            let platform: String = row.get(0)?;
+            let handle: String = row.get(1)?;
+            let origin: String  = row.get(2)?;
+            let media: String   = row.get(3)?;
+            let link: String    = row.get(4)?;
+            let _name: String   = row.get(5)?;
+
+            let content_type = match origin.as_str() {
+                "recommendation" | "playlist" | "profile" | "bookmarks" | "liked" | "reposts" => origin.clone(),
+                _ => "recommendation".to_string(),
+            };
+            let media_token = if media == "image" || media == "images" {
+                "pictures".to_string()
+            } else {
+                "video".to_string()
+            };
+
+            Ok(UiBacklogRow {platform, content_type, handle, media: media_token, link})
+        })?;
+
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r?);
+        }
+        Ok(out)
+    }
+
+    /* -------------------- status updates → Queue -------------------- */
+
+    /// Move a single link from backlog to queue.
+    pub fn move_link_to_queue(&self, link: &str) -> Result<usize> {
+        let n = self.conn.execute("UPDATE downloads SET status='queue' WHERE link=?1 AND status='backlog'", [link])?;
+        Ok(n)
+    }
+
+    /// Move all rows of a (platform, handle, origin) collection from backlog to queue.
+    pub fn move_collection_to_queue(&self, platform: &str, handle: &str, origin: &str) -> Result<usize> {
+        let n = self.conn.execute(
+            "UPDATE downloads
+               SET status='queue'
+             WHERE platform   = ?1
+               AND user_handle= ?2
+               AND origin      = ?3
+               AND status      = 'backlog'",
+            [platform, handle, origin],
+        )?;
+        Ok(n)
+    }
+
+    /// Move all rows of a platform from backlog to queue.
+    pub fn move_platform_to_queue(&self, platform: &str) -> Result<usize> {
+        let n = self.conn.execute(
+            "UPDATE downloads
+               SET status='queue'
+             WHERE platform = ?1
+               AND status   = 'backlog'",
+            [platform],
+        )?;
+        Ok(n)
     }
 }
