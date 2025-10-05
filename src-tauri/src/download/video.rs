@@ -79,6 +79,11 @@ fn rest_token_from_url(url: &str) -> String {
             return id;
         }
     }
+    if url.contains("youtube.com/") || url.contains("youtu.be/") {
+        if let Some(id) = crate::commands::parse::youtube_id_from_url(url) {
+            return id;
+        }
+    }
     last_segment(url).unwrap_or_else(|| "media".into())
 }
 
@@ -141,25 +146,15 @@ fn probe_filename(cookie_arg: &str, processed_url: &str, is_ig_images: bool) -> 
 
 /* ---------- output template selection ---------- */
 
-fn choose_output_template(
-    yt_out_dir: &Path,
-    cookie_arg: &str,
-    processed_url: &str,
-    is_ig_images: bool,
-    on_duplicate: &OnDuplicate,
-) -> std::io::Result<String> {
-    let is_instagram = processed_url.contains("instagram.com/");
-    let is_tiktok = processed_url.contains("tiktok.com/");
+fn choose_output_template(out_dir: &Path, cookie_arg: &str, processed_url: &str, is_ig_images: bool, on_duplicate: &OnDuplicate) -> std::io::Result<String> {
+    let rest_id = sanitize(rest_token_from_url(processed_url));
 
-    // 1) Compute the “rest of url” token (e.g. IG id or TT id)
-    let rest = sanitize(rest_token_from_url(processed_url));
-
-    // 2) Get the REAL author/uploader first; fallback to URL parsing
+    // Get real uploader (best), then URL handle guess, else "unknown"
     let author_real = probe_uploader(cookie_arg, processed_url, is_ig_images)
         .or_else(|| {
-            if is_instagram {
+            if processed_url.contains("instagram.com/") {
                 ig_handle_from_url(processed_url)
-            } else if is_tiktok {
+            } else if processed_url.contains("tiktok.com/") {
                 tiktok_username_from_url(processed_url)
             } else {
                 None
@@ -167,46 +162,32 @@ fn choose_output_template(
         })
         .unwrap_or_else(|| "unknown".into());
 
-    let base_stem = sanitize(format!("{author_real} - {rest}"));
-
-    // We merge to MP4 for videos, so extension is stable.
+    // Desired base name: "uploader - [ID]"
+    let base_stem = sanitize(format!("{author_real} - [{rest_id}]"));
     let ext = "mp4";
-    let mut chosen_stem = base_stem.clone();
-    let mut chosen_path = yt_out_dir.join(format!("{chosen_stem}.{ext}"));
 
+    // Pick a free name ahead of time for CreateNew; log intent for other modes
+    let mut chosen_stem = base_stem.clone();
+    let mut chosen_path = out_dir.join(format!("{chosen_stem}.{ext}"));
     match on_duplicate {
         OnDuplicate::CreateNew => {
             let mut n: usize = 1;
             while chosen_path.exists() {
                 n += 1;
                 chosen_stem = format!("{base_stem} ({n})");
-                chosen_path = yt_out_dir.join(format!("{chosen_stem}.{ext}"));
+                chosen_path = out_dir.join(format!("{chosen_stem}.{ext}"));
             }
-            println!(
-                "[YT-DLP][template] policy=CreateNew dir='{}' author='{}' rest='{}' -> chosen='{}'",
-                yt_out_dir.display(), author_real, rest, chosen_path.display()
-            );
-            // Return a literal template (only %(ext)s is dynamic, but we know it's mp4)
+            println!("[YT-DLP][template] policy=CreateNew dir='{}' -> '{}'", out_dir.display(), chosen_path.display());
             Ok(format!("{chosen_stem}.%(ext)s"))
         }
         OnDuplicate::Overwrite => {
             let existed = chosen_path.exists();
-            println!(
-                "[YT-DLP][template] policy=Overwrite dir='{}' author='{}' rest='{}' -> {} '{}'",
-                yt_out_dir.display(), author_real, rest,
-                if existed { "will overwrite" } else { "will create" },
-                chosen_path.display()
-            );
+            println!("[YT-DLP][template] policy=Overwrite dir='{}' -> {} '{}'", out_dir.display(), if existed { "will overwrite" } else { "will create" }, chosen_path.display());
             Ok(format!("{base_stem}.%(ext)s"))
         }
         OnDuplicate::DoNothing => {
             let existed = chosen_path.exists();
-            println!(
-                "[YT-DLP][template] policy=DoNothing dir='{}' author='{}' rest='{}' -> {} '{}'",
-                yt_out_dir.display(), author_real, rest,
-                if existed { "exists (will skip)" } else { "will create" },
-                chosen_path.display()
-            );
+            println!("[YT-DLP][template] policy=DoNothing dir='{}' -> {} '{}'", out_dir.display(), if existed { "exists (will skip)" } else { "will create" }, chosen_path.display());
             Ok(format!("{base_stem}.%(ext)s"))
         }
     }
@@ -214,17 +195,7 @@ fn choose_output_template(
 
 /* ---------- runner ---------- */
 
-pub fn run_yt_dlp_with_progress<F>(
-    yt_out_dir: &Path,
-    cookie_arg: &str,
-    processed_url: &str,
-    is_ig_images: bool,
-    on_duplicate: &OnDuplicate,
-    mut progress_callback: F,
-) -> std::io::Result<(bool, String)>
-where
-    F: FnMut(&str),
-{
+pub fn run_yt_dlp_with_progress<F>(out_dir: &Path, cookie_arg: &str, processed_url: &str, is_ig_images: bool, on_duplicate: &OnDuplicate, mut progress_callback: F) -> std::io::Result<(bool, String)> where F: FnMut(&str) {
     let mut args = common_ytdlp_args(cookie_arg, is_ig_images);
 
     // Respect Settings: Overwrite / CreateNew / DoNothing
@@ -232,12 +203,13 @@ where
 
     // Force destination directory ⇒ never spill into repo
     args.push("-P".into());
-    args.push(yt_out_dir.to_string_lossy().to_string());
+    args.push(out_dir.to_string_lossy().to_string());
 
     // Our "{author} - {rest}" output pattern (with uniqueness if needed)
-    let output_template = choose_output_template(
-        yt_out_dir, cookie_arg, processed_url, is_ig_images, on_duplicate,
-    )?;
+    let output_template: String = choose_output_template(out_dir, cookie_arg, processed_url, is_ig_images, on_duplicate)?;
+    let planned_path = out_dir.join(output_template.replace("%(ext)s", "mp4"));
+    println!("[YT-DLP] policy={:?} dir='{}'\n url='{}'\n out='{}'", on_duplicate, out_dir.display(), processed_url, planned_path.display());
+ 
     args.push("-o".into());
     args.push(output_template);
 
