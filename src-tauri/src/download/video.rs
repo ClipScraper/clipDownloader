@@ -1,38 +1,21 @@
 use std::io::{BufRead, BufReader};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Command, Stdio};
 
+use crate::commands::parse::{last_segment, tiktok_id_from_url, youtube_id_from_url};
 use crate::database::OnDuplicate;
 
-/// Build the common yt-dlp args (cookies, parallel, etc.), and the
-/// format args depending on IG vs video sites.
-fn common_ytdlp_args(cookie_arg: &str, is_ig_images: bool) -> Vec<String> {
-    let mut args: Vec<String> = vec![
-        "--newline".into(),                   // progress lines
-        "-N".into(), "8".into(),              // parallel fragments
-        "--cookies-from-browser".into(), cookie_arg.into(),
-        "--ignore-config".into(),
-        "--no-cache-dir".into(),
-        // Ask yt-dlp to print the final saved path even after post-processing
-        "--print".into(), "after_move:filepath".into(),
-        // Also print generic planned filepath/filename as fallbacks (useful on skips)
-        "--print".into(), "filepath".into(),
-        "--print".into(), "filename".into(),
-    ];
+fn base_ytdlp_args(cookie_arg: &str, is_ig_images: bool) -> Vec<String> {
+    let mut args: Vec<String> = vec!["--newline".into(), "-N".into(), "8".into(), "--cookies-from-browser".into(), cookie_arg.into(), "--ignore-config".into(), "--no-cache-dir".into()];
     if is_ig_images {
-        // Allow IG posts without video formats (carousels with images)
         args.push("--ignore-no-formats-error".into());
     } else {
-        // Prefer best video + audio, merge to mp4
-        args.extend(vec![
-            "-f".into(), "bestvideo+bestaudio/best".into(),
-            "--merge-output-format".into(), "mp4".into(),
-        ]);
+        args.extend(vec!["-f".into(), "bestvideo+bestaudio/best".into(), "--merge-output-format".into(), "mp4".into()]);
     }
     args
 }
 
-/// Quick IG id extraction from URL (/reel/:id or /p/:id)
+/* ---------- helpers to read parts from the URL ---------- */
 fn ig_id_from_url(url: &str) -> Option<String> {
     if let Some(pos) = url.find("instagram.com/") {
         let rest = &url[pos + "instagram.com/".len()..];
@@ -47,36 +30,98 @@ fn ig_id_from_url(url: &str) -> Option<String> {
     None
 }
 
-/// Ask yt-dlp what the *final* filename would be for our base template.
-/// Returns just the "name.ext" (no directories).
+fn ig_handle_from_url(url: &str) -> Option<String> {
+    if let Some(pos) = url.find("instagram.com/") {
+        let first = &url[pos + "instagram.com/".len()..];
+        let seg = first.trim_matches('/').split('/').next().unwrap_or("");
+        if !seg.is_empty() && seg != "reel" && seg != "p" {
+            return Some(seg.to_string());
+        }
+    }
+    None
+}
+
+fn tiktok_username_from_url(url: &str) -> Option<String> {
+    if let Some(idx) = url.find("tiktok.com/@") {
+        let tail = &url[idx + "tiktok.com/@".len()..];
+        let handle = tail.split(['/', '?', '&']).next().unwrap_or("");
+        if !handle.is_empty() {
+            return Some(handle.to_string());
+        }
+    }
+    None
+}
+
+/// the “rest-of-url” token:
+/// - IG: id after /reel/ or /p/, else last path segment
+/// - TikTok: id after /video/ or /photo/, else last path segment
+/// - YouTube: v=… or /shorts/…
+fn rest_token_from_url(url: &str) -> String {
+    if url.contains("instagram.com/") {
+        if let Some(id) = ig_id_from_url(url) {
+            return id;
+        }
+    }
+    if url.contains("tiktok.com/") {
+        if let Some(id) = tiktok_id_from_url(url) {
+            return id;
+        }
+    }
+    if url.contains("youtube.com/") || url.contains("youtu.be/") {
+        if let Some(id) = youtube_id_from_url(url) {
+            return id;
+        }
+    }
+    last_segment(url).unwrap_or_else(|| "media".into())
+}
+
+fn sanitize<S: Into<String>>(s: S) -> String {
+    // Replace illegal filename chars, strip control/newline, collapse whitespace.
+    let t = s
+        .into()
+        .replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|'], "_")
+        .replace(['\n', '\r', '\t'], " ");
+    t.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+// Probe uploader using a *clean* set of args that only prints the uploader.
+// Ignore empty/NA and sanitize the result.
+fn probe_uploader(cookie_arg: &str, processed_url: &str, is_ig_images: bool) -> Option<String> {
+    let mut args = base_ytdlp_args(cookie_arg, is_ig_images);
+    args.push("--simulate".into());
+    args.extend(vec!["--print".into(), "uploader".into(), processed_url.into()]);
+    match Command::new("yt-dlp").args(&args).output() {
+        Ok(out) if out.status.success() => {
+            let s = String::from_utf8_lossy(&out.stdout);
+            let first = s.lines().find(|l| !l.trim().is_empty()).unwrap_or("").trim();
+            if first.is_empty() || first.eq_ignore_ascii_case("na") || first.eq_ignore_ascii_case("n/a") {
+                None
+            } else {
+                Some(sanitize(first))
+            }
+        }
+        _ => None,
+    }
+}
+
+/* ---------- probing for non-IG/TT platforms (optional helper) ---------- */
+#[allow(dead_code)]
 fn probe_filename(cookie_arg: &str, processed_url: &str, is_ig_images: bool) -> std::io::Result<String> {
-    let mut args = common_ytdlp_args(cookie_arg, is_ig_images);
-
-    // We want the evaluated filename for this template (no directories here).
-    args.extend(vec![
-        "--print".into(), "filename".into(),
-        "-o".into(), "%(uploader)s - %(title)s [%(id)s].%(ext)s".into(),
-        processed_url.into(),
-    ]);
-
+    let mut args = base_ytdlp_args(cookie_arg, is_ig_images);
+    args.push("--simulate".into());
+    args.extend(vec!["--print".into(), "filename".into(), "-o".into(), "%(uploader)s - %(title)s [%(id)s].%(ext)s".into(), processed_url.into()]);
     let out = Command::new("yt-dlp").args(&args).output()?;
     if !out.status.success() {
-        // Fall back to the older --get-filename if needed
-        let mut args_old = common_ytdlp_args(cookie_arg, is_ig_images);
-        args_old.extend(vec![
-            "--get-filename".into(),
-            "-o".into(), "%(uploader)s - %(title)s [%(id)s].%(ext)s".into(),
+        let mut args_old = base_ytdlp_args(cookie_arg, is_ig_images);
+        args_old.push("--simulate".into());
+        args_old.extend(vec![            "--get-filename".into(),
+            "-o".into(),
+            "%(uploader)s - %(title)s [%(id)s].%(ext)s".into(),
             processed_url.into(),
         ]);
         let out_old = Command::new("yt-dlp").args(&args_old).output()?;
         if !out_old.status.success() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!(
-                    "yt-dlp failed to probe filename: {}",
-                    String::from_utf8_lossy(&out_old.stderr)
-                ),
-            ));
+            return Err(std::io::Error::new(std::io::ErrorKind::Other, format!("yt-dlp failed to probe filename: {}", String::from_utf8_lossy(&out_old.stderr))));
         }
         Ok(String::from_utf8_lossy(&out_old.stdout).trim().to_string())
     } else {
@@ -84,81 +129,104 @@ fn probe_filename(cookie_arg: &str, processed_url: &str, is_ig_images: bool) -> 
     }
 }
 
-/// If policy is CreateNew, compute a unique output *pattern* (no directory here).
-/// We pass the directory separately via `-P <dir>` to guarantee location.
-fn choose_output_template(yt_out_dir: &Path, cookie_arg: &str, processed_url: &str, is_ig_images: bool, on_duplicate: &OnDuplicate) -> std::io::Result<String> {
-    // For IG reels and posts handled by yt-dlp, we want filename = "%(id)s"
-    let id_only = processed_url.contains("instagram.com/")
-        && (processed_url.contains("/reel/") || processed_url.contains("/p/"));
+/* ---------- output template selection ---------- */
+
+fn choose_output_template(out_dir: &Path, cookie_arg: &str, processed_url: &str, is_ig_images: bool, on_duplicate: &OnDuplicate) -> std::io::Result<String> {
+    let rest_id = sanitize(rest_token_from_url(processed_url));
+    // Prefer the real uploader; fall back to handle from URL; sanitize.
+    let mut author_real = probe_uploader(cookie_arg, processed_url, is_ig_images)
+        .or_else(|| {
+            if processed_url.contains("instagram.com/") {
+                ig_handle_from_url(processed_url)
+            } else if processed_url.contains("tiktok.com/") {
+                tiktok_username_from_url(processed_url)
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|| "unknown".into());
+    author_real = sanitize(author_real);
+
+    // Desired base name EXACTLY: "uploader [ID]"
+    let base_stem = format!("{author_real} [{rest_id}]");
+    let ext = "mp4";
+
+    // Pre-compute chosen name according to duplicate policy
+    let mut chosen_stem = base_stem.clone();
+    let mut chosen_path = out_dir.join(format!("{chosen_stem}.{ext}"));
 
     match on_duplicate {
         OnDuplicate::CreateNew => {
-            // Decide the stem to probe uniqueness for:
-            // - IG id-only: use the token from URL and assume mp4 for existence checks
-            // - Others: probe yt-dlp to get a realistic ext
-            if id_only {
-                let stem = ig_id_from_url(processed_url).unwrap_or_else(|| "video".into());
-                let ext = "mp4"; // practical default for reels
-                let mut n: usize = 1;
-                let mut candidate = yt_out_dir.join(format!("{stem}.{ext}"));
-                while candidate.exists() {
+            if chosen_path.exists() {
+                // First collision -> (2), then (3)...
+                let mut n: usize = 2;
+                loop {
+                    let cand = out_dir.join(format!("{base_stem}({n}).{ext}"));
+                    if !cand.exists() {
+                        chosen_stem = format!("{base_stem}({n})");
+                        chosen_path = cand;
+                        break;
+                    }
                     n += 1;
-                    candidate = yt_out_dir.join(format!("{stem} ({n}).{ext}"));
-                }
-                if n == 1 {
-                    Ok(format!("{}.%(ext)s", stem))
-                } else {
-                    Ok(format!("{} ({}).%(ext)s", stem, n))
-                }
-            } else {
-                let base_filename = probe_filename(cookie_arg, processed_url, is_ig_images)?;
-                let p = PathBuf::from(base_filename);
-                let ext = p.extension().and_then(|s| s.to_str()).unwrap_or("mp4");
-                let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("video");
-                let mut n: usize = 1;
-                let mut candidate = yt_out_dir.join(format!("{stem}.{ext}"));
-                while candidate.exists() {
-                    n += 1;
-                    candidate = yt_out_dir.join(format!("{stem} ({n}).{ext}"));
-                }
-                if n == 1 {
-                    Ok(format!("{}.%(ext)s", stem))
-                } else {
-                    Ok(format!("{} ({}).%(ext)s", stem, n))
                 }
             }
+            println!(
+                "[YT-DLP][template] policy=CreateNew dir='{}' -> '{}'",
+                out_dir.display(),
+                chosen_path.display()
+            );
+            Ok(format!("{chosen_stem}.%(ext)s"))
         }
-        _ => {
-            // Overwrite / DoNothing → use a stable template (id for IG reels/posts)
-            if id_only {
-                Ok("%(id)s.%(ext)s".into())
-            } else {
-                Ok("%(uploader)s - %(title)s [%(id)s].%(ext)s".into())
-            }
+        OnDuplicate::Overwrite => {
+            let existed = chosen_path.exists();
+            println!(
+                "[YT-DLP][template] policy=Overwrite dir='{}' -> {} '{}'",
+                out_dir.display(),
+                if existed { "will overwrite" } else { "will create" },
+                chosen_path.display()
+            );
+            Ok(format!("{base_stem}.%(ext)s"))
+        }
+        OnDuplicate::DoNothing => {
+            let existed = chosen_path.exists();
+            println!(
+                "[YT-DLP][template] policy=DoNothing dir='{}' -> {} '{}'",
+                out_dir.display(),
+                if existed { "exists (will skip)" } else { "will create" },
+                chosen_path.display()
+            );
+            Ok(format!("{base_stem}.%(ext)s"))
         }
     }
 }
 
-pub fn run_yt_dlp_with_progress<F>(yt_out_dir: &Path, cookie_arg: &str, processed_url: &str, is_ig_images: bool, on_duplicate: &OnDuplicate, mut progress_callback: F) -> std::io::Result<(bool, String)> where F: FnMut(&str) {
-    // Start with the common args
-    let mut args = common_ytdlp_args(cookie_arg, is_ig_images);
+/* ---------- runner ---------- */
 
-    // Add duplicate-handling flags
+pub fn run_yt_dlp_with_progress<F>(out_dir: &Path, cookie_arg: &str, processed_url: &str, is_ig_images: bool, on_duplicate: &OnDuplicate, mut progress_callback: F) -> std::io::Result<(bool, String)> where F: FnMut(&str) {
+    // Start with clean base args
+    let mut args = base_ytdlp_args(cookie_arg, is_ig_images);
+
+    // Respect Settings: Overwrite / CreateNew / DoNothing
     args.extend(crate::settings::get_yt_dlp_duplicate_flags(on_duplicate));
 
-    // Guarantee the download directory: never spill into repo folder
+    // Only the real run should emit these prints (used later to parse final path)
+    args.extend(vec!["--print".into(), "after_move:filepath".into(), "--print".into(), "filepath".into(), "--print".into(), "filename".into()]);
+
+    // Force destination directory ⇒ never spill into repo
     args.push("-P".into());
-    args.push(yt_out_dir.to_string_lossy().to_string());
+    args.push(out_dir.to_string_lossy().to_string());
 
-    // Decide the output template (and ensure uniqueness for CreateNew)
-    let output_template = choose_output_template(yt_out_dir, cookie_arg, processed_url, is_ig_images, on_duplicate)?;
+    // Our "{uploader} [{rest_id}]" output pattern (with uniqueness if needed)
+    let output_template = choose_output_template(out_dir, cookie_arg, processed_url, is_ig_images, on_duplicate)?;
     args.push("-o".into());
-    args.push(output_template);
+    args.push(output_template.clone());
 
-    // Finally, add the URL
+    // URL last
     args.push(processed_url.to_string());
 
-    // Run yt-dlp and stream progress
+    // Helpful planned-path log
+    let planned_path = out_dir.join(output_template.replace("%(ext)s", "mp4"));
+    println!("[YT-DLP] policy={:?} dir='{}'\nurl='{}'\nout='{}'", on_duplicate, out_dir.display(), processed_url, planned_path.display());
     let mut child = Command::new("yt-dlp")
         .args(&args)
         .stdout(Stdio::piped())
@@ -189,11 +257,11 @@ pub fn run_yt_dlp_with_progress<F>(yt_out_dir: &Path, cookie_arg: &str, processe
                 file_skipped = true;
             }
 
-            // Only show actual download progress, not initial messages
             if (line.contains("[download]") || line.contains("[info]"))
                 && !line.contains("Starting download for")
                 && !line.contains("Sleeping")
-                && !line.starts_with("[info] Downloading") {
+                && !line.starts_with("[info] Downloading")
+            {
                 progress_callback(&line);
             }
         }
@@ -207,8 +275,6 @@ pub fn run_yt_dlp_with_progress<F>(yt_out_dir: &Path, cookie_arg: &str, processe
     }
 
     let status = child.wait()?;
-
-    // Success if yt-dlp succeeded OR it reported "already downloaded/skipped".
     let ok = status.success() || already_downloaded || file_skipped;
     Ok((ok, all_output))
 }
