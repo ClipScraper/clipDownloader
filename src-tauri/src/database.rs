@@ -3,6 +3,10 @@ use rusqlite::{Connection, Result};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+pub struct Database {
+    conn: Connection,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum Platform {
     Youtube,
@@ -55,20 +59,16 @@ pub struct Download {
 /// and values are lowercase tokens that the UI enums expect.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UiBacklogRow {
-    /// "instagram" | "tiktok" | "youtube"
-    #[serde(rename = "Platform")]
+    #[serde(rename = "Platform")]           /// "instagram" | "tiktok" | "youtube"
     pub platform: String,
-    /// "recommendation" | "playlist" | "profile" | "bookmarks" | "liked" | "reposts"
-    #[serde(rename = "Type")]
+    #[serde(rename = "Type")]               /// "recommendation" | "playlist" | "profile" | "bookmarks" | "liked" | "reposts"
     pub content_type: String,
-    /// username / channel
-    #[serde(rename = "Handle")]
+    #[serde(rename = "Handle")]             /// username / channel
     pub handle: String,
-    /// "pictures" | "video"
-    #[serde(rename = "Media")]
+    #[serde(rename = "Media")]              /// "pictures" | "video"
     pub media: String,
-    /// original URL
-    pub link: String,
+    pub link: String,                       /// original URL
+
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -88,10 +88,10 @@ pub enum OnDuplicate {
 impl From<String> for Platform {
     fn from(s: String) -> Self {
         match s.to_lowercase().as_str() {
-            "youtube" => Platform::Youtube,
-            "tiktok" => Platform::Tiktok,
-            "instagram" => Platform::Instagram,
-            _ => Platform::Youtube, // Default fallback
+            "youtube"       => Platform::Youtube,
+            "tiktok"        => Platform::Tiktok,
+            "instagram"     => Platform::Instagram,
+            _               => Platform::Youtube,               // Default fallback
         }
     }
 }
@@ -99,9 +99,9 @@ impl From<String> for Platform {
 impl From<String> for MediaKind {
     fn from(s: String) -> Self {
         match s.to_lowercase().as_str() {
-            "image" | "images" => MediaKind::Image,
-            "video" | "videos" => MediaKind::Video,
-            _ => MediaKind::Video, // Default fallback
+            "image" | "images"          => MediaKind::Image,
+            "video" | "videos"          => MediaKind::Video,
+            _                           => MediaKind::Video,    // Default fallback
         }
     }
 }
@@ -109,13 +109,13 @@ impl From<String> for MediaKind {
 impl From<String> for Origin {
     fn from(s: String) -> Self {
         match s.to_lowercase().as_str() {
-            "recommendation" => Origin::Recommendation,
-            "playlist" => Origin::Playlist,
-            "profile" => Origin::Profile,
-            "bookmarks" => Origin::Bookmarks,
-            "other" => Origin::Other,
-            "manual" => Origin::Manual,
-            _ => Origin::Manual, // Default fallback
+            "recommendation"    => Origin::Recommendation,
+            "playlist"          => Origin::Playlist,
+            "profile"           => Origin::Profile,
+            "bookmarks"         => Origin::Bookmarks,
+            "other"             => Origin::Other,
+            "manual"            => Origin::Manual,
+            _                   => Origin::Manual,              // Default fallback
         }
     }
 }
@@ -123,10 +123,10 @@ impl From<String> for Origin {
 impl From<String> for DownloadStatus {
     fn from(s: String) -> Self {
         match s.to_lowercase().as_str() {
-            "queue" => DownloadStatus::Queue,
-            "backlog" => DownloadStatus::Backlog,
-            "done" => DownloadStatus::Done,
-            _ => DownloadStatus::Queue, // Default fallback
+            "queue"             => DownloadStatus::Queue,
+            "backlog"           => DownloadStatus::Backlog,
+            "done"              => DownloadStatus::Done,
+            _                   => DownloadStatus::Queue,       // Default fallback
         }
     }
 }
@@ -134,16 +134,12 @@ impl From<String> for DownloadStatus {
 impl From<String> for OnDuplicate {
     fn from(s: String) -> Self {
         match s.to_lowercase().as_str() {
-            "overwrite" => OnDuplicate::Overwrite,
-            "create_new" => OnDuplicate::CreateNew,
-            "do_nothing" => OnDuplicate::DoNothing,
-            _ => OnDuplicate::CreateNew, // Default fallback
+            "overwrite"         => OnDuplicate::Overwrite,
+            "create_new"        => OnDuplicate::CreateNew,
+            "do_nothing"        => OnDuplicate::DoNothing,
+            _                   => OnDuplicate::CreateNew,      // Default fallback
         }
     }
-}
-
-pub struct Database {
-    conn: Connection,
 }
 
 impl Database {
@@ -232,8 +228,7 @@ impl Database {
         let has_image_set_id_column = column_names.iter().any(|name| name == "image_set_id");
 
         if !has_image_set_id_column {
-            // Add the image_set_id column if it doesn't exist
-            self.conn.execute("ALTER TABLE downloads ADD COLUMN image_set_id TEXT", [])?;
+            self.conn.execute("ALTER TABLE downloads ADD COLUMN image_set_id TEXT", [])?;   // Add the image_set_id column if it doesn't exist
         }
 
         Ok(())
@@ -298,11 +293,9 @@ impl Database {
             [],
         )?;
 
-        // Drop old table
-        self.conn.execute("DROP TABLE downloads", [])?;
+        self.conn.execute("DROP TABLE downloads", [])?;                                     // Drop old table
+        self.conn.execute("ALTER TABLE downloads_new RENAME TO downloads", [])?;            // Rename new table
 
-        // Rename new table
-        self.conn.execute("ALTER TABLE downloads_new RENAME TO downloads", [])?;
 
         Ok(())
     }
@@ -324,10 +317,7 @@ impl Database {
 
         if !has_path_column {
             // Add the path column if it doesn't exist
-            self.conn.execute(
-                "ALTER TABLE downloads ADD COLUMN path TEXT NOT NULL DEFAULT ''",
-                [],
-            )?;
+            self.conn.execute("ALTER TABLE downloads ADD COLUMN path TEXT NOT NULL DEFAULT ''", [])?;
         }
 
         Ok(())
@@ -395,13 +385,7 @@ impl Database {
                 "video".to_string()
             };
 
-            Ok(UiBacklogRow {
-                platform,
-                content_type,
-                handle,
-                media: media_token,
-                link,
-            })
+            Ok(UiBacklogRow {platform, content_type, handle, media: media_token, link})
         })?;
 
         let mut out = Vec::new();
