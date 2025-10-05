@@ -175,49 +175,33 @@ pub async fn download_url(app: tauri::AppHandle, url: String, state: State<'_, c
                             Ok((true, output)) => {
                                 emit_status(&window, true, format!("Saved (video) to {} [policy={:?}]", site_out_dir.display(), on_duplicate));
                                 if let Ok(db) = crate::database::Database::new() {
-                                    let mut files = parse_multiple_filenames_from_output(&output, &processed_url, Some(&site_out_dir));
-                                    for (_, _, fp) in &files {
-                                        if !fp.is_empty() {
-                                            println!("[DOWNLOADER][VIDEO] policy={:?} saved='{}'", on_duplicate, fp);
-                                        }
-                                    }
-                                    if let (_, Some(id)) = ig_handle_and_id(&processed_url) {
-                                        for f in files.iter_mut() {
-                                            f.1 = id.clone();
-                                        }
-                                    }
-
-                                    let image_set_id = if files.len() > 1 {
-                                        Some(uuid::Uuid::new_v4().to_string())
-                                    } else {
-                                        None
-                                    };
-
-                                    for (mut user_handle, clean_name, mut file_path) in files {
-                                        if user_handle == "Unknown" {
-                                            if let (Some(h), _) = ig_handle_and_id(&processed_url) {
+                                    let files = parse_multiple_filenames_from_output(&output, &processed_url, Some(&site_out_dir));
+                                    let first_path = files.get(0).map(|t| t.2.clone()).unwrap_or_default();
+                                    match db.mark_link_done(&processed_url, &first_path) {
+                                        Ok(0) => {
+                                            // No queued row existed; insert a standalone "done" row (direct download).
+                                            let (mut user_handle, mut clean_name) = ("Unknown".to_string(), "Unknown".to_string());
+                                            if let (Some(h), id) = ig_handle_and_id(&processed_url) {
                                                 user_handle = h;
+                                                if let Some(id) = id { clean_name = id; }
                                             }
+                                            let download = crate::database::Download {
+                                                id: None,
+                                                platform: crate::database::Platform::Instagram,
+                                                name: clean_name,
+                                                media: crate::database::MediaKind::Video,
+                                                user: user_handle,
+                                                origin: crate::database::Origin::Manual,
+                                                link: processed_url.clone(),
+                                                status: crate::database::DownloadStatus::Done,
+                                                path: first_path,
+                                                image_set_id: None,
+                                                date_added: Utc::now(),
+                                                date_downloaded: Some(Utc::now()),
+                                            };
+                                            let _ = db.insert_download(&download);
                                         }
-                                        if file_path.is_empty() {
-                                            file_path = "unknown_path".to_string();
-                                        }
-
-                                        let download = crate::database::Download {
-                                            id: None,
-                                            platform: crate::database::Platform::Instagram,
-                                            name: clean_name,
-                                            media: crate::database::MediaKind::Video,
-                                            user: user_handle,
-                                            origin: crate::database::Origin::Manual,
-                                            link: processed_url.clone(),
-                                            status: crate::database::DownloadStatus::Done,
-                                            path: file_path,
-                                            image_set_id: image_set_id.clone(),
-                                            date_added: Utc::now(),
-                                            date_downloaded: Some(Utc::now()),
-                                        };
-                                        let _ = db.insert_download(&download);
+                                        _ => {}
                                     }
                                 }
 
@@ -246,27 +230,17 @@ pub async fn download_url(app: tauri::AppHandle, url: String, state: State<'_, c
 
                                             if moved_any {
                                                 if let Ok(db) = crate::database::Database::new() {
-                                                    let image_set_id =
-                                                        if finals.len() > 1 {
-                                                            Some(uuid::Uuid::new_v4().to_string())
-                                                        } else {
-                                                            None
-                                                        };
-
-                                                    for fp in finals {
-                                                        let (mut user_handle, mut clean_name) =
-                                                            ("Unknown".to_string(), "Unknown".to_string());
-                                                        if let (Some(h), id) =
-                                                            ig_handle_and_id(&processed_url)
-                                                        {
-                                                            user_handle = h;
-                                                            if let Some(id) = id {
-                                                                clean_name = id;
+                                                    let first = finals.get(0).cloned().unwrap_or_default();
+                                                    match db.mark_link_done(&processed_url, &first) {
+                                                        Ok(0) => {
+                                                            // No queued row; insert a direct "done" entry
+                                                            let (mut user_handle, mut clean_name) =
+                                                                ("Unknown".to_string(), "Unknown".to_string());
+                                                            if let (Some(h), id) = ig_handle_and_id(&processed_url) {
+                                                                user_handle = h;
+                                                                if let Some(id) = id { clean_name = id; }
                                                             }
-                                                        }
-
-                                                        let download =
-                                                            crate::database::Download {
+                                                            let download = crate::database::Download {
                                                                 id: None,
                                                                 platform: crate::database::Platform::Instagram,
                                                                 name: clean_name,
@@ -275,12 +249,14 @@ pub async fn download_url(app: tauri::AppHandle, url: String, state: State<'_, c
                                                                 origin: crate::database::Origin::Manual,
                                                                 link: processed_url.clone(),
                                                                 status: crate::database::DownloadStatus::Done,
-                                                                path: fp.clone(),
-                                                                image_set_id: image_set_id.clone(),
+                                                                path: first,
+                                                                image_set_id: None,
                                                                 date_added: Utc::now(),
                                                                 date_downloaded: Some(Utc::now()),
                                                             };
-                                                        let _ = db.insert_download(&download);
+                                                            let _ = db.insert_download(&download);
+                                                        }
+                                                        _ => {}
                                                     }
                                                 }
 
@@ -334,29 +310,27 @@ pub async fn download_url(app: tauri::AppHandle, url: String, state: State<'_, c
 
                                 if moved_any {
                                     if let Ok(db) = crate::database::Database::new() {
-                                        let image_set_id = if finals.len() > 1 {
-                                            Some(uuid::Uuid::new_v4().to_string())
-                                        } else {
-                                            None
-                                        };
-
-                                        for fp in finals {
-                                            // We could parse TT id; keeping simple here.
-                                            let download = crate::database::Download {
-                                                id: None,
-                                                platform: crate::database::Platform::Tiktok,
-                                                name: "image".into(),
-                                                media: crate::database::MediaKind::Image,
-                                                user: "Unknown".into(),
-                                                origin: crate::database::Origin::Manual,
-                                                link: processed_url.clone(),
-                                                status: crate::database::DownloadStatus::Done,
-                                                path: fp.clone(),
-                                                image_set_id: image_set_id.clone(),
-                                                date_added: Utc::now(),
-                                                date_downloaded: Some(Utc::now()),
-                                            };
-                                            let _ = db.insert_download(&download);
+                                        let first = finals.get(0).cloned().unwrap_or_default();
+                                        match db.mark_link_done(&processed_url, &first) {
+                                            Ok(0) => {
+                                                // No queued row; insert a direct "done" entry
+                                                let download = crate::database::Download {
+                                                    id: None,
+                                                    platform: crate::database::Platform::Tiktok,
+                                                    name: "image".into(),
+                                                    media: crate::database::MediaKind::Image,
+                                                    user: "Unknown".into(),
+                                                    origin: crate::database::Origin::Manual,
+                                                    link: processed_url.clone(),
+                                                    status: crate::database::DownloadStatus::Done,
+                                                    path: first,
+                                                    image_set_id: None,
+                                                    date_added: Utc::now(),
+                                                    date_downloaded: Some(Utc::now()),
+                                                };
+                                                let _ = db.insert_download(&download);
+                                            }
+                                            _ => {}
                                         }
                                     }
 
@@ -395,42 +369,40 @@ pub async fn download_url(app: tauri::AppHandle, url: String, state: State<'_, c
                             emit_status(&window, true, format!("Saved (video) to {} [policy={:?}]", site_out_dir.display(), on_duplicate));
                             if let Ok(db) = crate::database::Database::new() {
                                 let files = parse_multiple_filenames_from_output(&output, &processed_url, Some(&site_out_dir));
-                                let image_set_id = if files.len() > 1 {
-                                    Some(uuid::Uuid::new_v4().to_string())
-                                } else {
-                                    None
-                                };
-
-                                for (user_handle, clean_name, mut file_path) in files {
-                                    if file_path.is_empty() {
-                                        file_path = "unknown_path".to_string();
+                                let first_path = files.get(0).map(|t| t.2.clone()).unwrap_or_default();
+                                match db.mark_link_done(&processed_url, &first_path) {
+                                    Ok(0) => {
+                                        // No queued row; insert standalone done row
+                                        let platform = if processed_url.contains("youtube.com")
+                                            || processed_url.contains("youtu.be")
+                                        {
+                                            crate::database::Platform::Youtube
+                                        } else if processed_url.contains("tiktok.com") {
+                                            crate::database::Platform::Tiktok
+                                        } else {
+                                            crate::database::Platform::Youtube
+                                        };
+                                        let (user_handle, clean_name, path) = files
+                                            .get(0)
+                                            .cloned()
+                                            .unwrap_or_else(|| ("Unknown".into(), "Unknown".into(), first_path.clone()));
+                                        let download = crate::database::Download {
+                                            id: None,
+                                            platform,
+                                            name: clean_name,
+                                            media: crate::database::MediaKind::Video,
+                                            user: user_handle,
+                                            origin: crate::database::Origin::Manual,
+                                            link: processed_url.clone(),
+                                            status: crate::database::DownloadStatus::Done,
+                                            path,
+                                            image_set_id: None,
+                                            date_added: Utc::now(),
+                                            date_downloaded: Some(Utc::now()),
+                                        };
+                                        let _ = db.insert_download(&download);
                                     }
-
-                                    let platform = if processed_url.contains("youtube.com")
-                                        || processed_url.contains("youtu.be")
-                                    {
-                                        crate::database::Platform::Youtube
-                                    } else if processed_url.contains("tiktok.com") {
-                                        crate::database::Platform::Tiktok
-                                    } else {
-                                        crate::database::Platform::Youtube
-                                    };
-
-                                    let download = crate::database::Download {
-                                        id: None,
-                                        platform,
-                                        name: clean_name,
-                                        media: crate::database::MediaKind::Video,
-                                        user: user_handle,
-                                        origin: crate::database::Origin::Manual,
-                                        link: processed_url.clone(),
-                                        status: crate::database::DownloadStatus::Done,
-                                        path: file_path,
-                                        image_set_id: image_set_id.clone(),
-                                        date_added: Utc::now(),
-                                        date_downloaded: Some(Utc::now()),
-                                    };
-                                    let _ = db.insert_download(&download);
+                                    _ => {}
                                 }
                             }
 

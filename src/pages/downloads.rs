@@ -7,8 +7,16 @@ use crate::app::{DeleteItem, MoveItem};
 pub struct Props {
     pub backlog: Vec<ClipRow>,
     pub queue: Vec<ClipRow>,
+    /// Optional currently running job with progress text.
+    pub active: Option<ActiveDownload>,
     pub on_delete: Callback<DeleteItem>,
     pub on_move_to_queue: Callback<MoveItem>,
+}
+
+#[derive(Clone, PartialEq)]
+pub struct ActiveDownload {
+    pub row: ClipRow,
+    pub progress: String,
 }
 
 /* ───────────────────────── label helpers ───────────────────────── */
@@ -380,6 +388,31 @@ pub fn downloads_page(props: &Props) -> Html {
 
     html! {
         <main class="container downloads" style="padding-top: 10vh;">
+            {
+                if let Some(active) = &props.active {
+                    html!{
+                        <>
+                            <h2 style="margin: 24px 0 8px 16px;">{"Downloading"}</h2>
+                            <div class="rows-card" style="margin-left:16px;">
+                                <ul class="rows">
+                                    <li class="row-line">
+                                        {
+                                            match active.row.media {
+                                                MediaKind::Pictures => html!{ <Icon icon_id={IconId::LucideImage} width={"16"} height={"16"} /> },
+                                                MediaKind::Video    => html!{ <Icon icon_id={IconId::LucideVideo} width={"16"} height={"16"} /> },
+                                            }
+                                        }
+                                        <a class="link-text" href={active.row.link.clone()} target="_blank">
+                                            { display_label_for_row(&active.row) }
+                                        </a>
+                                        <span style="font-family:monospace; font-size:12px; opacity:0.9;">{ active.progress.clone() }</span>
+                                    </li>
+                                </ul>
+                            </div>
+                        </>
+                    }
+                } else { html!{} }
+            }
             { render_section(props.backlog.clone(), "Backlog", true) }
             { render_section(props.queue.clone(),   "Queue",   false) }
         </main>

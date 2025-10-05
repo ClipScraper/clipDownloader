@@ -351,6 +351,24 @@ impl Database {
         Ok(self.conn.last_insert_rowid())
     }
 
+    /// Mark the first queued row for this link as done, set its path and date_downloaded.
+    pub fn mark_link_done(&self, link: &str, path: &str) -> Result<usize> {
+        let path_value = if path.is_empty() { "unknown_path" } else { path };
+        let now = Utc::now().to_rfc3339();
+        let n = self.conn.execute(
+            "UPDATE downloads
+               SET status='done', path=?2, date_downloaded=?3
+             WHERE id = (
+               SELECT id FROM downloads
+                WHERE link=?1 AND status='queue'
+                ORDER BY id
+                LIMIT 1
+             )",
+            [link, path_value, &now],
+        )?;
+        Ok(n)
+    }
+
     /// Fetch rows with `status = 'backlog'`, already normalized for the UI.
     /// Ordering is by platform → handle → type → name (all case-insensitive),
     /// so the frontend can just render in order and still be "sorted by name".
