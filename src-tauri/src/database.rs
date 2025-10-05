@@ -49,6 +49,28 @@ pub struct Download {
     pub date_downloaded: Option<DateTime<Utc>>,
 }
 
+/// Row shape returned to the **frontend** for the Downloads page.
+/// Field names and values are chosen to deserialize directly into `ClipRow`
+/// (see `src/types.rs`) — keys match its `#[serde(rename = "...")]` settings,
+/// and values are lowercase tokens that the UI enums expect.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiBacklogRow {
+    /// "instagram" | "tiktok" | "youtube"
+    #[serde(rename = "Platform")]
+    pub platform: String,
+    /// "recommendation" | "playlist" | "profile" | "bookmarks" | "liked" | "reposts"
+    #[serde(rename = "Type")]
+    pub content_type: String,
+    /// username / channel
+    #[serde(rename = "Handle")]
+    pub handle: String,
+    /// "pictures" | "video"
+    #[serde(rename = "Media")]
+    pub media: String,
+    /// original URL
+    pub link: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
     pub id: Option<i64>,
@@ -358,5 +380,55 @@ impl Database {
             [&settings.download_directory, &format!("{:?}", settings.on_duplicate).to_lowercase()],
         )?;
         Ok(())
+    }
+
+    /// Fetch rows with `status = 'backlog'`, already normalized for the UI.
+    /// Ordering is by platform → handle → type → name (all case-insensitive),
+    /// so the frontend can just render in order and still be "sorted by name".
+    pub fn list_backlog_ui(&self) -> Result<Vec<UiBacklogRow>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT platform, user_handle, origin, media, link, name
+             FROM downloads
+             WHERE status = 'backlog'
+             ORDER BY platform COLLATE NOCASE,
+                      user_handle COLLATE NOCASE,
+                      origin COLLATE NOCASE,
+                      name COLLATE NOCASE",
+        )?;
+
+        let rows = stmt.query_map([], |row| {
+            let platform: String = row.get(0)?;
+            let handle: String = row.get(1)?;
+            let origin: String  = row.get(2)?;
+            let media: String   = row.get(3)?;
+            let link: String    = row.get(4)?;
+            let _name: String   = row.get(5)?; // included for ORDER BY; not exposed
+
+            // Normalize to the frontend enum tokens
+            let content_type = match origin.as_str() {
+                "recommendation" | "playlist" | "profile" | "bookmarks" | "liked" | "reposts" => origin.clone(),
+                _ => "recommendation".to_string(), // map unknown "other" → "recommendation"
+            };
+            // UI expects "pictures" | "video"
+            let media_token = if media == "image" || media == "images" {
+                "pictures".to_string()
+            } else {
+                "video".to_string()
+            };
+
+            Ok(UiBacklogRow {
+                platform,
+                content_type,
+                handle,
+                media: media_token,
+                link,
+            })
+        })?;
+
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r?);
+        }
+        Ok(out)
     }
 }

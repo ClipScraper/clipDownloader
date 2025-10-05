@@ -9,33 +9,121 @@ pub struct Props {
     pub on_delete: Callback<DeleteItem>,
 }
 
-// [FRONTEND] [pages/downloads.rs] [display_label_for_row]
-// Generate a human-readable display label for a downloaded item
-// Used to show a meaningful name in the downloads list instead of just the URL
-// For Instagram: shows username and post type/ID
-// For other platforms: shows the last two segments of the URL path
-fn display_label_for_row(row: &ClipRow) -> String {
-    println!("[FRONTEND] [pages/downloads.rs] [display_label_for_row]");
-    let url = row.link.trim_end_matches('/');
-    let parts: Vec<&str> = url.split('/').collect();
-    if parts.len() >= 6 && (parts[3] == "www.instagram.com" || parts[2].contains("instagram.com")) {
-        if parts.len() >= 6 && parts[4] != "p" {
-            let username = parts[4];
-            let kind = parts.get(5).unwrap_or(&"");
-            let id = parts.get(6).unwrap_or(&"");
-            let id = if id.is_empty() { parts.last().unwrap_or(&"") } else { id };
-            if kind == id { return format!("{} - {}", username, kind); }
-            return format!("{} - {} - {}", username, kind, id);
+/* ──────────────────────────────────────────────────────────────
+   Helpers to build nice, readable labels for each backlog row
+   ────────────────────────────────────────────────────────────── */
+
+fn url_after_domain(url: &str) -> String {
+    // strip scheme
+    let no_scheme = url.split("//").nth(1).unwrap_or(url);
+    // take path + query
+    match no_scheme.find('/') {
+        Some(i) => no_scheme[i + 1..].to_string(),
+        None => String::new(),
+    }
+}
+
+fn tik_tok_handle_from_url(url: &str) -> Option<String> {
+    // formats like: https://www.tiktok.com/@handle/photo/123 ... or /video/123 ...
+    let tail = url_after_domain(url);
+    if let Some(idx) = tail.find("@") {
+        let rest = &tail[idx + 1..];
+        let handle = rest.split('/').next().unwrap_or("");
+        if !handle.is_empty() {
+            return Some(handle.to_string());
         }
     }
-    if parts.len() >= 2 {
-        let a = parts[parts.len()-2];
-        let b = parts[parts.len()-1];
-        if a == b { return a.to_string(); }
-        return format!("{}/{}", a, b);
-    }
-    row.link.clone()
+    None
 }
+
+fn instagram_handle_from_url(url: &str) -> Option<String> {
+    // https://www.instagram.com/<handle>/(p|reel)/ID
+    let tail = url_after_domain(url);
+    let mut it = tail.split('/');
+    let first = it.next().unwrap_or("");
+    if !first.is_empty() && first != "p" && first != "reel" {
+        return Some(first.to_string());
+    }
+    None
+}
+
+fn last_two_path_segments(url: &str) -> String {
+    let tail = url_after_domain(url);
+    if tail.is_empty() {
+        return url.to_string();
+    }
+    let parts: Vec<&str> = tail.split('/').filter(|s| !s.is_empty()).collect();
+    if parts.is_empty() {
+        return tail;
+    }
+    if parts.len() == 1 {
+        return parts[0].to_string();
+    }
+    format!("{}/{}", parts[parts.len() - 2], parts[parts.len() - 1])
+}
+
+// Build a readable label. If we can identify a handle/username, prefix it.
+fn display_label_for_row(row: &ClipRow) -> String {
+    let link = row.link.trim();
+    let platform = platform_str(&row.platform);
+
+    // Prefer the explicit handle if present and non-empty
+    let mut user = row.handle.trim().to_string();
+    if user.is_empty() || user.eq_ignore_ascii_case("unknown") {
+        // Derive from URL per platform if needed
+        if platform == "tiktok" {
+            if let Some(h) = tik_tok_handle_from_url(link) {
+                user = h;
+            }
+        } else if platform == "instagram" {
+            if let Some(h) = instagram_handle_from_url(link) {
+                user = h;
+            }
+        }
+    }
+
+    // Build the content part after domain
+    let content = if platform == "instagram" {
+        // Prefer "p/<id>" or "reel/<id>"
+        let tail = url_after_domain(link);
+        let mut parts = tail.split('/').filter(|s| !s.is_empty());
+        let a = parts.next().unwrap_or_default();
+        let b = parts.next().unwrap_or_default(); // "p" or "reel"
+        let c = parts.next().unwrap_or_default(); // id
+        if (b == "p" || b == "reel") && !c.is_empty() {
+            format!("{}/{}", b, c)
+        } else {
+            last_two_path_segments(link)
+        }
+    } else if platform == "tiktok" {
+        // Want "photo/<id>" or "video/<id>"
+        let tail = url_after_domain(link);
+        let pieces: Vec<&str> = tail.split('/').filter(|s| !s.is_empty()).collect();
+        // Try to locate "photo" or "video" then take its id
+        if let Some(pos) = pieces.iter().position(|p| *p == "photo" || *p == "video") {
+            if pos + 1 < pieces.len() {
+                format!("{}/{}", pieces[pos], pieces[pos + 1])
+            } else {
+                last_two_path_segments(link)
+            }
+        } else {
+            last_two_path_segments(link)
+        }
+    } else {
+        // YouTube and others → keep the last two segments (works well for /watch?v=...)
+        last_two_path_segments(link)
+    };
+
+    if !user.is_empty() && !user.eq_ignore_ascii_case("unknown") {
+        format!("{} - {}", user, content)
+    } else {
+        content
+    }
+}
+
+/* ──────────────────────────────────────────────────────────────
+   Downloads page
+   ────────────────────────────────────────────────────────────── */
 
 fn platform_icon_src(p: &str) -> &'static str {
     match p {
@@ -46,167 +134,185 @@ fn platform_icon_src(p: &str) -> &'static str {
     }
 }
 
-// [FRONTEND] [pages/downloads.rs] [DownloadsPage component]
-// Main downloads page component that displays imported items in an organized hierarchical view
-// Shows items grouped by platform (Instagram, TikTok, YouTube), then by user/channel, then by content type
-// Users can expand/collapse sections and perform actions like delete or download
 #[function_component(DownloadsPage)]
 pub fn downloads_page(props: &Props) -> Html {
-    println!("[FRONTEND] [pages/downloads.rs] [DownloadsPage component]");
-    // State for tracking which platform and collection sections are expanded
+    // Track expanded/collapsed state
     let expanded_platforms = use_state(|| std::collections::HashSet::<String>::new());
     let expanded_collections = use_state(|| std::collections::HashSet::<String>::new());
 
-    // Organize imported items into a hierarchical structure for display
-    // Group by: Platform -> (User Handle, Content Type) -> List of Items
-    // This creates the nested expandable structure shown in the UI
+    // Group rows by platform -> (handle, content type) -> rows
     use std::collections::BTreeMap;
-    let mut map: BTreeMap<String, BTreeMap<(String, String, Platform, ContentType), Vec<ClipRow>>> = BTreeMap::new();
-    for r in props.rows.iter().cloned() {
+    let mut map: BTreeMap<String, BTreeMap<(String, String, Platform, ContentType), Vec<ClipRow>>> =
+        BTreeMap::new();
+
+    for mut r in props.rows.clone() {
+        // keep things deterministic: sort by name (link field is fine as a fallback)
+        // We'll do a small normalization: name may be empty in CSV; use link for tie-break.
+        if r.handle.trim().is_empty() {
+            r.handle = "Unknown".into();
+        }
         let plat = platform_str(&r.platform).to_string();
         let typ = content_type_str(&r.content_type).to_string();
-        let handle = r.handle.clone();
-        map.entry(plat).or_default().entry((handle, typ, r.platform, r.content_type)).or_default().push(r);
+        map.entry(plat)
+            .or_default()
+            .entry((r.handle.clone(), typ, r.platform, r.content_type))
+            .or_default()
+            .push(r);
     }
 
-    // [FRONTEND] [pages/downloads.rs] [toggle_platform callback]
-    // Callback to toggle platform sections (Instagram, TikTok, YouTube) open/closed
-    // Uses a set to track which platforms are currently expanded
-    let toggle_platform = {
-        println!("[FRONTEND] [pages/downloads.rs] [toggle_platform callback]");
-        let expanded_platforms = expanded_platforms.clone();
-        Callback::from(move |plat_key: String| {
-            let mut set = (*expanded_platforms).clone();
-            if !set.insert(plat_key.clone()) { set.remove(&plat_key); }
-            expanded_platforms.set(set);
-        })
-    };
-
-    // [FRONTEND] [pages/downloads.rs] [toggle_collection callback]
-    // Callback to toggle collection sections (individual user/content type groups) open/closed
-    // Uses a set to track which collections are currently expanded
-    let toggle_collection = {
-        println!("[FRONTEND] [pages/downloads.rs] [toggle_collection callback]");
-        let expanded_collections = expanded_collections.clone();
-        Callback::from(move |col_key: String| {
-            let mut set = (*expanded_collections).clone();
-            if !set.insert(col_key.clone()) { set.remove(&col_key); }
-            expanded_collections.set(set);
-        })
-    };
-
     html! {
-        <main class="container" style="padding-top: 10vh;">
+        <main class="container downloads" style="padding-top: 10vh;">
             <div class="summary">
-                // Render each platform section (Instagram, TikTok, YouTube)
-                // Each platform shows collection count and total item count
-                { for map.into_iter().map(|(plat_label, col_map)| {
-                    let collections_count = col_map.len();
-                    let bookmarks_count: usize = col_map.values().map(|v| v.len()).sum();
-                    let key = plat_label.clone();
-                    let is_open = expanded_platforms.contains(&key);
-                    let on_click = {
-                        let toggle_platform = toggle_platform.clone();
-                        let k = key.clone();
-                        Callback::from(move |_| toggle_platform.emit(k.clone()))
-                    };
-                    let on_delete_platform = {
-                        let on_delete = props.on_delete.clone();
-                        let platform = match plat_label.as_str() {
-                            "instagram" => Platform::Instagram,
-                            "tiktok" => Platform::Tiktok,
-                            "youtube" => Platform::Youtube,
-                            _ => Platform::Tiktok, // Should not happen
-                        };
-                        Callback::from(move |e: MouseEvent| {
-                            e.stop_propagation();
-                            on_delete.emit(DeleteItem::Platform(platform.clone()));
-                        })
-                    };
-                    let collections_html = if is_open { html!{
-                        <div>
-                            { for col_map.into_iter().map(|((handle, typ_str, plat, ctype), rows)| {
-                                let col_key = format!("{}::{}::{}", plat_label, handle, typ_str);
-                                let col_open = expanded_collections.contains(&col_key);
-                                let on_col_click = {
-                                    let toggle_collection = toggle_collection.clone();
-                                    let k = col_key.clone();
-                                    Callback::from(move |_| toggle_collection.emit(k.clone()))
-                                };
-                                let on_delete_collection = {
-                                    let on_delete = props.on_delete.clone();
-                                    let plat = plat.clone();
-                                    let handle = handle.clone();
-                                    let ctype = ctype.clone();
-                                    Callback::from(move |e: MouseEvent| {
-                                        e.stop_propagation();
-                                        on_delete.emit(DeleteItem::Collection(plat.clone(), handle.clone(), ctype.clone()));
-                                    })
-                                };
-                                html!{
-                                    <div>
-                                        <div class="collection-item" onclick={on_col_click}>
-                                            <div class="item-left">
-                                                <span>{ format!("{} | {}", handle, typ_str) }</span>
-                                            </div>
-                                            <div class="item-right">
-                                                <span>{ format!("{} bookmarks", rows.len()) }</span>
-                                                <button class="icon-btn" title="Delete" onclick={on_delete_collection}><Icon icon_id={IconId::LucideTrash2} width={"18"} height={"18"} /></button>
-                                                <button class="icon-btn" title="Download"><img class="brand-icon" src="assets/download.svg" /></button>
-                                            </div>
-                                        </div>
-                                        { if col_open { html!{
-                                            <ul class="rows">
-                                                // Render individual items within each collection
-                                                // Shows media type icon, display label, and action buttons
-                                                { for rows.into_iter().map(|row| {
-                                                    let on_delete_row = {
-                                                        let on_delete = props.on_delete.clone();
-                                                        let link = row.link.clone();
-                                                        Callback::from(move |e: MouseEvent| {
-                                                            e.stop_propagation();
-                                                            on_delete.emit(DeleteItem::Row(link.clone()));
-                                                        })
-                                                    };
-                                                    html!{
-                                                        <li>
-                                                            { match row.media {
-                                                                MediaKind::Pictures => html!{ <Icon icon_id={IconId::LucideImage} width={"16"} height={"16"} /> },
-                                                                MediaKind::Video => html!{ <Icon icon_id={IconId::LucideVideo} width={"16"} height={"16"} /> },
-                                                            }}
-                                                            <a class="link-text" href={row.link.clone()} target="_blank">{ display_label_for_row(&row) }</a>
-                                                            <button class="icon-btn" title="Delete" onclick={on_delete_row}><Icon icon_id={IconId::LucideTrash2} width={"18"} height={"18"} /></button>
-                                                            <button class="icon-btn" title="Download"><img class="brand-icon" src="assets/download.svg" /></button>
-                                                        </li>
-                                                    }
-                                                }) }
-                                            </ul>
-                                        }} else { html!{} }}
-                                    </div>
-                                }
-                            }) }
-                        </div>
-                    }} else { html!{} };
+                {
+                    for map.into_iter().map(|(plat_label, mut col_map)| {
+                        // sort items inside each collection by the rendered label
+                        for rows in col_map.values_mut() {
+                            rows.sort_by(|a, b| display_label_for_row(a).cmp(&display_label_for_row(b)));
+                        }
 
-                    html!{
-                        <div>
-                            <div class="platform-item" onclick={on_click}>
-                                <div class="item-left">
-                                    <img class="brand-icon" src={platform_icon_src(&plat_label)} />
-                                    <span>{ plat_label.clone() }</span>
+                        let collections_count = col_map.len();
+                        let bookmarks_count: usize = col_map.values().map(|v| v.len()).sum();
+
+                        let key = plat_label.clone();
+                        let is_open = expanded_platforms.contains(&key);
+
+                        let on_platform_click = {
+                            let expanded_platforms = expanded_platforms.clone();
+                            let k = key.clone();
+                            Callback::from(move |_| {
+                                let mut set = (*expanded_platforms).clone();
+                                if !set.insert(k.clone()) { set.remove(&k); }
+                                expanded_platforms.set(set);
+                            })
+                        };
+
+                        let on_delete_platform = {
+                            let on_delete = props.on_delete.clone();
+                            let platform = match plat_label.as_str() {
+                                "instagram" => Platform::Instagram,
+                                "tiktok" => Platform::Tiktok,
+                                "youtube" => Platform::Youtube,
+                                _ => Platform::Tiktok,
+                            };
+                            Callback::from(move |e: MouseEvent| {
+                                e.stop_propagation();
+                                on_delete.emit(DeleteItem::Platform(platform));
+                            })
+                        };
+
+                        let platform_rows = if is_open {
+                            html! {
+                                <div>
+                                    {
+                                        for col_map.into_iter().map(|((handle, typ_str, plat, ctype), rows)| {
+                                            let col_key = format!("{}::{}::{}", plat_label, handle, typ_str);
+                                            let col_open = expanded_collections.contains(&col_key);
+
+                                            let on_col_click = {
+                                                let expanded_collections = expanded_collections.clone();
+                                                let k = col_key.clone();
+                                                Callback::from(move |_| {
+                                                    let mut set = (*expanded_collections).clone();
+                                                    if !set.insert(k.clone()) { set.remove(&k); }
+                                                    expanded_collections.set(set);
+                                                })
+                                            };
+
+                                            let on_delete_collection = {
+                                                let on_delete = props.on_delete.clone();
+                                                let plat = plat.clone();
+                                                let handle = handle.clone();
+                                                let ctype = ctype.clone();
+                                                Callback::from(move |e: MouseEvent| {
+                                                    e.stop_propagation();
+                                                    on_delete.emit(DeleteItem::Collection(plat.clone(), handle.clone(), ctype.clone()));
+                                                })
+                                            };
+
+                                            html!{
+                                                <div class="collection-block">
+                                                    <div class="collection-item" onclick={on_col_click}>
+                                                        <div class="item-left">
+                                                            <span class="item-title">{ format!("{} | {}", handle, typ_str) }</span>
+                                                        </div>
+                                                        <div class="item-right">
+                                                            <span>{ format!("{} bookmarks", rows.len()) }</span>
+                                                            <button class="icon-btn" title="Delete" onclick={on_delete_collection}>
+                                                                <Icon icon_id={IconId::LucideTrash2} width={"18"} height={"18"} />
+                                                            </button>
+                                                            <button class="icon-btn" title="Download">
+                                                                <img class="brand-icon" src="assets/download.svg" />
+                                                            </button>
+                                                        </div>
+                                                    </div>
+
+                                                    { if col_open {
+                                                        html!{
+                                                            <div class="rows-card">
+                                                                <ul class="rows">
+                                                                    {
+                                                                        for rows.into_iter().map(|row| {
+                                                                            let on_delete_row = {
+                                                                                let on_delete = props.on_delete.clone();
+                                                                                let link = row.link.clone();
+                                                                                Callback::from(move |e: MouseEvent| {
+                                                                                    e.stop_propagation();
+                                                                                    on_delete.emit(DeleteItem::Row(link.clone()));
+                                                                                })
+                                                                            };
+
+                                                                            html!{
+                                                                                <li class="row-line">
+                                                                                    { match row.media {
+                                                                                        MediaKind::Pictures => html!{ <Icon icon_id={IconId::LucideImage} width={"16"} height={"16"} /> },
+                                                                                        MediaKind::Video    => html!{ <Icon icon_id={IconId::LucideVideo} width={"16"} height={"16"} /> },
+                                                                                    }}
+                                                                                    <a class="link-text" href={row.link.clone()} target="_blank">{ display_label_for_row(&row) }</a>
+                                                                                    <button class="icon-btn" title="Delete" onclick={on_delete_row}>
+                                                                                        <Icon icon_id={IconId::LucideTrash2} width={"18"} height={"18"} />
+                                                                                    </button>
+                                                                                    <button class="icon-btn" title="Download">
+                                                                                        <img class="brand-icon" src="assets/download.svg" />
+                                                                                    </button>
+                                                                                </li>
+                                                                            }
+                                                                        })
+                                                                    }
+                                                                </ul>
+                                                            </div>
+                                                        }
+                                                    } else { html!{} } }
+                                                </div>
+                                            }
+                                        })
+                                    }
                                 </div>
-                                <div class="item-right">
-                                    <span>{ format!("{} collections | {} bookmarks", collections_count, bookmarks_count) }</span>
-                                    <button class="icon-btn" title="Delete" onclick={on_delete_platform}><Icon icon_id={IconId::LucideTrash2} width={"18"} height={"18"} /></button>
-                                    <button class="icon-btn" title="Download"><img class="brand-icon" src="assets/download.svg" /></button>
+                            }
+                        } else { html!{} };
+
+                        html! {
+                            <div class="platform-block">
+                                <div class="platform-item" onclick={on_platform_click}>
+                                    <div class="item-left">
+                                        <img class="brand-icon" src={platform_icon_src(&plat_label)} />
+                                        <span class="item-title">{ plat_label.clone() }</span>
+                                    </div>
+                                    <div class="item-right">
+                                        <span>{ format!("{} collections | {} bookmarks", collections_count, bookmarks_count) }</span>
+                                        <button class="icon-btn" title="Delete" onclick={on_delete_platform}>
+                                            <Icon icon_id={IconId::LucideTrash2} width={"18"} height={"18"} />
+                                        </button>
+                                        <button class="icon-btn" title="Download">
+                                            <img class="brand-icon" src="assets/download.svg" />
+                                        </button>
+                                    </div>
                                 </div>
+                                { platform_rows }
                             </div>
-                            { collections_html }
-                        </div>
-                    }
-                }) }
+                        }
+                    })
+                }
             </div>
         </main>
     }
 }
-

@@ -17,6 +17,8 @@ pub enum ContentType {
     Bookmarks,
     Playlist,
     Recommendation,
+    #[serde(other)]
+    Other,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -39,8 +41,10 @@ pub struct ClipRow {
     pub media: MediaKind,
     #[serde(rename = "link")]
     pub link: String,
+    /// Comes from DB; optional when deserializing CSV.
+    #[serde(default)]
+    pub name: String,
 }
-
 
 pub fn platform_str(p: &Platform) -> &'static str {
     match p {
@@ -58,5 +62,6 @@ pub fn content_type_str(t: &ContentType) -> &'static str {
         ContentType::Bookmarks => "bookmarks",
         ContentType::Playlist => "playlist",
         ContentType::Recommendation => "recommendation",
+        ContentType::Other => "other",
     }
 }
