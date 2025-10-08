@@ -5,6 +5,7 @@
   "identifier": "com.hjoncour.clip-downloader",
   "build": {
     "devUrl": "http://localhost:1420",
+    "beforeDevCommand": "trunk serve",
     "beforeBuildCommand": "trunk build",
     "frontendDist": "../dist"
   },
