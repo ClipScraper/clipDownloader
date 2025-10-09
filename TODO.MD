@@ -27,3 +27,5 @@ make sure image/videos have same settings code
 - drag and drop doesn't work:
 [BACKEND] [commands/files.rs] [read_csv_from_path] /Users/hjoncour/Downloads/0e93bac9-133d-44d0-b814-9502ebdaed9d.csv
 
+-install yt dlp on windows
+fix color buttons on windows
