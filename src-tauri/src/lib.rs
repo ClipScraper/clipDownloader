@@ -16,6 +16,7 @@ pub fn run() {
         .manage(DownloadState(Default::default()))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_shell::init()) // ← add this line
         .invoke_handler(tauri::generate_handler![
             // SETTINGS
             commands::settings_cmd::load_settings,
@@ -35,6 +36,7 @@ pub fn run() {
             // LIBRARY / LIST
             commands::list::list_backlog,
             commands::list::list_queue,
+            commands::list::list_done,
 
             // STATUS MUTATIONS
             commands::list::move_link_to_queue,

@@ -6,6 +6,15 @@
   "permissions": [
     "core:default",
     "opener:default",
-    "dialog:default"
+    "dialog:default",
+    {
+      "identifier": "shell:allow-execute",
+      "allow": [
+        { "name": "yt-dlp" },
+        { "name": "gallery-dl" },
+        { "name": "binaries/yt-dlp", "sidecar": true },
+        { "name": "binaries/gallery-dl", "sidecar": true }
+      ]
+    }
   ]
 }

@@ -41,3 +41,9 @@ pub async fn move_platform_to_queue(platform: String) -> Result<u64, String> {
         .map_err(|e| e.to_string())?;
     Ok(n as u64)
 }
+
+#[tauri::command]
+pub async fn list_done() -> Result<Vec<crate::database::UiBacklogRow>, String> {
+    let db = crate::database::Database::new().map_err(|e| e.to_string())?;
+    db.list_done_ui().map_err(|e| e.to_string())
+}
