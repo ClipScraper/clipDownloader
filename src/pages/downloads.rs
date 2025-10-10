@@ -394,7 +394,7 @@ pub fn downloads_page(props: &Props) -> Html {
     };
 
     html! {
-        <main class="container downloads" style="padding-top: 10vh;">
+        <main class="container downloads">
             // ─── Section 1: Downloading (always show header + play/pause) ───
             <div style="display:flex; align-items:center; gap:8px; margin: 24px 0 8px 16px;">
                 <h2 style="margin:0;">{"Downloading"}</h2>

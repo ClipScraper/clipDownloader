@@ -5,6 +5,7 @@ use crate::pages;
 use crate::types::{ClipRow, Platform, ContentType};
 use yew::prelude::*;
 use std::cell::RefCell;
+use crate::components::sidebar::Sidebar;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tauri v2 JS bridges
@@ -24,7 +25,7 @@ fn log_invoke_err(cmd: &str, e: JsValue) {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Page {Home, Downloads, Library, Settings}
+pub enum Page {Home, Downloads, Library, Settings, Extension, Sponsor}
 
 fn log_json(label: &str, v: &JsValue) {
     let s = js_sys::JSON::stringify(v)
@@ -149,15 +150,16 @@ pub fn app() -> Html {
     let active_download = use_state(|| Option::<ClipRow>::None);
     let download_progress = use_state(|| String::new());
     let is_downloading = use_state(|| false);
-    let is_paused = use_state(|| false); // ← queue pause/resume
+    let is_paused = use_state(|| true); // ← queue pause/resume
 
     // Load both sections when entering Downloads
     {
         let backlog_rows = backlog_rows.clone();
         let queue_rows = queue_rows.clone();
-        let dep = *page;
-        use_effect_with(dep, move |p| {
+        let is_paused = is_paused.clone();
+        use_effect_with(*page, move |p| {
             if *p == Page::Downloads {
+                is_paused.set(true);
                 spawn_local(async move {
                     if let Ok(js) = invoke("list_backlog", JsValue::NULL).await {
                         if let Ok(rows) = serde_wasm_bindgen::from_value::<Vec<ClipRow>>(js) {
@@ -378,20 +380,6 @@ pub fn app() -> Html {
 
     { use_effect_with((), move |_| { spawn_local(start_dragdrop_listener()); || () }); }
 
-    let set_page = |p: Page, page: UseStateHandle<Page>| Callback::from(move |_| page.set(p));
-
-    let sidebar = {
-        let page = page.clone();
-        html! {
-            <aside class="sidebar">
-                <button class="nav-btn" onclick={set_page(Page::Home, page.clone())} title="Home"><Icon icon_id={IconId::LucideHome} width={"28"} height={"28"} /></button>
-                <button class="nav-btn" onclick={set_page(Page::Downloads, page.clone())} title="Downloads"><Icon icon_id={IconId::LucideDownload} width={"28"} height={"28"} /></button>
-                <button class="nav-btn" onclick={set_page(Page::Library, page.clone())} title="Library"><Icon icon_id={IconId::LucideLibrary} width={"28"} height={"28"} /></button>
-                <button class="nav-btn" onclick={set_page(Page::Settings, page.clone())} title="Settings"><Icon icon_id={IconId::LucideSettings} width={"28"} height={"28"} /></button>
-            </aside>
-        }
-    };
-
     let body = match *page {
         Page::Home          => html! { <pages::home::HomePage on_open_file={on_open_file} on_csv_load={on_csv_load.clone()} /> },
         Page::Downloads     => html! {
@@ -411,7 +399,9 @@ pub fn app() -> Html {
         },
         Page::Library       => html! { <pages::library::LibraryPage /> },
         Page::Settings      => html! { <pages::settings::SettingsPage /> },
+        Page::Extension     => html! { <pages::extension::ExtensionPage /> },
+        Page::Sponsor       => html! { <pages::sponsor::SponsorPage /> },
     };
 
-    html! { <>{ sidebar }{ body }</> }
+    html! { <><Sidebar page={page} />{ body }</> }
 }
