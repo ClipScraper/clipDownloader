@@ -12,11 +12,12 @@ pub struct DownloadState(pub std::sync::Arc<Mutex<Option<JoinHandle<()>>>>);
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let _ = crate::settings::load_settings();
     tauri::Builder::default()
         .manage(DownloadState(Default::default()))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_shell::init()) // ← add this line
+        .plugin(tauri_plugin_shell::init())
         .invoke_handler(tauri::generate_handler![
             // SETTINGS
             commands::settings_cmd::load_settings,
