@@ -14,7 +14,9 @@
 - sanitize logs
 - fix icon
 - revert button to put back from queue to backlog
-
+- make sure that clicking trash removes from library
+- split db into files
+- add play & trash button in library
 settings: 
 - button:
     - allow db duplicate / replace db duplicaet

@@ -239,80 +239,6 @@ impl Database {
         Ok(())
     }
 
-    /// Migration: Add image_set_id column to existing databases that don't have it
-    fn migrate_add_image_set_id_column(&self) -> Result<()> {
-        let mut stmt = self.conn.prepare("PRAGMA table_info(downloads)")?;
-        let columns = stmt.query_map([], |row| Ok(row.get::<_, String>(1)?))?;
-        let mut column_names = Vec::new();
-        for column in columns {
-            column_names.push(column?);
-        }
-        if !column_names.iter().any(|n| n == "image_set_id") {
-            self.conn.execute("ALTER TABLE downloads ADD COLUMN image_set_id TEXT", [])?;
-        }
-        Ok(())
-    }
-
-    /// Migration: Remove UNIQUE constraint from link column if it exists
-    fn migrate_remove_link_unique_constraint(&self) -> Result<()> {
-        let mut stmt = self.conn.prepare("PRAGMA table_info(downloads)")?;
-        let columns = stmt.query_map([], |row| Ok(row.get::<_, String>(1)?))?;
-        let column_names: Vec<String> = columns.collect::<Result<Vec<_>, _>>()?;
-        if column_names.iter().any(|n| n == "link") {
-            let mut stmt = self.conn.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='downloads'")?;
-            let schema: Option<String> = stmt.query_row([], |row| row.get(0)).unwrap_or(None);
-            if let Some(sql) = schema {
-                if sql.contains("UNIQUE") && sql.contains("link") {
-                    self.recreate_downloads_table_without_unique_constraint()?;
-                }
-            }
-        }
-        Ok(())
-    }
-
-    fn recreate_downloads_table_without_unique_constraint(&self) -> Result<()> {
-        self.conn.execute(
-            "CREATE TABLE downloads_new (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                platform TEXT NOT NULL,
-                name TEXT NOT NULL,
-                media TEXT NOT NULL,
-                user_handle TEXT NOT NULL,
-                origin TEXT NOT NULL,
-                link TEXT NOT NULL,
-                status TEXT NOT NULL,
-                path TEXT NOT NULL,
-                image_set_id TEXT,
-                date_added TEXT NOT NULL,
-                date_downloaded TEXT
-            )",
-            [],
-        )?;
-        self.conn.execute(
-            "INSERT INTO downloads_new (id, platform, name, media, user_handle, origin, link, status, path, image_set_id, date_added, date_downloaded)
-             SELECT id, platform, name, media, user_handle, origin, link, status, path, image_set_id, date_added, date_downloaded
-             FROM downloads",
-            [],
-        )?;
-        self.conn.execute("DROP TABLE downloads", [])?;
-        self.conn.execute("ALTER TABLE downloads_new RENAME TO downloads", [])?;
-        Ok(())
-    }
-
-    /// Migration: Add path column to existing databases that don't have it
-    fn migrate_add_path_column(&self) -> Result<()> {
-        let mut stmt = self.conn.prepare("PRAGMA table_info(downloads)")?;
-        let columns = stmt.query_map([], |row| Ok(row.get::<_, String>(1)?))?;
-        let mut column_names = Vec::new();
-        for column in columns {
-            column_names.push(column?);
-        }
-        if !column_names.iter().any(|n| n == "path") {
-            self.conn.execute("ALTER TABLE downloads ADD COLUMN path TEXT NOT NULL DEFAULT ''", [])?;
-        }
-        Ok(())
-    }
-
     /* ----------------------------- write helpers ----------------------------- */
 
     pub fn insert_download(&self, download: &Download) -> Result<i64> {
@@ -497,6 +423,45 @@ impl Database {
         for r in rows {
             out.push(r?);
         }
+        Ok(out)
+    }
+
+    pub fn list_done_ui(&self) -> Result<Vec<UiBacklogRow>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT platform, user_handle, origin, media, link, name
+             FROM downloads
+             WHERE status = 'done'
+             ORDER BY platform COLLATE NOCASE,
+                      user_handle COLLATE NOCASE,
+                      origin COLLATE NOCASE,
+                      name COLLATE NOCASE",
+        )?;
+
+        let rows = stmt.query_map([], |row| {
+            let platform: String = row.get(0)?;
+            let handle: String   = row.get(1)?;
+            let origin: String   = row.get(2)?;
+            let media: String    = row.get(3)?;
+            let link: String     = row.get(4)?;
+            let _name: String    = row.get(5)?;
+    
+            let content_type = match origin.as_str() {
+                "recommendation" | "playlist" | "profile" | "bookmarks" | "liked" | "reposts" => origin.clone(),
+                _ => "recommendation".to_string(),
+            };
+            let media_token = if media == "image" || media == "images" { "pictures".to_string() } else { "video".to_string() };
+    
+            Ok(UiBacklogRow {
+                platform,
+                content_type,
+                handle,
+                media: media_token,
+                link,
+            })
+        })?;
+    
+        let mut out = Vec::new();
+        for r in rows { out.push(r?); }
         Ok(out)
     }
 

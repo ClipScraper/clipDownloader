@@ -103,7 +103,7 @@ pub fn settings_page() -> Html {
     };
 
     html! {
-        <main class="container" style="padding-top: 10vh;">
+        <main class="container">
             <h1>{"Settings"}</h1>
             <div class="settings-form">
                 <div class="form-group">
