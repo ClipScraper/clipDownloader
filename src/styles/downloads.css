@@ -1,5 +1,10 @@
 /* Left-align only this page */
-.container.downloads { text-align: left; align-items: stretch; }
+.container.downloads {
+    text-align: left;
+    align-items: stretch;
+    padding-top: 0.5rem;
+    justify-content: flex-start;
+}
 
 /* Top level summary layout */
 .summary { width: calc(100% - 160px); margin: 0 auto; }
