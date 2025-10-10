@@ -25,6 +25,3 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           WITH_V: true # The tag will be created with a 'v' prefix (e.g., v1.2.3)
           DEFAULT_BUMP: patch # If no specific label is found, default to a patch release
-          # The action will look for these labels on the PR to determine the version bump
-          # You can customize these labels if you wish
-          CUSTOM_TAG: ${{ github.event.pull_request.labels.*.name }}
