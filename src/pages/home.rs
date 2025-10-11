@@ -5,7 +5,7 @@ use web_sys::DragEvent;
 use yew::prelude::*;
 use serde::{Serialize, Deserialize};
 use yew_hooks::prelude::*;
-use yew_icons::{Icon, IconId};
+use yew_icons::{Icon, IconId}; // ⟵ add icons
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 struct DownloadResult {
@@ -59,16 +59,14 @@ pub fn home_page(props: &Props) -> Html {
                     
                     if let Ok(result) = serde_wasm_bindgen::from_value::<DownloadResult>(payload) {
                         let msg = result.message.clone();
-                        let is_complete = msg.starts_with("Saved") 
-                            || msg.starts_with("Failed") 
-                            || msg.starts_with("File already exists");
-                        
+                        let is_complete = msg.starts_with("Saved") || msg.starts_with("Failed") || msg.starts_with("File already exists");
                         if is_complete {
                             is_downloading_clone.set(false);
                             let mut results = (*download_results).clone();
                             results.push(result);
                             download_results.set(results);
                         } else {
+                            // Update progress for non-completion messages
                             download_progress_clone.set(msg.clone());
                         }
                     }
@@ -101,7 +99,7 @@ pub fn home_page(props: &Props) -> Html {
             e.prevent_default();
             is_downloading.set(true);
             download_progress.set("Starting download...".to_string());
-            download_results.set(vec![]);
+            download_results.set(vec![]); // Clear previous results
             let value = greet_input_ref.cast::<web_sys::HtmlInputElement>().unwrap().value();
             web_sys::console::log_1(&format!("Form submitted with URL: {}", value).into());
             wasm_bindgen_futures::spawn_local(async move {
@@ -123,9 +121,6 @@ pub fn home_page(props: &Props) -> Html {
         })
     };
 
-    // [FRONTEND] [pages/home.rs] [open_click callback]
-    // Callback for the "Import list" button click
-    // Triggers the file picker dialog to select and import a CSV file containing URLs to download
     let open_click = {
         println!("[FRONTEND] [pages/home.rs] [open_click callback]");
         let on_open_file = props.on_open_file.clone();
@@ -142,10 +137,6 @@ pub fn home_page(props: &Props) -> Html {
         web_sys::console::log_1(&"Drag leave".into());
     });
 
-    // [FRONTEND] [pages/home.rs] [ondrop callback]
-    // Drag and drop handler for CSV files
-    // Allows users to drag and drop CSV files onto the page for import
-    // Reads the file content and triggers the same CSV import process as the "Import list" button
     let ondrop = {
         println!("[FRONTEND] [pages/home.rs] [ondrop callback]");
         let on_csv_load = props.on_csv_load.clone();
@@ -185,7 +176,7 @@ pub fn home_page(props: &Props) -> Html {
                 { if !*is_downloading {
                     html! {
                         <button type="submit" class="download-cta" title="Download" disabled={!is_valid_url || *is_downloading}>
-                            <Icon icon_id={IconId::LucideDownload} width={"20"} height={"20"} />
+                            <Icon icon_id={IconId::LucideDownload} width={"36"} height={"36"} />
                         </button>
                     }
                 } else {
