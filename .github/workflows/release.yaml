@@ -1,41 +1,17 @@
-name: Tag & Build Tauri Release on Merge
+name: Tag & Build Tauri Release
 
 on:
+  # TEMP: build & upload artifacts for each PR so we can iterate
   pull_request:
-    types: [closed]
-    branches:
-      - master    # change to 'main' if that's your default
+    types: [opened, synchronize, reopened, ready_for_review]
+  # Normal release path: when you push a semver tag like v0.0.3
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+*'
+  workflow_dispatch:
 
 jobs:
-  prepare:
-    if: github.event.pull_request.merged == true
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    outputs:
-      new_tag: ${{ steps.bump.outputs.new_tag }}
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      # Bump patch version and create/push the tag (starts at v0.0.1)
-      - name: Bump tag (patch)
-        id: bump
-        uses: anothrNick/github-tag-action@1.67.0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          WITH_V: true
-          DEFAULT_BUMP: patch
-          INITIAL_VERSION: 0.0.1
-
-      - name: Show new tag
-        run: echo "New tag is ${{ steps.bump.outputs.new_tag }}"
-
   build-tauri:
-    if: github.event.pull_request.merged == true
-    needs: prepare
     permissions:
       contents: write
     strategy:
@@ -44,6 +20,7 @@ jobs:
         platform: [macos-latest, ubuntu-20.04, windows-latest]
 
     runs-on: ${{ matrix.platform }}
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -51,7 +28,10 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Install Trunk
+      - name: Add WebAssembly target (wasm32-unknown-unknown)
+        run: rustup target add wasm32-unknown-unknown
+
+      - name: Install Trunk (for Yew build)
         run: cargo install trunk
 
       - name: Rust cache
@@ -64,15 +44,35 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            libgtk-3-dev libwebkit2gtk-4.0-dev libappindicator3-dev \
-            librsvg2-dev patchelf
+            libgtk-3-dev \
+            libwebkit2gtk-4.0-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf
 
-      - name: Build & publish release (macOS/Windows/Linux)
+      - name: Compute tag/release parameters
+        id: meta
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            echo "tag=pr-${{ github.event.number }}-${{ github.run_number }}" >> $GITHUB_OUTPUT
+            echo "name=PR #${{ github.event.number }} build v__VERSION__ (run ${{ github.run_number }})" >> $GITHUB_OUTPUT
+            echo "draft=true" >> $GITHUB_OUTPUT
+            echo "pre=true" >> $GITHUB_OUTPUT
+          else
+            echo "tag=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+            echo "name=App v__VERSION__" >> $GITHUB_OUTPUT
+            echo "draft=false" >> $GITHUB_OUTPUT
+            echo "pre=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Build & publish (macOS/Windows/Linux)
         uses: tauri-apps/tauri-action@v0.4.5
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: ${{ needs.prepare.outputs.new_tag }}
-          releaseName: ${{ needs.prepare.outputs.new_tag }}
-          releaseDraft: false
-          prerelease: false
+          tagName: ${{ steps.meta.outputs.tag }}
+          releaseName: ${{ steps.meta.outputs.name }}
+          releaseDraft: ${{ steps.meta.outputs.draft }}
+          prerelease: ${{ steps.meta.outputs.pre }}
+          # trunk is invoked via beforeBuildCommand in tauri.conf.json

@@ -10,6 +10,7 @@ jobs:
       fail-fast: false
       matrix:
         platform: [macos-latest, ubuntu-20.04, windows-latest]
+
     runs-on: ${{ matrix.platform }}
 
     steps:
@@ -22,7 +23,7 @@ jobs:
       - name: Add WebAssembly target (wasm32-unknown-unknown)
         run: rustup target add wasm32-unknown-unknown
 
-      - name: Install Trunk
+      - name: Install Trunk (for Yew build)
         run: cargo install trunk
 
       - name: Rust cache
@@ -41,6 +42,10 @@ jobs:
             librsvg2-dev \
             patchelf
 
+      # Build only (no release upload). tauri-action installs a suitable CLI.
       - name: Build (no release upload)
-        # This runs trunk via the `beforeBuildCommand` in tauri.conf.json
-        run: cargo tauri build --ci
+        uses: tauri-apps/tauri-action@v0.4.5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          args: --ci
