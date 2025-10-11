@@ -5,6 +5,7 @@ use web_sys::DragEvent;
 use yew::prelude::*;
 use serde::{Serialize, Deserialize};
 use yew_hooks::prelude::*;
+use yew_icons::{Icon, IconId};
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 struct DownloadResult {
@@ -53,14 +54,11 @@ pub fn home_page(props: &Props) -> Html {
             let download_progress_clone = download_progress.clone();
             spawn_local(async move {
                 let closure = Closure::wrap(Box::new(move |event: JsValue| {
-                    // In Tauri v2, events have a payload property
                     let payload = js_sys::Reflect::get(&event, &JsValue::from_str("payload"))
                         .unwrap_or(event.clone());
                     
                     if let Ok(result) = serde_wasm_bindgen::from_value::<DownloadResult>(payload) {
                         let msg = result.message.clone();
-                        
-                        // Check if this is a completion message (success or failure)
                         let is_complete = msg.starts_with("Saved") 
                             || msg.starts_with("Failed") 
                             || msg.starts_with("File already exists");
@@ -71,7 +69,6 @@ pub fn home_page(props: &Props) -> Html {
                             results.push(result);
                             download_results.set(results);
                         } else {
-                            // Update progress for non-completion messages
                             download_progress_clone.set(msg.clone());
                         }
                     }
@@ -104,7 +101,7 @@ pub fn home_page(props: &Props) -> Html {
             e.prevent_default();
             is_downloading.set(true);
             download_progress.set("Starting download...".to_string());
-            download_results.set(vec![]); // Clear previous results
+            download_results.set(vec![]);
             let value = greet_input_ref.cast::<web_sys::HtmlInputElement>().unwrap().value();
             web_sys::console::log_1(&format!("Form submitted with URL: {}", value).into());
             wasm_bindgen_futures::spawn_local(async move {
@@ -169,7 +166,6 @@ pub fn home_page(props: &Props) -> Html {
                                 web_sys::console::log_1(&"File loaded".into());
                                 let reader: web_sys::FileReader = e.target().unwrap().dyn_into().unwrap();
                                 let csv_text = reader.result().unwrap().as_string().unwrap();
-                                // Emit CSV content to trigger import process (same as Import list button)
                                 on_csv_load.emit(csv_text);
                             }) as Box<dyn FnMut(_)>);
                             file_reader.set_onload(Some(onload.as_ref().unchecked_ref()));
@@ -189,7 +185,7 @@ pub fn home_page(props: &Props) -> Html {
                 { if !*is_downloading {
                     html! {
                         <button type="submit" class="download-cta" title="Download" disabled={!is_valid_url || *is_downloading}>
-                            <img class="download-icon" src="assets/download.svg" />
+                            <Icon icon_id={IconId::LucideDownload} width={"20"} height={"20"} />
                         </button>
                     }
                 } else {
@@ -218,8 +214,6 @@ pub fn home_page(props: &Props) -> Html {
                 })}
             </div>
             <div class="row home-actions">
-                // Button to open file dialog for importing CSV file containing URLs to download
-                // When clicked, opens a file picker, reads the CSV, imports URLs to database, and navigates to downloads page
                 <button type="button" onclick={open_click}>{"Import list"}</button>
             </div>
         </main>

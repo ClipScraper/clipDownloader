@@ -102,11 +102,9 @@ fn platform_icon_src(p: &str) -> &'static str {
 /* ───────────────────────── component ───────────────────────── */
 #[function_component(DownloadsPage)]
 pub fn downloads_page(props: &Props) -> Html {
-    // Shared across both sections, but keys are namespaced by section.
     let expanded_platforms = use_state(|| std::collections::HashSet::<String>::new());
     let expanded_collections = use_state(|| std::collections::HashSet::<String>::new());
 
-    // Wrap () -> () into MouseEvent -> () for Play/Pause buttons
     let on_toggle_pause_click_header = {
         let cb = props.on_toggle_pause.clone();
         Callback::from(move |_e: MouseEvent| cb.emit(()))
@@ -282,7 +280,7 @@ pub fn downloads_page(props: &Props) -> Html {
                                                                         if enable_queue_action {
                                                                             html!{
                                                                                 <button class="icon-btn" type_="button" title="Queue" onclick={on_queue_collection.clone()}>
-                                                                                    <img class="brand-icon" src="assets/download.svg" />
+                                                                                    <Icon icon_id={IconId::LucideDownload} width={"18"} height={"18"} />
                                                                                 </button>
                                                                             }
                                                                         } else {
@@ -334,7 +332,7 @@ pub fn downloads_page(props: &Props) -> Html {
                                                                                                         if enable_queue_action {
                                                                                                             html!{
                                                                                                                 <button class="icon-btn" type_="button" title="Queue" onclick={on_queue_row}>
-                                                                                                                    <img class="brand-icon" src="assets/download.svg" />
+                                                                                                                    <Icon icon_id={IconId::LucideDownload} width={"18"} height={"18"} />
                                                                                                                 </button>
                                                                                                             }
                                                                                                         } else {
@@ -375,7 +373,7 @@ pub fn downloads_page(props: &Props) -> Html {
                                                     if enable_queue_action {
                                                         html!{
                                                             <button class="icon-btn" type_="button" title="Queue" onclick={on_queue_platform}>
-                                                                <img class="brand-icon" src="assets/download.svg" />
+                                                                <Icon icon_id={IconId::LucideDownload} width={"18"} height={"18"} />
                                                             </button>
                                                         }
                                                     } else { html!{} }
@@ -395,7 +393,6 @@ pub fn downloads_page(props: &Props) -> Html {
 
     html! {
         <main class="container downloads">
-            // ─── Section 1: Downloading (always show header + play/pause) ───
             <div style="display:flex; align-items:center; gap:8px; margin: 24px 0 8px 16px;">
                 <h2 style="margin:0;">{"Downloading"}</h2>
                 <button class="icon-btn" type_="button" onclick={on_toggle_pause_click_header} title={ if props.paused { "Play" } else { "Pause" } }>
@@ -439,20 +436,18 @@ pub fn downloads_page(props: &Props) -> Html {
                 } else { html!{} }
             }
 
-            // ─── Section 2: Queue (hidden if empty) ───
-            {
-                if !props.queue.is_empty() {
-                    html!{
+            { 
+                if !props.queue.is_empty() { 
+                    html!{ 
                         {
                             render_section(props.queue.clone(), "Queue", false)
                         }
-                    }
+                    } 
                 } else {
                     html!{}
-                }
+                } 
             }
 
-            // ─── Section 3: Backlog ───
             { render_section(props.backlog.clone(), "Backlog", true) }
         </main>
     }
