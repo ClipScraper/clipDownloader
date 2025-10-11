@@ -1,4 +1,4 @@
-name: PR Build (Tauri)
+name: PR Build - Tauri
 
 on:
   pull_request:
@@ -42,7 +42,6 @@ jobs:
             librsvg2-dev \
             patchelf
 
-      # Build only (no release upload). tauri-action installs a suitable CLI.
       - name: Build (no release upload)
         uses: tauri-apps/tauri-action@v0.4.5
         env:

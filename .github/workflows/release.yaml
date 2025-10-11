@@ -1,10 +1,6 @@
 name: Tag & Build Tauri Release
 
 on:
-  # TEMP: build & upload artifacts for each PR so we can iterate
-  pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
-  # Normal release path: when you push a semver tag like v0.0.3
   push:
     tags:
       - 'v[0-9]+.[0-9]+.[0-9]+*'
@@ -50,29 +46,65 @@ jobs:
             librsvg2-dev \
             patchelf
 
-      - name: Compute tag/release parameters
-        id: meta
-        shell: bash
-        run: |
-          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            echo "tag=pr-${{ github.event.number }}-${{ github.run_number }}" >> $GITHUB_OUTPUT
-            echo "name=PR #${{ github.event.number }} build v__VERSION__ (run ${{ github.run_number }})" >> $GITHUB_OUTPUT
-            echo "draft=true" >> $GITHUB_OUTPUT
-            echo "pre=true" >> $GITHUB_OUTPUT
-          else
-            echo "tag=${{ github.ref_name }}" >> $GITHUB_OUTPUT
-            echo "name=App v__VERSION__" >> $GITHUB_OUTPUT
-            echo "draft=false" >> $GITHUB_OUTPUT
-            echo "pre=false" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Build & publish (macOS/Windows/Linux)
+      # Build & create the GitHub Release for this tag; uploads Tauri's default artifacts
+      - name: Build & publish release (macOS/Windows/Linux)
         uses: tauri-apps/tauri-action@v0.4.5
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: ${{ steps.meta.outputs.tag }}
-          releaseName: ${{ steps.meta.outputs.name }}
-          releaseDraft: ${{ steps.meta.outputs.draft }}
-          prerelease: ${{ steps.meta.outputs.pre }}
-          # trunk is invoked via beforeBuildCommand in tauri.conf.json
+          tagName: ${{ github.ref_name }}            # e.g. v0.0.3
+          releaseName: 'App v__VERSION__'            # __VERSION__ comes from tauri.conf.json
+          releaseDraft: false
+          prerelease: false
+
+      # Read version to produce friendly, platform-tagged filenames
+      - name: Extract app version
+        id: ver
+        shell: bash
+        run: |
+          v=$(python - <<'PY'
+          import json
+          print(json.load(open("src-tauri/tauri.conf.json"))["version"])
+          PY
+          )
+          echo "version=$v" >> $GITHUB_OUTPUT
+          echo "Using version: $v"
+
+      # Copy primary artifact to a friendly, platform-tagged name and attach to the same release
+      - name: Rename artifact and upload friendly-named copy
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          ROOT="src-tauri/target/release/bundle"
+          VER="${{ steps.ver.outputs.version }}"
+          case "${{ matrix.platform }}" in
+            macos-latest)
+              LABEL="macOS"
+              SRC=$(ls "$ROOT"/dmg/*.dmg 2>/dev/null | head -n1 || true)
+              ;;
+            windows-latest)
+              LABEL="Windows"
+              for f in "$ROOT"/msi/*.msi "$ROOT"/nsis/*.exe "$ROOT"/*/*.exe "$ROOT"/*/*.zip; do
+                [ -e "$f" ] && SRC="$f" && break
+              done
+              ;;
+            ubuntu-20.04)
+              LABEL="Linux"
+              for f in "$ROOT"/appimage/*.AppImage "$ROOT"/deb/*.deb "$ROOT"/rpm/*.rpm "$ROOT"/*/*.tar.gz; do
+                [ -e "$f" ] && SRC="$f" && break
+              done
+              ;;
+          esac
+
+          if [ -z "${SRC:-}" ]; then
+            echo "No bundle found on $LABEL; nothing to upload."
+            exit 0
+          fi
+
+          EXT="${SRC##*.}"
+          NEW="ClipScraperApp_${LABEL}_${VER}.${EXT}"
+          cp -f "$SRC" "$NEW"
+          echo "Uploading $NEW (from $SRC) to release ${{ github.ref_name }}"
+          gh release upload "${{ github.ref_name }}" "$NEW" --clobber
