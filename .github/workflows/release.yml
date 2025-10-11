@@ -23,13 +23,18 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Add wasm32 target (for Trunk/Yew)
+        run: rustup target add wasm32-unknown-unknown
+
       - name: Install Trunk
         run: cargo install trunk
 
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: './src-tauri -> target'
+          workspaces: |
+            ./ -> target
+            ./src-tauri -> target
 
       - name: Install Linux dependencies
         if: matrix.platform == 'ubuntu-20.04'

@@ -4,24 +4,25 @@ on:
   pull_request:
     types: [closed]
     branches:
-      - master # Or 'main' if that's your default branch
+      - master
 
 jobs:
   tag-release:
     if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
     permissions:
-      contents: write # This permission is necessary to create and push the tag
+      contents: write
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # Fetches all history for all branches and tags
+          fetch-depth: 0
 
       - name: Create and push new tag
         uses: anothrNick/github-tag-action@1.67.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          WITH_V: true # The tag will be created with a 'v' prefix (e.g., v1.2.3)
-          DEFAULT_BUMP: patch # If no specific label is found, default to a patch release
+          WITH_V: true
+          DEFAULT_BUMP: patch
+          INITIAL_VERSION: 0.0.1
