@@ -5,6 +5,7 @@ use web_sys::DragEvent;
 use yew::prelude::*;
 use serde::{Serialize, Deserialize};
 use yew_hooks::prelude::*;
+use yew_icons::{Icon, IconId}; // ⟵ add icons
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 struct DownloadResult {
@@ -53,18 +54,12 @@ pub fn home_page(props: &Props) -> Html {
             let download_progress_clone = download_progress.clone();
             spawn_local(async move {
                 let closure = Closure::wrap(Box::new(move |event: JsValue| {
-                    // In Tauri v2, events have a payload property
                     let payload = js_sys::Reflect::get(&event, &JsValue::from_str("payload"))
                         .unwrap_or(event.clone());
                     
                     if let Ok(result) = serde_wasm_bindgen::from_value::<DownloadResult>(payload) {
                         let msg = result.message.clone();
-                        
-                        // Check if this is a completion message (success or failure)
-                        let is_complete = msg.starts_with("Saved") 
-                            || msg.starts_with("Failed") 
-                            || msg.starts_with("File already exists");
-                        
+                        let is_complete = msg.starts_with("Saved") || msg.starts_with("Failed") || msg.starts_with("File already exists");
                         if is_complete {
                             is_downloading_clone.set(false);
                             let mut results = (*download_results).clone();
@@ -126,9 +121,6 @@ pub fn home_page(props: &Props) -> Html {
         })
     };
 
-    // [FRONTEND] [pages/home.rs] [open_click callback]
-    // Callback for the "Import list" button click
-    // Triggers the file picker dialog to select and import a CSV file containing URLs to download
     let open_click = {
         println!("[FRONTEND] [pages/home.rs] [open_click callback]");
         let on_open_file = props.on_open_file.clone();
@@ -145,10 +137,6 @@ pub fn home_page(props: &Props) -> Html {
         web_sys::console::log_1(&"Drag leave".into());
     });
 
-    // [FRONTEND] [pages/home.rs] [ondrop callback]
-    // Drag and drop handler for CSV files
-    // Allows users to drag and drop CSV files onto the page for import
-    // Reads the file content and triggers the same CSV import process as the "Import list" button
     let ondrop = {
         println!("[FRONTEND] [pages/home.rs] [ondrop callback]");
         let on_csv_load = props.on_csv_load.clone();
@@ -169,7 +157,6 @@ pub fn home_page(props: &Props) -> Html {
                                 web_sys::console::log_1(&"File loaded".into());
                                 let reader: web_sys::FileReader = e.target().unwrap().dyn_into().unwrap();
                                 let csv_text = reader.result().unwrap().as_string().unwrap();
-                                // Emit CSV content to trigger import process (same as Import list button)
                                 on_csv_load.emit(csv_text);
                             }) as Box<dyn FnMut(_)>);
                             file_reader.set_onload(Some(onload.as_ref().unchecked_ref()));
@@ -189,7 +176,7 @@ pub fn home_page(props: &Props) -> Html {
                 { if !*is_downloading {
                     html! {
                         <button type="submit" class="download-cta" title="Download" disabled={!is_valid_url || *is_downloading}>
-                            <img class="download-icon" src="assets/download.svg" />
+                            <Icon icon_id={IconId::LucideDownload} width={"36"} height={"36"} />
                         </button>
                     }
                 } else {
@@ -218,8 +205,6 @@ pub fn home_page(props: &Props) -> Html {
                 })}
             </div>
             <div class="row home-actions">
-                // Button to open file dialog for importing CSV file containing URLs to download
-                // When clicked, opens a file picker, reads the CSV, imports URLs to database, and navigates to downloads page
                 <button type="button" onclick={open_click}>{"Import list"}</button>
             </div>
         </main>

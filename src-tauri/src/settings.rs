@@ -1,6 +1,6 @@
 use crate::database::{OnDuplicate, Settings};
 use std::{fs, path::{Path, PathBuf}};
-use uuid::Uuid; // already in Cargo.toml
+use uuid::Uuid;
 
 /// Where we store settings.json on macOS:
 ///   ~/Library/Application Support/clip-downloader/settings.json
@@ -37,7 +37,6 @@ fn default_download_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("/"))
 }
 
-/// Best-effort check that a directory is usable for writing.
 fn dir_is_writable(p: &Path) -> bool {
     if !p.exists() || !p.is_dir() {
         return false;
@@ -135,6 +134,9 @@ pub fn save_settings(settings: &Settings) -> Result<(), String> {
 }
 
 /// Map our duplicate policies to yt-dlp flags.
+/// - Overwrite   -> force overwrite existing files
+/// - CreateNew   -> we compute a unique name ourselves (no special flag)
+/// - DoNothing   -> tell yt-dlp to skip and not resume partials
 pub fn get_yt_dlp_duplicate_flags(on_duplicate: &OnDuplicate) -> Vec<String> {
     match on_duplicate {
         OnDuplicate::Overwrite => vec!["--force-overwrites".into()],

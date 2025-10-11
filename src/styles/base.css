@@ -60,22 +60,35 @@ body {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 44px;
-  height: 44px;
-  border-radius: 8px;
-  /* Solid dark background for the download button */
-  background-color: #1D1D1D;
-  box-shadow: 0 2px 2px rgba(0,0,0,0.2);
+  width: 56px;      /* ≥ 1.5× the 32px buttons on Downloads page */
+  height: 56px;
+  border-radius: 12px;
+  border: 1px solid #3a3a3a;
+  background: #262626;
+  box-shadow: 0 1px 0 rgba(255,255,255,0.06) inset, 0 2px 8px rgba(0,0,0,0.35);
+  transition: transform 120ms ease, opacity 120ms ease, background 120ms ease;
 }
-.download-cta:disabled {
-  background-color: #555;
+
+.download-cta:enabled:hover {
+  transform: translateY(-1px);
+  background: #2b2b2b;
+}
+
+.download-cta:enabled:active {
+  transform: translateY(0);
+}
+
+.download-cta[disabled] {
+  opacity: 0.45;
   cursor: not-allowed;
-  filter: grayscale(1);
-  opacity: 0.5;
 }
-.download-cta:hover { filter: brightness(1.05); }
-.download-cta:active { background-color: #1D1D1D; }
-.download-icon { width: 22px; height: 22px; filter: invert(1) brightness(1.8); }
+
+/* Ensure any embedded SVG scales up nicely if width/height attrs are missing */
+.download-cta svg {
+  width: 36px;
+  height: 36px;
+  stroke-width: 1.5;
+}
 
 a {
   font-weight: 500;
