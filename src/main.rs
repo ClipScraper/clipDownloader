@@ -11,6 +11,9 @@ mod components;
 use app::App;
 
 #[cfg(target_arch = "wasm32")]
+mod log;
+
+#[cfg(target_arch = "wasm32")]
 fn main() {
     console_error_panic_hook::set_once();
     yew::Renderer::<App>::new().render();

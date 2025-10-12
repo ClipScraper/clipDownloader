@@ -5,3 +5,4 @@ pub mod files;
 pub mod settings_cmd;
 pub mod import;
 pub mod list;
+pub mod log;

@@ -33,3 +33,6 @@ make sure image/videos have same settings code
 
 -install yt dlp on windows
 fix color buttons on windows
+
+
+- WRITE LOGS

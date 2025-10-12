@@ -7,5 +7,12 @@ pub async fn load_settings() -> Settings {
 
 #[tauri::command]
 pub async fn save_settings(settings: Settings) -> Result<(), String> {
-    crate::settings::save_settings(&settings)
+    // persist first
+    crate::settings::save_settings(&settings)?;
+
+    // then live-toggle logging
+    crate::logging::set_file_logging_enabled(settings.debug_logs);
+    tracing::info!("settings saved; debug_logs now {}", settings.debug_logs);
+
+    Ok(())
 }

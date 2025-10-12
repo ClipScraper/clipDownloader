@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "clip-downloader",
+  "productName": "ClipScraper",
   "version": "0.1.0",
   "identifier": "com.hjoncour.clip-downloader",
   "build": {
@@ -13,7 +13,7 @@
       "withGlobalTauri": true,
       "windows": [
         {
-          "title": "clip-downloader",
+          "title": "ClipScraper",
           "width": 800,
           "height": 600,
           "dragDropEnabled": true

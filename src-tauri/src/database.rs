@@ -148,6 +148,7 @@ pub struct Settings {
     pub id: Option<i64>,
     pub download_directory: String,
     pub on_duplicate: OnDuplicate,
+    pub debug_logs: bool,
 }
 
 /* ----------------------------- util: link normalize ----------------------------- */

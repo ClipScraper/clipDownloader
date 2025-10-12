@@ -6,6 +6,7 @@ use crate::types::{ClipRow, Platform, ContentType};
 use yew::prelude::*;
 use std::cell::RefCell;
 use crate::components::sidebar::Sidebar;
+use crate::log;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tauri v2 JS bridges
@@ -62,11 +63,18 @@ fn spawn_import_from_path(path: String) {
         web_sys::console::log_1(&format!("⏭️ Ignored duplicate drop for {path}").into());
         return;
     }
+    fe_log::info("csv_drop_request", serde_json::json!({ "path": path }));
     spawn_local(async move {
         let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "path": path })).unwrap();
         match invoke("read_csv_from_path", args).await {
-            Ok(_) => web_sys::console::log_1(&"✅ Imported CSV from drop (backend)".into()),
-            Err(e) => log_invoke_err("read_csv_from_path", e),
+            Ok(_) => {
+                fe_log::info("csv_drop_imported", serde_json::json!({ "status": "ok" }));
+                web_sys::console::log_1(&"✅ Imported CSV from drop (backend)".into())
+            }
+            Err(e) => {
+                fe_log::error("csv_drop_failed", serde_json::json!({ "error": format!("{e:?}") }));
+                log_invoke_err("read_csv_from_path", e)
+            }
         }
     });
 }
@@ -103,6 +111,7 @@ async fn start_dragdrop_listener() {
                 web_sys::console::log_1(&"✅ attached onDragDropEvent listener".into());
             }
         }
+        log::debug("dragdrop_listener_attached", serde_json::json!({ "attached": attached }));
     }
 
     if !attached {
@@ -197,6 +206,7 @@ pub fn app() -> Html {
                             msg.starts_with("Failed") ||
                             msg.starts_with("File already exists");
                         if is_complete {
+                            log::info("download_complete", serde_json::json!({ "success": dr.success, "message": msg }));
                             is_downloading.set(false);
                             if !dr.success {
                                 if let Some(row) = (*active_download).clone() {
@@ -231,6 +241,7 @@ pub fn app() -> Html {
             move |(p, qlen, has_active, busy, paused)| {
                 if *p == Page::Downloads && !*busy && !*has_active && *qlen > 0 && !*paused {
                     if let Some(next) = (*queue_rows).get(0).cloned() {
+                        log::info("queue_autostart", serde_json::json!({ "url": next.link }));
                         // Remove from queue visually
                         let mut q = (*queue_rows).clone();
                         q.remove(0);
@@ -260,6 +271,7 @@ pub fn app() -> Html {
         let queue_rows = queue_rows.clone();
         Callback::from(move |_| {
             let going_to_pause = !*is_paused;
+            log::info("queue_toggle", serde_json::json!({ "pausing": going_to_pause }));
             if going_to_pause && *is_downloading {
                 // Cancel current and put it back on top of the queue
                 if let Some(row) = (*active_download).clone() {

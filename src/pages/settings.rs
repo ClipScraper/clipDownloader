@@ -14,6 +14,7 @@ pub enum OnDuplicate {
 pub struct Settings {
     pub download_directory: String,
     pub on_duplicate: OnDuplicate,
+    pub debug_logs: bool,
 }
 
 #[wasm_bindgen]
@@ -82,6 +83,16 @@ pub fn settings_page() -> Html {
         })
     };
 
+    let on_debug_logs_change = {
+        let settings = settings.clone();
+        Callback::from(move |e: Event| {
+            let checked = e.target_unchecked_into::<web_sys::HtmlInputElement>().checked();
+            let mut s = (*settings).clone();
+            s.debug_logs = checked;
+            settings.set(s);
+        })
+    };
+
     let on_save = {
         let settings = settings.clone();
         Callback::from(move |_| {
@@ -125,6 +136,12 @@ pub fn settings_page() -> Html {
                         <option value="do_nothing" selected={settings.on_duplicate == OnDuplicate::DoNothing}>{"Do nothing"}</option>
                     </select>
                 </div>
+
+                <div class="form-group row">
+                    <label for="debug-logs">{"Activate debug logs"}</label>
+                    <input type="checkbox" id="debug-logs" checked={settings.debug_logs} onchange={on_debug_logs_change} />
+                </div>
+
                 <div class="form-group center">
                     <button onclick={on_save}>{"Save"}</button>
                 </div>
@@ -138,6 +155,7 @@ impl Default for Settings {
         Self {
             download_directory: String::from(""),
             on_duplicate: OnDuplicate::CreateNew,
+            debug_logs: false,
         }
     }
 }
