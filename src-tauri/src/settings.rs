@@ -20,6 +20,7 @@ impl Default for Settings {
             id: None,
             download_directory: default_download_dir().to_string_lossy().to_string(),
             on_duplicate: OnDuplicate::CreateNew,
+            debug_logs: false,
         }
     }
 }
@@ -125,6 +126,7 @@ pub fn save_settings(settings: &Settings) -> Result<(), String> {
         id: settings.id,
         download_directory: final_dir,
         on_duplicate: settings.on_duplicate.clone(),
+        debug_logs: settings.debug_logs,
     };
 
     let body = serde_json::to_string_pretty(&to_write)
