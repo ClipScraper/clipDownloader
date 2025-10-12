@@ -1,41 +1,13 @@
-name: Tag & Build Tauri Release on Merge
+name: Tag & Build Tauri Release
 
 on:
-  pull_request:
-    types: [closed]
-    branches:
-      - master    # change to 'main' if that's your default
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+*'
+  workflow_dispatch:
 
 jobs:
-  prepare:
-    if: github.event.pull_request.merged == true
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    outputs:
-      new_tag: ${{ steps.bump.outputs.new_tag }}
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      # Bump patch version and create/push the tag (starts at v0.0.1)
-      - name: Bump tag (patch)
-        id: bump
-        uses: anothrNick/github-tag-action@1.67.0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          WITH_V: true
-          DEFAULT_BUMP: patch
-          INITIAL_VERSION: 0.0.1
-
-      - name: Show new tag
-        run: echo "New tag is ${{ steps.bump.outputs.new_tag }}"
-
   build-tauri:
-    if: github.event.pull_request.merged == true
-    needs: prepare
     permissions:
       contents: write
     strategy:
@@ -44,6 +16,7 @@ jobs:
         platform: [macos-latest, ubuntu-20.04, windows-latest]
 
     runs-on: ${{ matrix.platform }}
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -51,7 +24,10 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Install Trunk
+      - name: Add WebAssembly target (wasm32-unknown-unknown)
+        run: rustup target add wasm32-unknown-unknown
+
+      - name: Install Trunk (for Yew build)
         run: cargo install trunk
 
       - name: Rust cache
@@ -64,15 +40,71 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            libgtk-3-dev libwebkit2gtk-4.0-dev libappindicator3-dev \
-            librsvg2-dev patchelf
+            libgtk-3-dev \
+            libwebkit2gtk-4.0-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf
 
+      # Build & create the GitHub Release for this tag; uploads Tauri's default artifacts
       - name: Build & publish release (macOS/Windows/Linux)
         uses: tauri-apps/tauri-action@v0.4.5
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: ${{ needs.prepare.outputs.new_tag }}
-          releaseName: ${{ needs.prepare.outputs.new_tag }}
+          tagName: ${{ github.ref_name }}            # e.g. v0.0.3
+          releaseName: 'App v__VERSION__'            # __VERSION__ comes from tauri.conf.json
           releaseDraft: false
           prerelease: false
+
+      # Read version to produce friendly, platform-tagged filenames
+      - name: Extract app version
+        id: ver
+        shell: bash
+        run: |
+          v=$(python - <<'PY'
+          import json
+          print(json.load(open("src-tauri/tauri.conf.json"))["version"])
+          PY
+          )
+          echo "version=$v" >> $GITHUB_OUTPUT
+          echo "Using version: $v"
+
+      # Copy primary artifact to a friendly, platform-tagged name and attach to the same release
+      - name: Rename artifact and upload friendly-named copy
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          ROOT="src-tauri/target/release/bundle"
+          VER="${{ steps.ver.outputs.version }}"
+          case "${{ matrix.platform }}" in
+            macos-latest)
+              LABEL="macOS"
+              SRC=$(ls "$ROOT"/dmg/*.dmg 2>/dev/null | head -n1 || true)
+              ;;
+            windows-latest)
+              LABEL="Windows"
+              for f in "$ROOT"/msi/*.msi "$ROOT"/nsis/*.exe "$ROOT"/*/*.exe "$ROOT"/*/*.zip; do
+                [ -e "$f" ] && SRC="$f" && break
+              done
+              ;;
+            ubuntu-20.04)
+              LABEL="Linux"
+              for f in "$ROOT"/appimage/*.AppImage "$ROOT"/deb/*.deb "$ROOT"/rpm/*.rpm "$ROOT"/*/*.tar.gz; do
+                [ -e "$f" ] && SRC="$f" && break
+              done
+              ;;
+          esac
+
+          if [ -z "${SRC:-}" ]; then
+            echo "No bundle found on $LABEL; nothing to upload."
+            exit 0
+          fi
+
+          EXT="${SRC##*.}"
+          NEW="ClipScraperApp_${LABEL}_${VER}.${EXT}"
+          cp -f "$SRC" "$NEW"
+          echo "Uploading $NEW (from $SRC) to release ${{ github.ref_name }}"
+          gh release upload "${{ github.ref_name }}" "$NEW" --clobber
