@@ -3,6 +3,7 @@ mod database;
 mod download;
 mod settings;
 mod utils;
+mod logging;
 
 use std::sync::Mutex;
 use tokio::task::JoinHandle;
@@ -12,7 +13,10 @@ pub struct DownloadState(pub std::sync::Arc<Mutex<Option<JoinHandle<()>>>>);
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let _ = crate::settings::load_settings();
+    let s = crate::settings::load_settings();
+    crate::logging::init(s.debug_logs);
+    tracing::info!("App starting; debug_logs={}", s.debug_logs);
+
     tauri::Builder::default()
         .manage(DownloadState(Default::default()))
         .plugin(tauri_plugin_opener::init())
@@ -43,6 +47,9 @@ pub fn run() {
             commands::list::move_link_to_queue,
             commands::list::move_collection_to_queue,
             commands::list::move_platform_to_queue,
+
+            // FRONTEND LOGGING
+            commands::log::frontend_log,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
