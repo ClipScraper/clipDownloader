@@ -54,6 +54,8 @@ pub fn run() {
             // NEW: Library item actions
             commands::library::open_file_for_link,
             commands::library::open_folder_for_link,
+            commands::library::open_platform_folder,
+            commands::library::open_collection_folder,
             commands::library::delete_library_item,
         ])
         .run(tauri::generate_context!())

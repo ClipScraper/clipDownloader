@@ -90,6 +90,29 @@ pub async fn open_folder_for_link(link: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub async fn open_platform_folder(platform: String) -> Result<(), String> {
+    let s = crate::settings::load_settings();
+    let base = std::path::PathBuf::from(s.download_directory);
+    let p = base.join(platform);
+    if !p.exists() {
+        return Err(format!("path not found: {}", p.display()));
+    }
+    open_folder(&p.to_string_lossy())
+}
+
+#[tauri::command]
+pub async fn open_collection_folder(platform: String, handle: String, content_type: String) -> Result<(), String> {
+    let s = crate::settings::load_settings();
+    let base = std::path::PathBuf::from(s.download_directory);
+    let label = crate::database::Database::collection_folder_label(&content_type, &handle);
+    let p = base.join(platform).join(label);
+    if !p.exists() {
+        return Err(format!("path not found: {}", p.display()));
+    }
+    open_folder(&p.to_string_lossy())
+}
+
+#[tauri::command]
 pub async fn delete_library_item(link: String) -> Result<(), String> {
     use std::fs;
 

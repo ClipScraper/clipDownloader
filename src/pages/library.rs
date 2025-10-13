@@ -151,16 +151,15 @@ pub fn library_page() -> Html {
                         };
 
                         let on_platform_open_folder = {
-                            let maybe_link = first_platform_link.clone();
+                            let platform = plat_label.clone();
                             Callback::from(move |e: MouseEvent| {
                                 e.prevent_default();
                                 e.stop_propagation();
-                                if let Some(l) = maybe_link.clone() {
-                                    spawn_local(async move {
-                                        let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "link": l })).unwrap();
-                                        let _ = invoke("open_folder_for_link", args).await;
-                                    });
-                                }
+                                let p = platform.clone();
+                                spawn_local(async move {
+                                    let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "platform": p })).unwrap();
+                                    let _ = invoke("open_platform_folder", args).await;
+                                });
                             })
                         };
 
@@ -207,16 +206,23 @@ pub fn library_page() -> Html {
                                             };
 
                                             let on_open_collection_folder = {
-                                                let maybe_link = first_collection_link.clone();
+                                                let plat = plat_label.clone();
+                                                let handle = handle.clone();
+                                                let typ = typ_str.clone();
                                                 Callback::from(move |e: MouseEvent| {
                                                     e.prevent_default();
                                                     e.stop_propagation();
-                                                    if let Some(l) = maybe_link.clone() {
-                                                        spawn_local(async move {
-                                                            let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "link": l })).unwrap();
-                                                            let _ = invoke("open_folder_for_link", args).await;
-                                                        });
-                                                    }
+                                                    let p = plat.clone();
+                                                    let h = handle.clone();
+                                                    let t = typ.clone();
+                                                    spawn_local(async move {
+                                                        let args = serde_wasm_bindgen::to_value(&serde_json::json!({
+                                                            "platform": p,
+                                                            "handle": h,
+                                                            "content_type": t,
+                                                        })).unwrap();
+                                                        let _ = invoke("open_collection_folder", args).await;
+                                                    });
                                                 })
                                             };
 
