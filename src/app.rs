@@ -1,6 +1,5 @@
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
-use yew_icons::{Icon, IconId};
 use crate::pages;
 use crate::types::{ClipRow, Platform, ContentType};
 use yew::prelude::*;
@@ -63,16 +62,16 @@ fn spawn_import_from_path(path: String) {
         web_sys::console::log_1(&format!("⏭️ Ignored duplicate drop for {path}").into());
         return;
     }
-    fe_log::info("csv_drop_request", serde_json::json!({ "path": path }));
+    log::info("csv_drop_request", serde_json::json!({ "path": path }));
     spawn_local(async move {
         let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "path": path })).unwrap();
         match invoke("read_csv_from_path", args).await {
             Ok(_) => {
-                fe_log::info("csv_drop_imported", serde_json::json!({ "status": "ok" }));
+                log::info("csv_drop_imported", serde_json::json!({ "status": "ok" }));
                 web_sys::console::log_1(&"✅ Imported CSV from drop (backend)".into())
             }
             Err(e) => {
-                fe_log::error("csv_drop_failed", serde_json::json!({ "error": format!("{e:?}") }));
+                log::error("csv_drop_failed", serde_json::json!({ "error": format!("{e:?}") }));
                 log_invoke_err("read_csv_from_path", e)
             }
         }

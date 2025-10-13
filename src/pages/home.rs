@@ -5,7 +5,8 @@ use web_sys::DragEvent;
 use yew::prelude::*;
 use serde::{Serialize, Deserialize};
 use yew_hooks::prelude::*;
-use yew_icons::{Icon, IconId}; // ⟵ add icons
+use yew_icons::{Icon, IconId};
+use crate::log;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 struct DownloadResult {
@@ -61,6 +62,7 @@ pub fn home_page(props: &Props) -> Html {
                         let msg = result.message.clone();
                         let is_complete = msg.starts_with("Saved") || msg.starts_with("Failed") || msg.starts_with("File already exists");
                         if is_complete {
+                            log::info("home_download_complete", serde_json::json!({ "success": result.success, "message": msg }));
                             is_downloading_clone.set(false);
                             let mut results = (*download_results).clone();
                             results.push(result);
@@ -101,6 +103,7 @@ pub fn home_page(props: &Props) -> Html {
             download_progress.set("Starting download...".to_string());
             download_results.set(vec![]); // Clear previous results
             let value = greet_input_ref.cast::<web_sys::HtmlInputElement>().unwrap().value();
+            log::info("home_download_clicked", serde_json::json!({ "url": value }));
             web_sys::console::log_1(&format!("Form submitted with URL: {}", value).into());
             wasm_bindgen_futures::spawn_local(async move {
                 let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "url": value })).unwrap();
@@ -113,6 +116,7 @@ pub fn home_page(props: &Props) -> Html {
         let is_downloading = is_downloading.clone();
         let download_results = download_results.clone();
         Callback::from(move |_| {
+            log::warn("home_download_cancel", serde_json::json!({}));
             is_downloading.set(false);
             download_results.set(vec![]);
             spawn_local(async {
@@ -149,6 +153,7 @@ pub fn home_page(props: &Props) -> Html {
                     web_sys::console::log_1(&format!("Files found: {}", files.length()).into());
                     if files.length() > 0 {
                         if let Some(file) = files.get(0) {
+                            log::info("csv_drop_browser", serde_json::json!({ "filename": file.name() }));
                             web_sys::console::log_1(&format!("File name: {}", file.name()).into());
                             let file_reader = web_sys::FileReader::new().unwrap();
                             file_reader.read_as_text(&file).unwrap();
@@ -157,6 +162,7 @@ pub fn home_page(props: &Props) -> Html {
                                 web_sys::console::log_1(&"File loaded".into());
                                 let reader: web_sys::FileReader = e.target().unwrap().dyn_into().unwrap();
                                 let csv_text = reader.result().unwrap().as_string().unwrap();
+                                log::info("csv_drop_loaded", serde_json::json!({ "bytes": csv_text.len() }));
                                 on_csv_load.emit(csv_text);
                             }) as Box<dyn FnMut(_)>);
                             file_reader.set_onload(Some(onload.as_ref().unchecked_ref()));

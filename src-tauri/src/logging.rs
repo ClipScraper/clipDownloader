@@ -1,10 +1,16 @@
 use once_cell::sync::OnceCell;
 use std::path::PathBuf;
-use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
-use tracing_subscriber::reload;
+
 use tracing_appender::{
     non_blocking::{self, WorkerGuard},
-    rolling::{RollingFileAppender, Rotation},
+    rolling::RollingFileAppender,
+};
+use tracing_subscriber::{
+    fmt,
+    reload,
+    util::SubscriberInitExt,
+    EnvFilter,
+    prelude::*,
 };
 
 static FILE_FILTER_HANDLE: OnceCell<reload::Handle<EnvFilter, tracing_subscriber::Registry>> =
@@ -24,14 +30,15 @@ pub fn init(file_enabled: bool) {
     let dir = log_dir();
     let _ = std::fs::create_dir_all(&dir);
 
-    // Daily rotation, filename = app.log (current) + rotated copies per day.
+    // Daily rotation; current file is app.log and rotated copies per day.
     let file_appender: RollingFileAppender = tracing_appender::rolling::daily(dir, "app.log");
     let (nb_writer, guard): (non_blocking::NonBlocking, WorkerGuard) =
         tracing_appender::non_blocking(file_appender);
-    // keep background worker alive
+
+    // Keep background worker alive for the process lifetime.
     let _ = _GUARD.set(guard);
 
-    // Always log to console (nice for dev)
+    // Always log to console (helpful for dev).
     let console = fmt::layer()
         .with_target(false)
         .with_level(true)
@@ -39,7 +46,7 @@ pub fn init(file_enabled: bool) {
         .with_thread_ids(false)
         .with_ansi(true);
 
-    // File layer (no ANSI, include target + line for debugging)
+    // File layer (no ANSI, include target + line for debugging).
     let file_layer = fmt::layer()
         .with_writer(nb_writer)
         .with_ansi(false)
@@ -48,13 +55,19 @@ pub fn init(file_enabled: bool) {
         .with_line_number(true);
 
     // Make the file layer’s level reloadable so we can enable/disable at runtime.
-    let initial = if file_enabled { EnvFilter::new("info") } else { EnvFilter::new("off") };
+    let initial = if file_enabled {
+        EnvFilter::new("info")
+    } else {
+        EnvFilter::new("off")
+    };
     let (reloadable_filter, handle) = reload::Layer::new(initial);
     let _ = FILE_FILTER_HANDLE.set(handle);
 
+    // IMPORTANT: add the filtered file layer to the *registry* first (so its S = Registry),
+    // then add the console layer. This avoids the trait bound error.
     tracing_subscriber::registry()
-        .with(console)                        // console always on (controlled by RUST_LOG if you want)
         .with(file_layer.with_filter(reloadable_filter)) // file on/off via settings
+        .with(console) // console always on (can still be controlled by RUST_LOG)
         .init();
 
     prune_old_logs(); // optional small housekeeping
@@ -64,7 +77,11 @@ pub fn init(file_enabled: bool) {
 pub fn set_file_logging_enabled(enabled: bool) {
     if let Some(h) = FILE_FILTER_HANDLE.get() {
         let _ = h.modify(|f| {
-            *f = if enabled { EnvFilter::new("info") } else { EnvFilter::new("off") };
+            *f = if enabled {
+                EnvFilter::new("info")
+            } else {
+                EnvFilter::new("off")
+            };
         });
     }
 }
@@ -72,8 +89,9 @@ pub fn set_file_logging_enabled(enabled: bool) {
 /// Optional: keep the last ~10 rotated logs to avoid unbounded growth.
 fn prune_old_logs() {
     use std::fs;
+
     let dir = log_dir();
-    let Ok(mut entries) = fs::read_dir(&dir) else { return; };
+    let Ok(entries) = fs::read_dir(&dir) else { return; };
 
     let mut files: Vec<_> = entries
         .flatten()
@@ -81,10 +99,12 @@ fn prune_old_logs() {
         .filter(|e| e.file_name().to_string_lossy().starts_with("app.log"))
         .collect();
 
-    files.sort_by_key(|e| e.metadata().and_then(|m| m.modified()).ok());
+    files.sort_by_key(|e| e.metadata().and_then(|m| m.modified()).ok()); // oldest first
+
     // keep newest 10, remove the rest
     if files.len() > 10 {
-        for e in files.into_iter().take(files.len() - 10) {
+        let excess = files.len() - 10;
+        for e in files.iter().take(excess) {
             let _ = fs::remove_file(e.path());
         }
     }

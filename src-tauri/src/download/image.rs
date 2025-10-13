@@ -47,7 +47,8 @@ fn run_gallery_dl_raw(out_dir: &Path, url: &str, cookie_arg: &str) -> io::Result
 pub fn run_gallery_dl_to_temp(_base_download_dir: &std::path::Path, url: &str, cookie_arg: &str) -> std::io::Result<(std::process::Output, PathBuf)> {
     // make a temp dir we will move from afterwards
     let tmp = tempfile::tempdir()?;
-    let tmp_path = tmp.into_path(); // persist for caller
+    // Persist the directory (avoid auto-delete); TempDir::into_path() is the correct API.
+    let tmp_path = tmp.into_path();
 
     let base_args = vec![
         "--verbose".into(),
