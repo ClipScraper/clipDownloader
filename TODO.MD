@@ -10,12 +10,12 @@
 - Cancel download
 - preview next download
 - parallel downloads
+- button to prioritize in backlog
 - refactor
 - sanitize logs
-- fix icon
 - revert button to put back from queue to backlog
 - make sure that clicking trash removes from library
-- split db into files
+- split db into files (wtf did I mean there -_-')
 - add play & trash button in library
 settings: 
 - button:
@@ -35,4 +35,4 @@ make sure image/videos have same settings code
 fix color buttons on windows
 
 
-- WRITE LOGS
+- Add "moved" to library section for files that were "done" but whose path changed

@@ -1,12 +1,6 @@
 use super::event::emit_status;
 use super::parse::{ig_handle_and_id, parse_multiple_filenames_from_output};
-use chrono::Utc;
-use std::{
-    fs as std_fs,
-    fs,
-    io,
-    path::{Path, PathBuf},
-};
+use std::{fs as std_fs, fs, io, path::{Path, PathBuf}};
 use tauri::{Manager, State};
 use walkdir::WalkDir;
 
