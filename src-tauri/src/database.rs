@@ -184,6 +184,32 @@ impl Database {
         Ok(db)
     }
 
+    pub fn find_done_row_by_link(&self, link: &str) -> Result<Option<(i64, String)>> {
+        let norm = normalize_link(link.to_string());
+        let mut stmt = self.conn.prepare(
+            "SELECT id, link, path
+               FROM downloads
+              WHERE status='done'
+              ORDER BY id"
+        )?;
+        let mut rows = stmt.query([])?;
+        while let Some(r) = rows.next()? {
+            let id: i64     = r.get(0)?;
+            let db_link: String = r.get(1)?;
+            let path: String    = r.get(2)?;
+            if normalize_link(db_link) == norm {
+                return Ok(Some((id, path)));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Hard-delete a row by id.
+    pub fn delete_row_by_id(&self, id: i64) -> Result<usize> {
+        let n = self.conn.execute("DELETE FROM downloads WHERE id=?1", [id])?;
+        Ok(n)
+    }
+
     fn get_db_path() -> Result<PathBuf> {
         let config_dir = match dirs::config_dir() {
             Some(dir) => dir,

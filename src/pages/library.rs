@@ -97,7 +97,7 @@ pub fn library_page() -> Html {
     }
 
     html! {
-        <main class="container">
+        <main class="container downloads library">
             <h1>{"Library"}</h1>
             <div class="summary">
                 {
@@ -152,6 +152,58 @@ pub fn library_page() -> Html {
                                                                     <ul class="rows">
                                                                         {
                                                                             for rows.into_iter().map(|row| {
+                                                                                // Delete callback: optimistic UI update + backend delete
+                                                                                let on_delete_row = {
+                                                                                    let done_rows = done_rows.clone();
+                                                                                    let link = row.link.clone();
+                                                                                    Callback::from(move |e: MouseEvent| {
+                                                                                        e.prevent_default();
+                                                                                        e.stop_propagation();
+
+                                                                                        // Optimistic UI removal
+                                                                                        let filtered: Vec<ClipRow> = (*done_rows).clone()
+                                                                                            .into_iter()
+                                                                                            .filter(|r| r.link != link)
+                                                                                            .collect();
+                                                                                        done_rows.set(filtered);
+
+                                                                                        // Backend delete
+                                                                                        let link_for_backend = link.clone();
+                                                                                        spawn_local(async move {
+                                                                                            let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "link": link_for_backend })).unwrap();
+                                                                                            let _ = invoke("delete_library_item", args).await;
+                                                                                        });
+                                                                                    })
+                                                                                };
+
+                                                                                // Open file with default app
+                                                                                let on_open_file = {
+                                                                                    let link = row.link.clone();
+                                                                                    Callback::from(move |e: MouseEvent| {
+                                                                                        e.prevent_default();
+                                                                                        e.stop_propagation();
+                                                                                        let l = link.clone();
+                                                                                        spawn_local(async move {
+                                                                                            let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "link": l })).unwrap();
+                                                                                            let _ = invoke("open_file_for_link", args).await;
+                                                                                        });
+                                                                                    })
+                                                                                };
+
+                                                                                // Reveal file in folder
+                                                                                let on_open_folder = {
+                                                                                    let link = row.link.clone();
+                                                                                    Callback::from(move |e: MouseEvent| {
+                                                                                        e.prevent_default();
+                                                                                        e.stop_propagation();
+                                                                                        let l = link.clone();
+                                                                                        spawn_local(async move {
+                                                                                            let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "link": l })).unwrap();
+                                                                                            let _ = invoke("open_folder_for_link", args).await;
+                                                                                        });
+                                                                                    })
+                                                                                };
+
                                                                                 html!{
                                                                                     <li class="row-line" key={row.link.clone()}>
                                                                                         {
@@ -163,6 +215,17 @@ pub fn library_page() -> Html {
                                                                                         <a class="link-text" href={row.link.clone()} target="_blank">
                                                                                             { collection_title(&row) }{" - "}{ item_label_for_row(&row) }
                                                                                         </a>
+                                                                                        <div class="row-actions">
+                                                                                            <button class="icon-btn" type_="button" title="Play" onclick={on_open_file}>
+                                                                                                <Icon icon_id={IconId::LucidePlay} width={"18"} height={"18"} />
+                                                                                            </button>
+                                                                                            <button class="icon-btn" type_="button" title="Show in folder" onclick={on_open_folder}>
+                                                                                                <Icon icon_id={IconId::LucideFolder} width={"18"} height={"18"} />
+                                                                                            </button>
+                                                                                            <button class="icon-btn" type_="button" title="Delete" onclick={on_delete_row}>
+                                                                                                <Icon icon_id={IconId::LucideTrash2} width={"18"} height={"18"} />
+                                                                                            </button>
+                                                                                        </div>
                                                                                     </li>
                                                                                 }
                                                                             })

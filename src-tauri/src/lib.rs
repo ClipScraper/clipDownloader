@@ -50,6 +50,11 @@ pub fn run() {
 
             // FRONTEND LOGGING
             commands::log::frontend_log,
+
+            // NEW: Library item actions
+            commands::library::open_file_for_link,
+            commands::library::open_folder_for_link,
+            commands::library::delete_library_item,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
