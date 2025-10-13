@@ -119,6 +119,51 @@ pub fn library_page() -> Html {
                         let collections_count = col_map.len();
                         let items_count: usize = col_map.values().map(|v| v.len()).sum();
 
+                        // Gather links under this platform for actions
+                        let platform_links: Vec<String> = col_map
+                            .values()
+                            .flat_map(|rs| rs.iter().map(|r| r.link.clone()))
+                            .collect();
+                        let first_platform_link: Option<String> = platform_links.get(0).cloned();
+
+                        let on_platform_delete = {
+                            let done_rows = done_rows.clone();
+                            let links = platform_links.clone();
+                            Callback::from(move |e: MouseEvent| {
+                                e.prevent_default();
+                                e.stop_propagation();
+                                // optimistic UI update
+                                let filtered: Vec<ClipRow> = (*done_rows)
+                                    .clone()
+                                    .into_iter()
+                                    .filter(|r| !links.contains(&r.link))
+                                    .collect();
+                                done_rows.set(filtered);
+                                // backend deletes
+                                let links_for_backend = links.clone();
+                                spawn_local(async move {
+                                    for l in links_for_backend.into_iter() {
+                                        let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "link": l })).unwrap();
+                                        let _ = invoke("delete_library_item", args).await;
+                                    }
+                                });
+                            })
+                        };
+
+                        let on_platform_open_folder = {
+                            let maybe_link = first_platform_link.clone();
+                            Callback::from(move |e: MouseEvent| {
+                                e.prevent_default();
+                                e.stop_propagation();
+                                if let Some(l) = maybe_link.clone() {
+                                    spawn_local(async move {
+                                        let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "link": l })).unwrap();
+                                        let _ = invoke("open_folder_for_link", args).await;
+                                    });
+                                }
+                            })
+                        };
+
                         let platform_rows = if is_open {
                             html!{
                                 <div>
@@ -135,6 +180,46 @@ pub fn library_page() -> Html {
                                                     expanded_collections.set(set);
                                                 })
                                             };
+                                            // Per-collection actions (folder + delete)
+                                            let links_for_collection: Vec<String> = rows.iter().map(|r| r.link.clone()).collect();
+                                            let first_collection_link: Option<String> = links_for_collection.get(0).cloned();
+
+                                            let on_delete_collection = {
+                                                let done_rows = done_rows.clone();
+                                                let links = links_for_collection.clone();
+                                                Callback::from(move |e: MouseEvent| {
+                                                    e.prevent_default();
+                                                    e.stop_propagation();
+                                                    let filtered: Vec<ClipRow> = (*done_rows)
+                                                        .clone()
+                                                        .into_iter()
+                                                        .filter(|r| !links.contains(&r.link))
+                                                        .collect();
+                                                    done_rows.set(filtered);
+                                                    let links_for_backend = links.clone();
+                                                    spawn_local(async move {
+                                                        for l in links_for_backend.into_iter() {
+                                                            let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "link": l })).unwrap();
+                                                            let _ = invoke("delete_library_item", args).await;
+                                                        }
+                                                    });
+                                                })
+                                            };
+
+                                            let on_open_collection_folder = {
+                                                let maybe_link = first_collection_link.clone();
+                                                Callback::from(move |e: MouseEvent| {
+                                                    e.prevent_default();
+                                                    e.stop_propagation();
+                                                    if let Some(l) = maybe_link.clone() {
+                                                        spawn_local(async move {
+                                                            let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "link": l })).unwrap();
+                                                            let _ = invoke("open_folder_for_link", args).await;
+                                                        });
+                                                    }
+                                                })
+                                            };
+
                                             html!{
                                                 <div class="collection-block" key={col_key.clone()}>
                                                     <div class="collection-item" onclick={on_col_click}>
@@ -143,6 +228,12 @@ pub fn library_page() -> Html {
                                                         </div>
                                                         <div class="item-right">
                                                             <span>{ format!("{} items", rows.len()) }</span>
+                                                            <button class="icon-btn" type_="button" title="Show in folder" onclick={on_open_collection_folder}>
+                                                                <Icon icon_id={IconId::LucideFolder} width={"18"} height={"18"} />
+                                                            </button>
+                                                            <button class="icon-btn" type_="button" title="Delete" onclick={on_delete_collection}>
+                                                                <Icon icon_id={IconId::LucideTrash2} width={"18"} height={"18"} />
+                                                            </button>
                                                         </div>
                                                     </div>
                                                     {
@@ -252,6 +343,12 @@ pub fn library_page() -> Html {
                                     </div>
                                     <div class="item-right">
                                         <span>{ format!("{} collections | {} items", collections_count, items_count) }</span>
+                                        <button class="icon-btn" type_="button" title="Show in folder" onclick={on_platform_open_folder}>
+                                            <Icon icon_id={IconId::LucideFolder} width={"18"} height={"18"} />
+                                        </button>
+                                        <button class="icon-btn" type_="button" title="Delete" onclick={on_platform_delete}>
+                                            <Icon icon_id={IconId::LucideTrash2} width={"18"} height={"18"} />
+                                        </button>
                                     </div>
                                 </div>
                                 { platform_rows }
