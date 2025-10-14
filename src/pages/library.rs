@@ -129,6 +129,7 @@ pub fn library_page() -> Html {
                         let on_platform_delete = {
                             let done_rows = done_rows.clone();
                             let links = platform_links.clone();
+                            let plat_for_backend = plat_label.clone();
                             Callback::from(move |e: MouseEvent| {
                                 e.prevent_default();
                                 e.stop_propagation();
@@ -139,13 +140,10 @@ pub fn library_page() -> Html {
                                     .filter(|r| !links.contains(&r.link))
                                     .collect();
                                 done_rows.set(filtered);
-                                // backend deletes
-                                let links_for_backend = links.clone();
+                                // backend delete honoring delete mode
                                 spawn_local(async move {
-                                    for l in links_for_backend.into_iter() {
-                                        let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "link": l })).unwrap();
-                                        let _ = invoke("delete_library_item", args).await;
-                                    }
+                                    let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "platform": plat_for_backend })).unwrap();
+                                    let _ = invoke("delete_rows_by_platform", args).await;
                                 });
                             })
                         };
@@ -186,6 +184,9 @@ pub fn library_page() -> Html {
                                             let on_delete_collection = {
                                                 let done_rows = done_rows.clone();
                                                 let links = links_for_collection.clone();
+                                                let plat_for_backend = plat_label.clone();
+                                                let handle_for_backend = handle.clone();
+                                                let typ_for_backend = typ_str.clone();
                                                 Callback::from(move |e: MouseEvent| {
                                                     e.prevent_default();
                                                     e.stop_propagation();
@@ -195,12 +196,14 @@ pub fn library_page() -> Html {
                                                         .filter(|r| !links.contains(&r.link))
                                                         .collect();
                                                     done_rows.set(filtered);
-                                                    let links_for_backend = links.clone();
+                                                    // backend delete honoring delete mode
                                                     spawn_local(async move {
-                                                        for l in links_for_backend.into_iter() {
-                                                            let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "link": l })).unwrap();
-                                                            let _ = invoke("delete_library_item", args).await;
-                                                        }
+                                                        let args = serde_wasm_bindgen::to_value(&serde_json::json!({
+                                                            "platform": plat_for_backend,
+                                                            "handle": handle_for_backend,
+                                                            "origin": typ_for_backend,
+                                                        })).unwrap();
+                                                        let _ = invoke("delete_rows_by_collection", args).await;
                                                     });
                                                 })
                                             };
@@ -264,11 +267,11 @@ pub fn library_page() -> Html {
                                                                                             .collect();
                                                                                         done_rows.set(filtered);
 
-                                                                                        // Backend delete
+                                                                                        // Backend delete honoring delete mode
                                                                                         let link_for_backend = link.clone();
                                                                                         spawn_local(async move {
                                                                                             let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "link": link_for_backend })).unwrap();
-                                                                                            let _ = invoke("delete_library_item", args).await;
+                                                                                            let _ = invoke("delete_rows_by_link", args).await;
                                                                                         });
                                                                                     })
                                                                                 };

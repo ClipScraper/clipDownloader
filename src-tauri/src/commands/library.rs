@@ -123,12 +123,16 @@ pub async fn delete_library_item(link: String) -> Result<(), String> {
 
     let (id, path) = some.ok_or_else(|| "no library item found for link".to_string())?;
 
-    // Best-effort file delete first
-    if !path.is_empty() && path != "unknown_path" {
-        if let Err(e) = fs::remove_file(&path) {
-            // If it doesn't exist, that's fine; otherwise surface error
-            if std::io::ErrorKind::NotFound != e.kind() {
-                return Err(format!("failed to delete file: {e}"));
+    // Respect delete mode
+    let mode = crate::settings::load_settings().delete_mode;
+    if matches!(mode, crate::database::DeleteMode::Hard) {
+        // Best-effort file delete first
+        if !path.is_empty() && path != "unknown_path" {
+            if let Err(e) = fs::remove_file(&path) {
+                // If it doesn't exist, that's fine; otherwise surface error
+                if std::io::ErrorKind::NotFound != e.kind() {
+                    return Err(format!("failed to delete file: {e}"));
+                }
             }
         }
     }

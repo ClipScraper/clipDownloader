@@ -14,8 +14,13 @@ pub enum OnDuplicate {
 pub struct Settings {
     pub download_directory: String,
     pub on_duplicate: OnDuplicate,
+    pub delete_mode: DeleteMode,
     pub debug_logs: bool,
 }
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum DeleteMode { Soft, Hard }
 
 #[wasm_bindgen]
 extern "C" {
@@ -93,6 +98,16 @@ pub fn settings_page() -> Html {
         })
     };
 
+    let on_delete_mode_change = {
+        let settings = settings.clone();
+        Callback::from(move |e: Event| {
+            let value = e.target_unchecked_into::<web_sys::HtmlSelectElement>().value();
+            let mut s = (*settings).clone();
+            s.delete_mode = if value == "hard" { DeleteMode::Hard } else { DeleteMode::Soft };
+            settings.set(s);
+        })
+    };
+
     let on_save = {
         let settings = settings.clone();
         Callback::from(move |_| {
@@ -138,6 +153,14 @@ pub fn settings_page() -> Html {
                 </div>
 
                 <div class="form-group row">
+                    <label for="delete-mode">{"Delete behavior"}</label>
+                    <select id="delete-mode" onchange={on_delete_mode_change}>
+                        <option value="soft" selected={settings.delete_mode == DeleteMode::Soft}>{"Soft delete (remove from library only)"}</option>
+                        <option value="hard" selected={settings.delete_mode == DeleteMode::Hard}>{"Hard delete (remove files from disk)"}</option>
+                    </select>
+                </div>
+
+                <div class="form-group row">
                     <label for="debug-logs">{"Activate debug logs"}</label>
                     <input type="checkbox" id="debug-logs" checked={settings.debug_logs} onchange={on_debug_logs_change} />
                 </div>
@@ -155,6 +178,7 @@ impl Default for Settings {
         Self {
             download_directory: String::from(""),
             on_duplicate: OnDuplicate::CreateNew,
+            delete_mode: DeleteMode::Soft,
             debug_logs: false,
         }
     }

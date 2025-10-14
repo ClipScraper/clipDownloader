@@ -143,11 +143,18 @@ impl From<String> for OnDuplicate {
 }
 
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum DeleteMode {
+    Soft,
+    Hard,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
     pub id: Option<i64>,
     pub download_directory: String,
     pub on_duplicate: OnDuplicate,
+    pub delete_mode: DeleteMode,
     pub debug_logs: bool,
 }
 
@@ -208,6 +215,33 @@ impl Database {
     pub fn delete_row_by_id(&self, id: i64) -> Result<usize> {
         let n = self.conn.execute("DELETE FROM downloads WHERE id=?1", [id])?;
         Ok(n)
+    }
+
+    /// Utility: ids and paths for all rows under a platform.
+    pub fn list_ids_and_paths_by_platform(&self, platform: &str) -> Result<Vec<(i64, String)>> {
+        let mut stmt = self.conn.prepare("SELECT id, path FROM downloads WHERE platform=?1")?;
+        let mut rows = stmt.query([platform])?;
+        let mut v = Vec::new();
+        while let Some(r) = rows.next()? { v.push((r.get(0)?, r.get(1)?)); }
+        Ok(v)
+    }
+
+    /// Utility: ids and paths for all rows in a collection.
+    pub fn list_ids_and_paths_by_collection(&self, platform: &str, handle: &str, origin: &str) -> Result<Vec<(i64, String)>> {
+        let mut stmt = self.conn.prepare("SELECT id, path FROM downloads WHERE platform=?1 AND user_handle=?2 AND origin=?3")?;
+        let mut rows = stmt.query([platform, handle, origin])?;
+        let mut v = Vec::new();
+        while let Some(r) = rows.next()? { v.push((r.get(0)?, r.get(1)?)); }
+        Ok(v)
+    }
+
+    /// Utility: ids and paths for all rows matching a link (any status).
+    pub fn list_ids_and_paths_by_link(&self, link: &str) -> Result<Vec<(i64, String)>> {
+        let mut stmt = self.conn.prepare("SELECT id, path FROM downloads WHERE link=?1")?;
+        let mut rows = stmt.query([link])?;
+        let mut v = Vec::new();
+        while let Some(r) = rows.next()? { v.push((r.get(0)?, r.get(1)?)); }
+        Ok(v)
     }
 
     fn get_db_path() -> Result<PathBuf> {
