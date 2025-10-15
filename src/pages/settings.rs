@@ -155,8 +155,12 @@ pub fn settings_page() -> Html {
                 <div class="form-group row">
                     <label for="delete-mode">{"Delete behavior"}</label>
                     <select id="delete-mode" onchange={on_delete_mode_change}>
-                        <option value="soft" selected={settings.delete_mode == DeleteMode::Soft}>{"Soft delete (remove from library only)"}</option>
-                        <option value="hard" selected={settings.delete_mode == DeleteMode::Hard}>{"Hard delete (remove files from disk)"}</option>
+                        <option value="soft" selected={settings.delete_mode == DeleteMode::Soft}>
+                            {"Soft delete (remove from library only)"}
+                        </option>
+                        <option value="hard" selected={settings.delete_mode == DeleteMode::Hard}>
+                            {"Hard delete (remove files from disk)"}
+                        </option>
                     </select>
                 </div>
 

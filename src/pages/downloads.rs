@@ -1,5 +1,4 @@
 use wasm_bindgen::prelude::*;
-use wasm_bindgen_futures::spawn_local;
 use yew::prelude::*;
 use yew_icons::{Icon, IconId};
 use crate::types::{ClipRow, MediaKind, platform_str, content_type_str, Platform, ContentType};
@@ -37,23 +36,6 @@ fn url_after_domain(url: &str) -> String {
         Some(i) => no_scheme[i + 1..].to_string(),
         None => String::new(),
     }
-}
-
-fn tik_tok_handle_from_url(url: &str) -> Option<String> {
-    let tail = url_after_domain(url);
-    if let Some(idx) = tail.find('@') {
-        let rest = &tail[idx + 1..];
-        let handle = rest.split('/').next().unwrap_or("");
-        if !handle.is_empty() { return Some(handle.to_string()); }
-    }
-    None
-}
-
-fn instagram_handle_from_url(url: &str) -> Option<String> {
-    let tail = url_after_domain(url);
-    let mut it = tail.split('/');
-    let first = it.next().unwrap_or("");
-    if !first.is_empty() && first != "p" && first != "reel" { Some(first.to_string()) } else { None }
 }
 
 fn last_two_path_segments(url: &str) -> String {

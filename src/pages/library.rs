@@ -140,9 +140,10 @@ pub fn library_page() -> Html {
                                     .filter(|r| !links.contains(&r.link))
                                     .collect();
                                 done_rows.set(filtered);
-                                // backend delete honoring delete mode
+                                // backend delete honoring delete mode (clone so handler stays Fn)
+                                let p = plat_for_backend.clone();
                                 spawn_local(async move {
-                                    let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "platform": plat_for_backend })).unwrap();
+                                    let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "platform": p })).unwrap();
                                     let _ = invoke("delete_rows_by_platform", args).await;
                                 });
                             })
@@ -197,11 +198,14 @@ pub fn library_page() -> Html {
                                                         .collect();
                                                     done_rows.set(filtered);
                                                     // backend delete honoring delete mode
+                                                    let p = plat_for_backend.clone();
+                                                    let h = handle_for_backend.clone();
+                                                    let t = typ_for_backend.clone();
                                                     spawn_local(async move {
                                                         let args = serde_wasm_bindgen::to_value(&serde_json::json!({
-                                                            "platform": plat_for_backend,
-                                                            "handle": handle_for_backend,
-                                                            "origin": typ_for_backend,
+                                                            "platform": p,
+                                                            "handle": h,
+                                                            "origin": t,
                                                         })).unwrap();
                                                         let _ = invoke("delete_rows_by_collection", args).await;
                                                     });
