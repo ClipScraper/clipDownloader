@@ -47,9 +47,19 @@ pub fn run() {
             commands::list::move_link_to_queue,
             commands::list::move_collection_to_queue,
             commands::list::move_platform_to_queue,
+            commands::list::delete_rows_by_platform,
+            commands::list::delete_rows_by_collection,
 
             // FRONTEND LOGGING
             commands::log::frontend_log,
+
+            // NEW: Library item actions
+            commands::library::open_file_for_link,
+            commands::library::open_folder_for_link,
+            commands::library::open_platform_folder,
+            commands::library::open_collection_folder,
+            commands::library::delete_library_item,
+            commands::list::delete_rows_by_link,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

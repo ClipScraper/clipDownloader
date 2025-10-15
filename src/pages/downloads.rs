@@ -1,7 +1,14 @@
+use wasm_bindgen::prelude::*;
 use yew::prelude::*;
 use yew_icons::{Icon, IconId};
 use crate::types::{ClipRow, MediaKind, platform_str, content_type_str, Platform, ContentType};
 use crate::app::{DeleteItem, MoveItem};
+
+#[wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen(js_namespace = ["window", "__TAURI__", "core"])]
+    async fn invoke(cmd: &str, args: JsValue) -> JsValue;
+}
 
 #[derive(Properties, PartialEq, Clone)]
 pub struct Props {
@@ -29,23 +36,6 @@ fn url_after_domain(url: &str) -> String {
         Some(i) => no_scheme[i + 1..].to_string(),
         None => String::new(),
     }
-}
-
-fn tik_tok_handle_from_url(url: &str) -> Option<String> {
-    let tail = url_after_domain(url);
-    if let Some(idx) = tail.find('@') {
-        let rest = &tail[idx + 1..];
-        let handle = rest.split('/').next().unwrap_or("");
-        if !handle.is_empty() { return Some(handle.to_string()); }
-    }
-    None
-}
-
-fn instagram_handle_from_url(url: &str) -> Option<String> {
-    let tail = url_after_domain(url);
-    let mut it = tail.split('/');
-    let first = it.next().unwrap_or("");
-    if !first.is_empty() && first != "p" && first != "reel" { Some(first.to_string()) } else { None }
 }
 
 fn last_two_path_segments(url: &str) -> String {
@@ -181,6 +171,12 @@ pub fn downloads_page(props: &Props) -> Html {
                                         "youtube" => Platform::Youtube,
                                         _ => Platform::Tiktok,
                                     };
+                                    // Backend deletion honoring delete mode
+                                    let platform_str_for_backend = plat_label.clone();
+                                    wasm_bindgen_futures::spawn_local(async move {
+                                        let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "platform": platform_str_for_backend })).unwrap();
+                                        let _ = invoke("delete_rows_by_platform", args).await;
+                                    });
                                     Callback::from(move |e: MouseEvent| {
                                         e.prevent_default();
                                         e.stop_propagation();
@@ -227,6 +223,18 @@ pub fn downloads_page(props: &Props) -> Html {
                                                         let plat = plat.clone();
                                                         let handle = handle.clone();
                                                         let ctype = ctype.clone();
+                                                        // Backend deletion honoring delete mode
+                                                        let plat_label_s = plat_label.clone();
+                                                        let handle_s = handle.clone();
+                                                        let typ_s = typ_str.clone();
+                                                        wasm_bindgen_futures::spawn_local(async move {
+                                                            let args = serde_wasm_bindgen::to_value(&serde_json::json!({
+                                                                "platform": plat_label_s,
+                                                                "handle": handle_s,
+                                                                "origin": typ_s,
+                                                            })).unwrap();
+                                                            let _ = invoke("delete_rows_by_collection", args).await;
+                                                        });
                                                         Callback::from(move |e: MouseEvent| {
                                                             e.prevent_default();
                                                             e.stop_propagation();
@@ -300,6 +308,14 @@ pub fn downloads_page(props: &Props) -> Html {
                                                                                         let on_delete_row = {
                                                                                             let on_delete = on_delete_prop.clone();
                                                                                             let link = row.link.clone();
+                                                                                            // Backend delete honoring delete mode (delete a single link row in done/backlog/queue is always safe)
+                                                                                            wasm_bindgen_futures::spawn_local({
+                                                                                                let link_for_backend = link.clone();
+                                                                                                async move {
+                                                                                                    let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "link": link_for_backend })).unwrap();
+                                                                                                    let _ = invoke("delete_rows_by_link", args).await;
+                                                                                                }
+                                                                                            });
                                                                                             Callback::from(move |e: MouseEvent| {
                                                                                                 e.prevent_default();
                                                                                                 e.stop_propagation();

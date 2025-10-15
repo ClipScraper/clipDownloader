@@ -6,3 +6,4 @@ pub mod settings_cmd;
 pub mod import;
 pub mod list;
 pub mod log;
+pub mod library;

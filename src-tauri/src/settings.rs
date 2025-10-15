@@ -1,4 +1,4 @@
-use crate::database::{OnDuplicate, Settings};
+use crate::database::{OnDuplicate, Settings, DeleteMode};
 use std::{fs, path::{Path, PathBuf}};
 use uuid::Uuid;
 
@@ -20,6 +20,7 @@ impl Default for Settings {
             id: None,
             download_directory: default_download_dir().to_string_lossy().to_string(),
             on_duplicate: OnDuplicate::CreateNew,
+            delete_mode: DeleteMode::Soft,
             debug_logs: false,
         }
     }
@@ -126,6 +127,7 @@ pub fn save_settings(settings: &Settings) -> Result<(), String> {
         id: settings.id,
         download_directory: final_dir,
         on_duplicate: settings.on_duplicate.clone(),
+        delete_mode: settings.delete_mode.clone(),
         debug_logs: settings.debug_logs,
     };
 

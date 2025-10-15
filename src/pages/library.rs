@@ -97,7 +97,7 @@ pub fn library_page() -> Html {
     }
 
     html! {
-        <main class="container">
+        <main class="container downloads library">
             <h1>{"Library"}</h1>
             <div class="summary">
                 {
@@ -119,6 +119,49 @@ pub fn library_page() -> Html {
                         let collections_count = col_map.len();
                         let items_count: usize = col_map.values().map(|v| v.len()).sum();
 
+                        // Gather links under this platform for actions
+                        let platform_links: Vec<String> = col_map
+                            .values()
+                            .flat_map(|rs| rs.iter().map(|r| r.link.clone()))
+                            .collect();
+                        let first_platform_link: Option<String> = platform_links.get(0).cloned();
+
+                        let on_platform_delete = {
+                            let done_rows = done_rows.clone();
+                            let links = platform_links.clone();
+                            let plat_for_backend = plat_label.clone();
+                            Callback::from(move |e: MouseEvent| {
+                                e.prevent_default();
+                                e.stop_propagation();
+                                // optimistic UI update
+                                let filtered: Vec<ClipRow> = (*done_rows)
+                                    .clone()
+                                    .into_iter()
+                                    .filter(|r| !links.contains(&r.link))
+                                    .collect();
+                                done_rows.set(filtered);
+                                // backend delete honoring delete mode (clone so handler stays Fn)
+                                let p = plat_for_backend.clone();
+                                spawn_local(async move {
+                                    let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "platform": p })).unwrap();
+                                    let _ = invoke("delete_rows_by_platform", args).await;
+                                });
+                            })
+                        };
+
+                        let on_platform_open_folder = {
+                            let platform = plat_label.clone();
+                            Callback::from(move |e: MouseEvent| {
+                                e.prevent_default();
+                                e.stop_propagation();
+                                let p = platform.clone();
+                                spawn_local(async move {
+                                    let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "platform": p })).unwrap();
+                                    let _ = invoke("open_platform_folder", args).await;
+                                });
+                            })
+                        };
+
                         let platform_rows = if is_open {
                             html!{
                                 <div>
@@ -135,6 +178,61 @@ pub fn library_page() -> Html {
                                                     expanded_collections.set(set);
                                                 })
                                             };
+                                            // Per-collection actions (folder + delete)
+                                            let links_for_collection: Vec<String> = rows.iter().map(|r| r.link.clone()).collect();
+                                            let first_collection_link: Option<String> = links_for_collection.get(0).cloned();
+
+                                            let on_delete_collection = {
+                                                let done_rows = done_rows.clone();
+                                                let links = links_for_collection.clone();
+                                                let plat_for_backend = plat_label.clone();
+                                                let handle_for_backend = handle.clone();
+                                                let typ_for_backend = typ_str.clone();
+                                                Callback::from(move |e: MouseEvent| {
+                                                    e.prevent_default();
+                                                    e.stop_propagation();
+                                                    let filtered: Vec<ClipRow> = (*done_rows)
+                                                        .clone()
+                                                        .into_iter()
+                                                        .filter(|r| !links.contains(&r.link))
+                                                        .collect();
+                                                    done_rows.set(filtered);
+                                                    // backend delete honoring delete mode
+                                                    let p = plat_for_backend.clone();
+                                                    let h = handle_for_backend.clone();
+                                                    let t = typ_for_backend.clone();
+                                                    spawn_local(async move {
+                                                        let args = serde_wasm_bindgen::to_value(&serde_json::json!({
+                                                            "platform": p,
+                                                            "handle": h,
+                                                            "origin": t,
+                                                        })).unwrap();
+                                                        let _ = invoke("delete_rows_by_collection", args).await;
+                                                    });
+                                                })
+                                            };
+
+                                            let on_open_collection_folder = {
+                                                let plat = plat_label.clone();
+                                                let handle = handle.clone();
+                                                let typ = typ_str.clone();
+                                                Callback::from(move |e: MouseEvent| {
+                                                    e.prevent_default();
+                                                    e.stop_propagation();
+                                                    let p = plat.clone();
+                                                    let h = handle.clone();
+                                                    let t = typ.clone();
+                                                    spawn_local(async move {
+                                                        let args = serde_wasm_bindgen::to_value(&serde_json::json!({
+                                                            "platform": p,
+                                                            "handle": h,
+                                                            "content_type": t,
+                                                        })).unwrap();
+                                                        let _ = invoke("open_collection_folder", args).await;
+                                                    });
+                                                })
+                                            };
+
                                             html!{
                                                 <div class="collection-block" key={col_key.clone()}>
                                                     <div class="collection-item" onclick={on_col_click}>
@@ -143,6 +241,12 @@ pub fn library_page() -> Html {
                                                         </div>
                                                         <div class="item-right">
                                                             <span>{ format!("{} items", rows.len()) }</span>
+                                                            <button class="icon-btn" type_="button" title="Show in folder" onclick={on_open_collection_folder}>
+                                                                <Icon icon_id={IconId::LucideFolder} width={"18"} height={"18"} />
+                                                            </button>
+                                                            <button class="icon-btn" type_="button" title="Delete" onclick={on_delete_collection}>
+                                                                <Icon icon_id={IconId::LucideTrash2} width={"18"} height={"18"} />
+                                                            </button>
                                                         </div>
                                                     </div>
                                                     {
@@ -152,6 +256,58 @@ pub fn library_page() -> Html {
                                                                     <ul class="rows">
                                                                         {
                                                                             for rows.into_iter().map(|row| {
+                                                                                // Delete callback: optimistic UI update + backend delete
+                                                                                let on_delete_row = {
+                                                                                    let done_rows = done_rows.clone();
+                                                                                    let link = row.link.clone();
+                                                                                    Callback::from(move |e: MouseEvent| {
+                                                                                        e.prevent_default();
+                                                                                        e.stop_propagation();
+
+                                                                                        // Optimistic UI removal
+                                                                                        let filtered: Vec<ClipRow> = (*done_rows).clone()
+                                                                                            .into_iter()
+                                                                                            .filter(|r| r.link != link)
+                                                                                            .collect();
+                                                                                        done_rows.set(filtered);
+
+                                                                                        // Backend delete honoring delete mode
+                                                                                        let link_for_backend = link.clone();
+                                                                                        spawn_local(async move {
+                                                                                            let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "link": link_for_backend })).unwrap();
+                                                                                            let _ = invoke("delete_rows_by_link", args).await;
+                                                                                        });
+                                                                                    })
+                                                                                };
+
+                                                                                // Open file with default app
+                                                                                let on_open_file = {
+                                                                                    let link = row.link.clone();
+                                                                                    Callback::from(move |e: MouseEvent| {
+                                                                                        e.prevent_default();
+                                                                                        e.stop_propagation();
+                                                                                        let l = link.clone();
+                                                                                        spawn_local(async move {
+                                                                                            let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "link": l })).unwrap();
+                                                                                            let _ = invoke("open_file_for_link", args).await;
+                                                                                        });
+                                                                                    })
+                                                                                };
+
+                                                                                // Reveal file in folder
+                                                                                let on_open_folder = {
+                                                                                    let link = row.link.clone();
+                                                                                    Callback::from(move |e: MouseEvent| {
+                                                                                        e.prevent_default();
+                                                                                        e.stop_propagation();
+                                                                                        let l = link.clone();
+                                                                                        spawn_local(async move {
+                                                                                            let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "link": l })).unwrap();
+                                                                                            let _ = invoke("open_folder_for_link", args).await;
+                                                                                        });
+                                                                                    })
+                                                                                };
+
                                                                                 html!{
                                                                                     <li class="row-line" key={row.link.clone()}>
                                                                                         {
@@ -163,6 +319,17 @@ pub fn library_page() -> Html {
                                                                                         <a class="link-text" href={row.link.clone()} target="_blank">
                                                                                             { collection_title(&row) }{" - "}{ item_label_for_row(&row) }
                                                                                         </a>
+                                                                                        <div class="row-actions">
+                                                                                            <button class="icon-btn" type_="button" title="Play" onclick={on_open_file}>
+                                                                                                <Icon icon_id={IconId::LucidePlay} width={"18"} height={"18"} />
+                                                                                            </button>
+                                                                                            <button class="icon-btn" type_="button" title="Show in folder" onclick={on_open_folder}>
+                                                                                                <Icon icon_id={IconId::LucideFolder} width={"18"} height={"18"} />
+                                                                                            </button>
+                                                                                            <button class="icon-btn" type_="button" title="Delete" onclick={on_delete_row}>
+                                                                                                <Icon icon_id={IconId::LucideTrash2} width={"18"} height={"18"} />
+                                                                                            </button>
+                                                                                        </div>
                                                                                     </li>
                                                                                 }
                                                                             })
@@ -189,6 +356,12 @@ pub fn library_page() -> Html {
                                     </div>
                                     <div class="item-right">
                                         <span>{ format!("{} collections | {} items", collections_count, items_count) }</span>
+                                        <button class="icon-btn" type_="button" title="Show in folder" onclick={on_platform_open_folder}>
+                                            <Icon icon_id={IconId::LucideFolder} width={"18"} height={"18"} />
+                                        </button>
+                                        <button class="icon-btn" type_="button" title="Delete" onclick={on_platform_delete}>
+                                            <Icon icon_id={IconId::LucideTrash2} width={"18"} height={"18"} />
+                                        </button>
                                     </div>
                                 </div>
                                 { platform_rows }

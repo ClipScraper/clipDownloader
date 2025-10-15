@@ -63,6 +63,14 @@
   align-items: center;
   gap: 10px;
   height: 40px;
+  position: relative;
+}
+.row-line:hover .row-actions { visibility: visible; opacity: 1; }
+
+/* Library wants row actions always visible */
+.container.library .row-actions {
+  visibility: visible;
+  opacity: 1;
 }
 
 /* Make the link text take remaining space and ellipsis,
@@ -83,8 +91,24 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-left: auto;           /* ✅ push to far right */
   flex-shrink: 0;
+
+  /* Position right */
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+
+  /* Fade in */
+  visibility: hidden;
+  opacity: 0;
+  transition: opacity 0.2s ease-in-out;
+
+  /* Style */
+  background: var(--bg-color);
+  border-radius: 8px;
+  padding: 0 4px;
+  height: 36px;
 }
 
 /* Shared icon button */
