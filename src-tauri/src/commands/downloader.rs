@@ -10,15 +10,6 @@ fn ensure_parent_dir(p: &Path) {
     }
 }
 
-fn sanitize_for_fs<S: Into<String>>(s: S) -> String {
-    s.into()
-        .replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|'], "_")
-        .replace(['\n', '\r', '\t'], " ")
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
 /// Returns (Some(final_path), "Created new"/"Overwrote") or (None, "Skipped")
 fn move_with_policy(src: &Path, dest_dir: &Path, file_name: &str, on_duplicate: &crate::database::OnDuplicate) -> io::Result<(Option<String>, &'static str)> {
     // split name
@@ -103,53 +94,6 @@ fn move_tmp_into_site_dir(tmp: &Path, dest_dir: &Path, on_duplicate: &crate::dat
     }
 
     Ok((moved_any, finals))
-}
-
-fn tiktok_handle_from_url(url: &str) -> Option<String> {
-    if let Some(idx) = url.find("tiktok.com/@") {
-        let tail = &url[idx + "tiktok.com/@".len()..];
-        let handle = tail.split(['/','?','&']).next().unwrap_or("").trim();
-        if !handle.is_empty() { return Some(handle.to_string()); }
-    }
-    None
-}
-fn youtube_handle_from_url(url: &str) -> Option<String> {
-    if let Some(idx) = url.find("youtube.com/@") {
-        let tail = &url[idx + "youtube.com/@".len()..];
-        let handle = tail.split(['/','?','&']).next().unwrap_or("").trim();
-        if !handle.is_empty() { return Some(handle.to_string()); }
-    }
-    None
-}
-
-/// Decide the **collection directory** for a given URL based on DB.
-/// Folder is exactly: `{origin} - {user_handle}` under the global download root.
-fn resolve_collection_dir(download_root: &Path, link: &str) -> PathBuf {
-    let mut origin = "manual".to_string();
-    let mut handle = "Unknown".to_string();
-
-    if let Ok(db) = crate::database::Database::new() {
-        if let Ok(Some(info)) = db.collection_for_link(link) {
-            origin = info.origin;
-            handle = info.user_handle;
-        } else {
-            if link.contains("instagram.com/") {
-                if let (Some(h), _) = ig_handle_and_id(link) {
-                    handle = h;
-                }
-                origin = "recommendation".into(); // fallback token
-            } else if link.contains("tiktok.com/") {
-                if let Some(h) = tiktok_handle_from_url(link) { handle = h; }
-                origin = "recommendation".into();
-            } else if link.contains("youtube.com/") || link.contains("youtu.be/") {
-                if let Some(h) = youtube_handle_from_url(link) { handle = h; }
-                origin = "recommendation".into();
-            }
-        }
-    }
-
-    let label = crate::database::Database::collection_folder_label(&origin, &handle);
-    download_root.join(sanitize_for_fs(label))
 }
 
 #[tauri::command]

@@ -27,14 +27,6 @@ fn log_invoke_err(cmd: &str, e: JsValue) {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Page {Home, Downloads, Library, Settings, Extension, Sponsor}
 
-fn log_json(label: &str, v: &JsValue) {
-    let s = js_sys::JSON::stringify(v)
-        .ok()
-        .and_then(|j| j.as_string())
-        .unwrap_or_else(|| "<unstringifiable>".to_string());
-    web_sys::console::log_2(&JsValue::from_str(label), &JsValue::from_str(&s));
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Drop de-dupe guard
 thread_local! {

@@ -109,8 +109,3 @@ fn prune_old_logs() {
         }
     }
 }
-
-/// Expose path to current log file (handy for "Open logs" menu/command).
-pub fn current_log_path() -> PathBuf {
-    log_dir().join("app.log")
-}
