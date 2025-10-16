@@ -12,6 +12,7 @@ pub enum OnDuplicate {
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq)]
 pub struct Settings {
+    pub id: Option<i64>,
     pub download_directory: String,
     pub on_duplicate: OnDuplicate,
     pub delete_mode: DeleteMode,
@@ -19,7 +20,6 @@ pub struct Settings {
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq)]
-#[serde(rename_all = "lowercase")]
 pub enum DeleteMode { Soft, Hard }
 
 #[wasm_bindgen]
@@ -146,21 +146,23 @@ pub fn settings_page() -> Html {
                 <div class="form-group row">
                     <label for="on-duplicate">{"If duplicate name"}</label>
                     <select id="on-duplicate" onchange={on_duplicate_change}>
-                        <option value="create_new" selected={settings.on_duplicate == OnDuplicate::CreateNew}>{"Create new file"}</option>
-                        <option value="overwrite" selected={settings.on_duplicate == OnDuplicate::Overwrite}>{"Overwrite file"}</option>
-                        <option value="do_nothing" selected={settings.on_duplicate == OnDuplicate::DoNothing}>{"Do nothing"}</option>
+                        <option value="CreateNew" selected={settings.on_duplicate == OnDuplicate::CreateNew}>{"Create new file"}</option>
+                        <option value="Overwrite" selected={settings.on_duplicate == OnDuplicate::Overwrite}>{"Overwrite file"}</option>
+                        <option value="DoNothing" selected={settings.on_duplicate == OnDuplicate::DoNothing}>{"Do nothing"}</option>
                     </select>
                 </div>
 
-                <label for="delete-mode">{"Delete behavior"}</label>
-                <select id="delete-mode" onchange={on_delete_mode_change}>
-                    <option value="soft" selected={settings.delete_mode == DeleteMode::Soft}>
-                        {"Soft delete (remove from library only)"}
-                    </option>
-                    <option value="hard" selected={settings.delete_mode == DeleteMode::Hard}>
-                        {"Hard delete (remove files from disk)"}
-                    </option>
-                </select>
+                <div class="form-group row">
+                    <label for="delete-mode">{"Delete behavior"}</label>
+                    <select id="delete-mode" onchange={on_delete_mode_change}>
+                        <option value="Soft" selected={settings.delete_mode == DeleteMode::Soft}>
+                            {"Soft delete (remove from library only)"}
+                        </option>
+                        <option value="Hard" selected={settings.delete_mode == DeleteMode::Hard}>
+                            {"Hard delete (remove files from disk)"}
+                        </option>
+                    </select>
+                </div>
 
                 <div class="form-group row">
                     <label for="debug-logs">{"Activate debug logs"}</label>
@@ -178,6 +180,7 @@ pub fn settings_page() -> Html {
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            id: None,
             download_directory: String::from(""),
             on_duplicate: OnDuplicate::CreateNew,
             delete_mode: DeleteMode::Soft,

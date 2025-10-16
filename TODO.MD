@@ -1,3 +1,13 @@
+PRIORITY:
+---------
+
+- button back to backlog
+- button options mp4/mp3
+- include binaries
+
+---------
+
+
 - handle errors
 - get collections from extension
 - add tests
@@ -30,19 +40,6 @@ make sure image/videos have same settings code
 - instagram name doesn't match exactly: eg https://www.instagram.com/p/DEZ5PboSW-l/ -> CuteyTaoTao🥰❤️🤩 [DEZ5PboSW-l].mp4 instead of dudunatao
 - keeps downlaod going even after leaving /download page
 
-BUG youtube:
-2025-10-13T05:10:25.707690Z  INFO frontend: 15: download_complete context={"message":"Failed to download with any available browser's cookies.","success":false}
-2025-10-13T05:10:25.766559Z  INFO frontend: 15: queue_autostart context={"url":"https://www.youtube.com/watch?v=NgZJyu_Qk7Y&list=WL&index=325&pp=gAQBiAQB0gcJCesJAYcqIYzv"}
-2025-10-13T05:10:25.768973Z  INFO frontend: 15: home_download_complete context={"message":"Failed to download with any available browser's cookies.","success":false}
-2025-10-13T05:10:25.769019Z  INFO frontend: 15: home_download_complete context={"message":"Failed to download with any available browser's cookies.","success":false}
-2025-10-13T05:10:25.769138Z  INFO frontend: 15: download_complete context={"message":"Failed to download with any available browser's cookies.","success":false}
-2025-10-13T05:10:25.827024Z  INFO frontend: 15: queue_autostart context={"url":"https://www.youtube.com/watch?v=nH4qjmP2KEE&list=WL&index=201&pp=gAQBiAQB"}
-2025-10-13T05:10:25.829256Z  INFO frontend: 15: home_download_complete context={"message":"Failed to download with any available browser's cookies.","success":false}
-2025-10-13T05:10:25.829312Z  INFO frontend: 15: home_download_complete context={"message":"Failed to download with any available browser's cookies.","success":false}
-2025-10-13T05:10:25.829376Z  INFO frontend: 15: download_complete context={"message":"Failed to download with any available browser's cookies.","success":false}
-2025-10-13T05:10:25.888053Z  INFO frontend: 15: queue_autostart context={"url":"https://www.youtube.com/watch?v=NIgrGqmoeHs&list=WL&index=26&pp=gAQBiAQB"}
-2025-10-13T05:10:25.890906Z  INFO frontend: 15: home_download_complete context={"message":"Failed to download with any available browser's cookies.","success":false}
-2025-10-13T05:10:25.890946Z  INFO frontend: 15: home_download_complete context={"message":"Failed to download with any available browser's cookies.","success":false}
 
 
 

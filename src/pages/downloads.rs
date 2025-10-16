@@ -173,14 +173,15 @@ pub fn downloads_page(props: &Props) -> Html {
                                     };
                                     // Backend deletion honoring delete mode
                                     let platform_str_for_backend = plat_label.clone();
-                                    wasm_bindgen_futures::spawn_local(async move {
-                                        let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "platform": platform_str_for_backend })).unwrap();
-                                        let _ = invoke("delete_rows_by_platform", args).await;
-                                    });
                                     Callback::from(move |e: MouseEvent| {
                                         e.prevent_default();
                                         e.stop_propagation();
-                                        on_delete.emit(DeleteItem::Platform(platform));
+                                        let platform_str_for_backend = platform_str_for_backend.clone();
+                                        wasm_bindgen_futures::spawn_local(async move {
+                                            let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "platform": platform_str_for_backend })).unwrap();
+                                            let _ = invoke("delete_rows_by_platform", args).await;
+                                        });
+                                        on_delete.emit(DeleteItem::Platform(platform.clone()));
                                     })
                                 };
 
@@ -227,17 +228,20 @@ pub fn downloads_page(props: &Props) -> Html {
                                                         let plat_label_s = plat_label.clone();
                                                         let handle_s = handle.clone();
                                                         let typ_s = typ_str.clone();
-                                                        wasm_bindgen_futures::spawn_local(async move {
-                                                            let args = serde_wasm_bindgen::to_value(&serde_json::json!({
-                                                                "platform": plat_label_s,
-                                                                "handle": handle_s,
-                                                                "origin": typ_s,
-                                                            })).unwrap();
-                                                            let _ = invoke("delete_rows_by_collection", args).await;
-                                                        });
                                                         Callback::from(move |e: MouseEvent| {
                                                             e.prevent_default();
                                                             e.stop_propagation();
+                                                            let plat_label_s = plat_label_s.clone();
+                                                            let handle_s = handle_s.clone();
+                                                            let typ_s = typ_s.clone();
+                                                            wasm_bindgen_futures::spawn_local(async move {
+                                                                let args = serde_wasm_bindgen::to_value(&serde_json::json!({
+                                                                    "platform": plat_label_s,
+                                                                    "handle": handle_s,
+                                                                    "origin": typ_s,
+                                                                })).unwrap();
+                                                                let _ = invoke("delete_rows_by_collection", args).await;
+                                                            });
                                                             on_delete.emit(DeleteItem::Collection(plat.clone(), handle.clone(), ctype.clone()));
                                                         })
                                                     };
@@ -309,16 +313,14 @@ pub fn downloads_page(props: &Props) -> Html {
                                                                                             let on_delete = on_delete_prop.clone();
                                                                                             let link = row.link.clone();
                                                                                             // Backend delete honoring delete mode (delete a single link row in done/backlog/queue is always safe)
-                                                                                            wasm_bindgen_futures::spawn_local({
-                                                                                                let link_for_backend = link.clone();
-                                                                                                async move {
-                                                                                                    let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "link": link_for_backend })).unwrap();
-                                                                                                    let _ = invoke("delete_rows_by_link", args).await;
-                                                                                                }
-                                                                                            });
                                                                                             Callback::from(move |e: MouseEvent| {
                                                                                                 e.prevent_default();
                                                                                                 e.stop_propagation();
+                                                                                                let link_for_backend = link.clone();
+                                                                                                wasm_bindgen_futures::spawn_local(async move {
+                                                                                                    let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "link": link_for_backend })).unwrap();
+                                                                                                    let _ = invoke("delete_rows_by_link", args).await;
+                                                                                                });
                                                                                                 on_delete.emit(DeleteItem::Row(link.clone()));
                                                                                             })
                                                                                         };
