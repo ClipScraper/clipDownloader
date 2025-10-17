@@ -20,7 +20,7 @@ pub async fn pick_csv_and_read(app: tauri::AppHandle) -> Result<String, String> 
         FilePath::Path(path_buf) => {
             let csv_text = std_fs::read_to_string(path_buf).map_err(|e| e.to_string())?;
 
-            match super::import::import_csv_to_db(Some(csv_text.clone()), None).await {
+            match super::import::import_csv_text(csv_text.clone()).await {
                 Ok(n) => println!("[BACKEND] [files] imported {n} rows (picker)"),
                 Err(e) => {
                     eprintln!("[BACKEND] [files] import failed: {e}");
@@ -40,7 +40,7 @@ pub async fn read_csv_from_path(path: String) -> Result<String, String> {
 
     let csv_text = std_fs::read_to_string(&path).map_err(|e| e.to_string())?;
 
-    match super::import::import_csv_to_db(Some(csv_text.clone()), None).await {
+    match super::import::import_csv_text(csv_text.clone()).await {
         Ok(n) => println!("[BACKEND] [files] imported {n} rows (drag-drop) from {}", path),
         Err(e) => {
             eprintln!("[BACKEND] [files] import failed for {path}: {e}");

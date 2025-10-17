@@ -26,12 +26,6 @@ impl Default for Settings {
     }
 }
 
-fn ensure_download_dir(dir: &str) {
-    if !dir.is_empty() {
-        let _ = fs::create_dir_all(dir);
-    }
-}
-
 fn default_download_dir() -> PathBuf {
     // Cross-platform Downloads folder (dirs::download_dir handles win/mac/linux)
     dirs::download_dir()
