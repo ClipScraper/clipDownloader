@@ -498,7 +498,7 @@ pub fn downloads_page(props: &Props) -> Html {
                     let plat_label = platform_str(&active.row.platform).to_string();
                     html!{
                         <div class="summary">
-                            <div class="rows-card">
+                            <div class="rows-card no-indent">
                                 <ul class="rows">
                                     <li class="row-line">
                                         <img class="brand-icon" src={platform_icon_src(&plat_label)} />

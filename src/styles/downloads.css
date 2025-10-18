@@ -55,6 +55,7 @@
   background-color: rgba(255,255,255,0.06);
   box-shadow: 0 2px 2px rgba(0,0,0,0.2);
 }
+.rows-card.no-indent { margin-left: 0; }
 
 /* Individual rows */
 .rows { list-style: none; padding-left: 0; margin: 0; }
@@ -84,6 +85,15 @@
   flex: 1 1 auto;              /* ✅ fill available space */
   min-width: 0;                /* allow shrinking */
   line-height: 1.1;
+}
+
+/* Reserve the rightmost 20% so text never renders under the buttons */
+.container.downloads .rows .link-text { padding-right: 40%; }
+
+/* On hover, softly fade-out the trailing text so it doesn't clash with buttons */
+.container.downloads .row-line:hover .link-text {
+  -webkit-mask-image: linear-gradient(to right, rgba(0,0,0,1) 0%, rgba(0,0,0,1) 80%, rgba(0,0,0,0) 100%);
+          mask-image: linear-gradient(to right, rgba(0,0,0,1) 0%, rgba(0,0,0,1) 80%, rgba(0,0,0,0) 100%);
 }
 
 /* Right-side action area (trash + download) */
