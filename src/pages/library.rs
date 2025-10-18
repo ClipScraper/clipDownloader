@@ -34,6 +34,7 @@ fn item_label_for_row(row: &ClipRow) -> String {
 fn platform_icon_src(p: &str) -> &'static str {
     match p {
         "instagram" => "public/instagram.webp",
+        "pinterest" => "public/pinterest.png",
         "tiktok"    => "public/tiktok.webp",
         "youtube"   => "public/youtube.webp",
         _           => "",

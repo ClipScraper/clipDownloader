@@ -84,6 +84,7 @@ fn item_label_for_row(row: &ClipRow) -> String {
 fn platform_icon_src(p: &str) -> &'static str {
     match p {
         "instagram"         => "public/instagram.webp",
+        "pinterest"         => "public/pinterest.png",
         "tiktok"            => "public/tiktok.webp",
         "youtube"           => "public/youtube.webp",
         _                   => "",
@@ -171,6 +172,7 @@ pub fn downloads_page(props: &Props) -> Html {
                                         "instagram" => Platform::Instagram,
                                         "tiktok" => Platform::Tiktok,
                                         "youtube" => Platform::Youtube,
+                                        "pinterest" => Platform::Pinterest,
                                         _ => Platform::Tiktok,
                                     };
                                     // Backend deletion honoring delete mode
@@ -193,6 +195,7 @@ pub fn downloads_page(props: &Props) -> Html {
                                         "instagram" => Platform::Instagram,
                                         "tiktok" => Platform::Tiktok,
                                         "youtube" => Platform::Youtube,
+                                        "pinterest" => Platform::Pinterest,
                                         _ => Platform::Tiktok,
                                     };
                                     Callback::from(move |e: MouseEvent| {
@@ -208,6 +211,7 @@ pub fn downloads_page(props: &Props) -> Html {
                                         "instagram" => Platform::Instagram,
                                         "tiktok" => Platform::Tiktok,
                                         "youtube" => Platform::Youtube,
+                                        "pinterest" => Platform::Pinterest,
                                         _ => Platform::Tiktok,
                                     };
                                     Callback::from(move |e: MouseEvent| {
@@ -277,6 +281,7 @@ pub fn downloads_page(props: &Props) -> Html {
                                                                         "instagram"         => Platform::Instagram,
                                                                         "tiktok"            => Platform::Tiktok,
                                                                         "youtube"           => Platform::Youtube,
+                                                                        "pinterest"         => Platform::Pinterest,
                                                                         _                   => Platform::Tiktok,
                                                                     },
                                                                     handle_s.clone(),
@@ -308,6 +313,7 @@ pub fn downloads_page(props: &Props) -> Html {
                                                                         "instagram"         => Platform::Instagram,
                                                                         "tiktok"            => Platform::Tiktok,
                                                                         "youtube"           => Platform::Youtube,
+                                                                        "pinterest"         => Platform::Pinterest,
                                                                         _                   => Platform::Tiktok,
                                                                     },
                                                                     handle_s.clone(),

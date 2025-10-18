@@ -13,6 +13,7 @@ pub enum Platform {
     Youtube,
     Tiktok,
     Instagram,
+    Pinterest,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -27,6 +28,7 @@ pub enum Origin {
     Playlist,
     Profile,
     Bookmarks,
+    Pinboard,
     Other,
     Manual,
 }
@@ -47,6 +49,8 @@ pub struct Download {
     pub user: String,
     pub origin: Origin,
     pub link: String,
+    /// Desired output format for downloader/transcoder; default="default"
+    pub output_format: OutputFormat,
     pub status: DownloadStatus,
     pub path: String,
     pub image_set_id: Option<String>,
@@ -85,6 +89,7 @@ impl From<String> for Platform {
             "youtube"       => Platform::Youtube,
             "tiktok"        => Platform::Tiktok,
             "instagram"     => Platform::Instagram,
+            "pinterest"     => Platform::Pinterest,
             _               => Platform::Youtube,               // Default fallback
         }
     }
@@ -106,6 +111,7 @@ impl From<String> for Origin {
             "playlist"          => Origin::Playlist,
             "profile"           => Origin::Profile,
             "bookmarks"         => Origin::Bookmarks,
+            "pinboard"          => Origin::Pinboard,
             "other"             => Origin::Other,
             "manual"            => Origin::Manual,
             _                   => Origin::Manual,              // Default fallback
@@ -138,6 +144,26 @@ impl From<String> for OnDuplicate {
             "create_new"        => OnDuplicate::CreateNew,
             "do_nothing"        => OnDuplicate::DoNothing,
             _                   => OnDuplicate::CreateNew,      // Default fallback
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum OutputFormat {
+    #[serde(alias = "default")]
+    Default,
+    #[serde(alias = "audio")]
+    Audio,
+    #[serde(alias = "video")]
+    Video,
+}
+
+impl From<String> for OutputFormat {
+    fn from(s: String) -> Self {
+        match s.to_lowercase().as_str() {
+            "audio" => OutputFormat::Audio,
+            "video" => OutputFormat::Video,
+            _        => OutputFormat::Default,
         }
     }
 }
@@ -267,6 +293,7 @@ impl Database {
                 user_handle TEXT NOT NULL,
                 origin TEXT NOT NULL,
                 link TEXT NOT NULL,
+                output_format TEXT NOT NULL DEFAULT 'default' CHECK (output_format IN ('default','audio','video')),
                 status TEXT NOT NULL,
                 path TEXT NOT NULL,
                 image_set_id TEXT,
@@ -310,8 +337,8 @@ impl Database {
         };
 
         self.conn.execute(
-            "INSERT INTO downloads (platform, name, media, user_handle, origin, link, status, path, image_set_id, date_added, date_downloaded)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            "INSERT INTO downloads (platform, name, media, user_handle, origin, link, output_format, status, path, image_set_id, date_added, date_downloaded)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             [
                 &format!("{:?}", download.platform).to_lowercase(),
                 &download.name,
@@ -319,6 +346,7 @@ impl Database {
                 &download.user,
                 &format!("{:?}", download.origin).to_lowercase(),
                 &download.link,
+                &format!("{:?}", download.output_format).to_lowercase(),
                 &format!("{:?}", download.status).to_lowercase(),
                 &path_value,
                 &download.image_set_id.clone().unwrap_or_default(),

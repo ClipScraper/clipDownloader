@@ -1,5 +1,5 @@
 use super::event::emit_status;
-use super::parse::{parse_multiple_filenames_from_output};
+use super::parse::parse_multiple_filenames_from_output;
 use std::{fs as std_fs, fs, io, path::{Path, PathBuf}};
 use tauri::{Manager, State};
 use walkdir::WalkDir;
@@ -138,6 +138,8 @@ pub async fn download_url(app: tauri::AppHandle, url: String, state: State<'_, c
                 } else if processed_url.contains("youtube.com") || processed_url.contains("youtu.be")
                 {
                     "youtube"
+                } else if processed_url.contains("pinterest.com") || processed_url.contains("pin.it") {
+                    "pinterest"
                 } else {
                     "other"
                 };

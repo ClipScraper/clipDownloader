@@ -41,16 +41,22 @@ pub async fn import_csv_text(csv_text: String) -> Result<u64, String> {
         let link = rec.get(4).unwrap_or("").to_string();
         if link.is_empty() { continue; }
 
-        let platform = crate::database::Platform::from(platform_s);
+        let platform = crate::database::Platform::from(platform_s.clone());
         let media = crate::database::MediaKind::from(media_s);
 
-        let origin = match typ_s.as_str() {
-            "recommendation" => crate::database::Origin::Recommendation,
-            "playlist" => crate::database::Origin::Playlist,
-            "profile" => crate::database::Origin::Profile,
-            "bookmarks" => crate::database::Origin::Bookmarks,
-            "liked" | "reposts" => crate::database::Origin::Other,
-            _ => crate::database::Origin::Other,
+        // Determine origin; special-case Pinterest "{user} - {something}" to pinboard
+        let origin = if platform_s.eq_ignore_ascii_case("pinterest") {
+            let is_pinboard = handle.contains(" - ");
+            if is_pinboard { crate::database::Origin::Pinboard } else { crate::database::Origin::Profile }
+        } else {
+            match typ_s.as_str() {
+                "recommendation" => crate::database::Origin::Recommendation,
+                "playlist" => crate::database::Origin::Playlist,
+                "profile" => crate::database::Origin::Profile,
+                "bookmarks" => crate::database::Origin::Bookmarks,
+                "liked" | "reposts" => crate::database::Origin::Other,
+                _ => crate::database::Origin::Other,
+            }
         };
 
         // Derive a sensible name from the URL per platform
@@ -65,6 +71,8 @@ pub async fn import_csv_text(csv_text: String) -> Result<u64, String> {
             super::parse::youtube_id_from_url(&link)
                 .or_else(|| super::parse::last_segment(&link))
                 .unwrap_or_else(|| "Unknown".into())
+        } else if link.contains("pinterest.com/") || link.contains("pin.it/") {
+            super::parse::last_segment(&link).unwrap_or_else(|| "Unknown".into())
         } else {
             super::parse::last_segment(&link).unwrap_or_else(|| "Unknown".into())
         };
@@ -82,6 +90,7 @@ pub async fn import_csv_text(csv_text: String) -> Result<u64, String> {
             user: handle,
             origin,
             link,
+            output_format: crate::database::OutputFormat::Default,
             status: crate::database::DownloadStatus::Backlog,
             path: String::new(),
             image_set_id: None,
