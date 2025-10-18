@@ -58,14 +58,6 @@ pub fn last_segment(url: &str) -> Option<String> {
     base.rsplit('/').next().map(|s| s.to_string()).filter(|s| !s.is_empty())
 }
 
-/// Returns (user_handle, clean_name, full_file_path)
-pub fn parse_filename_from_output(output: &str, processed_url: &str) -> (String, String, String) {
-    parse_multiple_filenames_from_output(output, processed_url, None)
-        .into_iter()
-        .next()
-        .unwrap_or_else(|| ("Unknown".to_string(), "Unknown".to_string(), "".to_string()))
-}
-
 /// Parse multiple user_handle, clean_name, and file_path from tool output
 /// Returns Vec<(user_handle, clean_name, full_file_path)>
 pub fn parse_multiple_filenames_from_output(

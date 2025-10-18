@@ -17,6 +17,10 @@ pub async fn import_csv_to_db(csv_text: Option<String>, csvText: Option<String>)
         .or(csvText)
         .ok_or_else(|| "missing argument: csv_text/csvText".to_string())?;
 
+    import_csv_text(csv_text).await
+}
+
+pub async fn import_csv_text(csv_text: String) -> Result<u64, String> {
     println!("[BACKEND] [commands/import.rs] [import_csv_to_db]");
 
     let mut rdr = csv::ReaderBuilder::new().trim(csv::Trim::All).has_headers(true).from_reader(csv_text.as_bytes());

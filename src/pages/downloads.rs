@@ -20,6 +20,7 @@ pub struct Props {
     pub on_toggle_pause: Callback<()>,
     pub on_delete: Callback<DeleteItem>,
     pub on_move_to_queue: Callback<MoveItem>,
+    pub on_move_to_backlog: Callback<crate::app::MoveBackItem>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -109,6 +110,7 @@ pub fn downloads_page(props: &Props) -> Html {
         let expanded_collections = expanded_collections.clone();
         let on_delete_prop = props.on_delete.clone();
         let on_move_prop = props.on_move_to_queue.clone();
+        let on_move_back_prop = props.on_move_to_backlog.clone();
 
         move |rows_in: Vec<ClipRow>, title: &str, enable_queue_action: bool| -> Html {
             use std::collections::{BTreeMap, HashSet};
@@ -200,6 +202,21 @@ pub fn downloads_page(props: &Props) -> Html {
                                     })
                                 };
 
+                                let on_back_platform = {
+                                    let on_move_back = on_move_back_prop.clone();
+                                    let platform = match plat_label.as_str() {
+                                        "instagram" => Platform::Instagram,
+                                        "tiktok" => Platform::Tiktok,
+                                        "youtube" => Platform::Youtube,
+                                        _ => Platform::Tiktok,
+                                    };
+                                    Callback::from(move |e: MouseEvent| {
+                                        e.prevent_default();
+                                        e.stop_propagation();
+                                        if !enable_queue_action { on_move_back.emit(crate::app::MoveBackItem::Platform(platform)); }
+                                    })
+                                };
+
                                 let platform_rows = if is_open {
                                     html! {
                                         <div>
@@ -277,6 +294,37 @@ pub fn downloads_page(props: &Props) -> Html {
                                                         })
                                                     };
 
+                                                    let on_back_collection = {
+                                                        let on_move_back = on_move_back_prop.clone();
+                                                        let plat_label_s = plat_label.clone();
+                                                        let handle_s = handle.clone();
+                                                        let typ_s = typ_str.clone();
+                                                        Callback::from(move |e: MouseEvent| {
+                                                            e.prevent_default();
+                                                            e.stop_propagation();
+                                                            if !enable_queue_action {
+                                                                on_move_back.emit(crate::app::MoveBackItem::Collection(
+                                                                    match plat_label_s.as_str() {
+                                                                        "instagram"         => Platform::Instagram,
+                                                                        "tiktok"            => Platform::Tiktok,
+                                                                        "youtube"           => Platform::Youtube,
+                                                                        _                   => Platform::Tiktok,
+                                                                    },
+                                                                    handle_s.clone(),
+                                                                    match typ_s.as_str() {
+                                                                        "liked"             => ContentType::Liked,
+                                                                        "reposts"           => ContentType::Reposts,
+                                                                        "profile"           => ContentType::Profile,
+                                                                        "bookmarks"         => ContentType::Bookmarks,
+                                                                        "playlist"          => ContentType::Playlist,
+                                                                        "recommendation"    => ContentType::Recommendation,
+                                                                        _                   => ContentType::Other,
+                                                                    }
+                                                                ));
+                                                            }
+                                                        })
+                                                    };
+
                                                     html!{
                                                         <div class="collection-block" key={col_key.clone()}>
                                                             <div class="collection-item" onclick={on_col_click}>
@@ -288,6 +336,7 @@ pub fn downloads_page(props: &Props) -> Html {
                                                                     <button class="icon-btn" type_="button" title="Delete" onclick={on_delete_collection}>
                                                                         <Icon icon_id={IconId::LucideTrash2} width={"18"} height={"18"} />
                                                                     </button>
+                                                                    { if !enable_queue_action { html!{ <button class="icon-btn" type_="button" title="Move back to backlog" onclick={on_back_collection.clone()}><Icon icon_id={IconId::LucideRotateCcw} width={"18"} height={"18"} /></button> } } else { html!{} } }
                                                                     {
                                                                         if enable_queue_action {
                                                                             html!{
@@ -346,6 +395,19 @@ pub fn downloads_page(props: &Props) -> Html {
                                                                                                     <button class="icon-btn" type_="button" title="Delete" onclick={on_delete_row}>
                                                                                                         <Icon icon_id={IconId::LucideTrash2} width={"18"} height={"18"} />
                                                                                                     </button>
+                                                                                                    { if !enable_queue_action { html!{ <button class="icon-btn" type_="button" title="Move back to backlog" onclick={
+                                                                                                        {
+                                                                                                            let on_move_back = on_move_back_prop.clone();
+                                                                                                            let link = row.link.clone();
+                                                                                                            Callback::from(move |e: MouseEvent| {
+                                                                                                                e.prevent_default();
+                                                                                                                e.stop_propagation();
+                                                                                                                on_move_back.emit(crate::app::MoveBackItem::Row(link.clone()));
+                                                                                                            })
+                                                                                                        }
+                                                                                                    }>
+                                                                                                        <Icon icon_id={IconId::LucideRotateCcw} width={"18"} height={"18"} />
+                                                                                                    </button> } } else { html!{} } }
                                                                                                     {
                                                                                                         if enable_queue_action {
                                                                                                             html!{
@@ -387,6 +449,7 @@ pub fn downloads_page(props: &Props) -> Html {
                                                 <button class="icon-btn" type_="button" title="Delete" onclick={on_delete_platform}>
                                                     <Icon icon_id={IconId::LucideTrash2} width={"18"} height={"18"} />
                                                 </button>
+                                                        { if !enable_queue_action { html!{ <button class="icon-btn" type_="button" title="Move back to backlog" onclick={on_back_platform}><Icon icon_id={IconId::LucideRotateCcw} width={"18"} height={"18"} /></button> } } else { html!{} } }
                                                 {
                                                     if enable_queue_action {
                                                         html!{

@@ -41,6 +41,32 @@ pub async fn move_platform_to_queue(platform: String) -> Result<u64, String> {
         .map_err(|e| e.to_string())?;
     Ok(n as u64)
 }
+/* ---- mutations: move → backlog ---- */
+
+#[command]
+pub async fn move_link_to_backlog(link: String) -> Result<u64, String> {
+    let db = crate::database::Database::new().map_err(|e| e.to_string())?;
+    let n = db.move_link_to_backlog(&link).map_err(|e| e.to_string())?;
+    Ok(n as u64)
+}
+
+#[command]
+pub async fn move_collection_to_backlog(platform: String, handle: String, content_type: String) -> Result<u64, String> {
+    let db = crate::database::Database::new().map_err(|e| e.to_string())?;
+    let n = db
+        .move_collection_to_backlog(&platform, &handle, &content_type)
+        .map_err(|e| e.to_string())?;
+    Ok(n as u64)
+}
+
+#[command]
+pub async fn move_platform_to_backlog(platform: String) -> Result<u64, String> {
+    let db = crate::database::Database::new().map_err(|e| e.to_string())?;
+    let n = db
+        .move_platform_to_backlog(&platform)
+        .map_err(|e| e.to_string())?;
+    Ok(n as u64)
+}
 
 #[tauri::command]
 pub async fn list_done() -> Result<Vec<crate::database::UiBacklogRow>, String> {

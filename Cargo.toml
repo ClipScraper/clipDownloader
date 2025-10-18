@@ -44,7 +44,8 @@ yew_icons = { version = "0.8.0", features = [
     "LucideTrash2",
     "LucidePause",
     "LucidePlay",
-    "LucideHeart"
+    "LucideHeart",
+    "LucideRotateCcw"
 ] }
 
 # lucide-yew stays (not required for pause/play but harmless)
