@@ -139,6 +139,12 @@ pub enum MoveItem {
     Row(String),
 }
 
+pub enum MoveBackItem {
+    Platform(Platform),
+    Collection(Platform, String, ContentType),
+    Row(String),
+}
+
 #[function_component(App)]
 pub fn app() -> Html {
     let page = use_state(|| Page::Home);
@@ -371,6 +377,79 @@ pub fn app() -> Html {
         })
     };
 
+    let on_move_to_backlog = {
+        let backlog_rows = backlog_rows.clone();
+        let queue_rows = queue_rows.clone();
+        Callback::from(move |item: crate::app::MoveBackItem| {
+            match item {
+                MoveBackItem::Platform(plat) => {
+                    let plat_str = crate::types::platform_str(&plat).to_string();
+                    spawn_local(async move {
+                        let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "platform": plat_str })).unwrap();
+                        let _ = invoke("move_platform_to_backlog", args).await;
+                    });
+
+                    let mut moved = Vec::new();
+                    let mut kept  = Vec::new();
+                    for r in (*queue_rows).clone() {
+                        if r.platform == plat { moved.push(r); } else { kept.push(r); }
+                    }
+                    if !moved.is_empty() {
+                        let mut b = (*backlog_rows).clone();
+                        b.extend(moved);
+                        backlog_rows.set(b);
+                    }
+                    queue_rows.set(kept);
+                }
+                MoveBackItem::Collection(plat, handle, ctype) => {
+                    let p = crate::types::platform_str(&plat).to_string();
+                    let t = crate::types::content_type_str(&ctype).to_string();
+                    let h = handle.clone();
+                    spawn_local(async move {
+                        let args = serde_wasm_bindgen::to_value(&serde_json::json!({"platform": p, "handle": h, "content_type": t})).unwrap();
+                        let _ = invoke("move_collection_to_backlog", args).await;
+                    });
+
+                    let mut moved = Vec::new();
+                    let mut kept  = Vec::new();
+                    for r in (*queue_rows).clone() {
+                        if r.platform == plat && r.handle == handle && r.content_type == ctype { moved.push(r); } else { kept.push(r); }
+                    }
+                    if !moved.is_empty() {
+                        let mut b = (*backlog_rows).clone();
+                        b.extend(moved);
+                        backlog_rows.set(b);
+                    }
+                    queue_rows.set(kept);
+                }
+                MoveBackItem::Row(link) => {
+                    let link_for_backend = link.clone();
+                    spawn_local(async move {
+                        let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "link": link_for_backend })).unwrap();
+                        let _ = invoke("move_link_to_backlog", args).await;
+                    });
+
+                    let mut moved_one: Option<ClipRow> = None;
+                    let kept: Vec<ClipRow> = (*queue_rows).clone().into_iter().filter(|r| {
+                        if r.link == link && moved_one.is_none() {
+                            moved_one = Some(r.clone());
+                            false
+                        } else {
+                            true
+                        }
+                    }).collect();
+
+                    if let Some(row) = moved_one {
+                        let mut b = (*backlog_rows).clone();
+                        b.push(row);
+                        backlog_rows.set(b);
+                    }
+                    queue_rows.set(kept);
+                }
+            }
+        })
+    };
+
     let on_csv_load = Callback::from(move |_csv_text: String| {});
     let on_open_file = Callback::from(move |_: ()| {
         spawn_local(async move {
@@ -398,6 +477,7 @@ pub fn app() -> Html {
                 on_toggle_pause={on_toggle_pause}
                 on_delete={on_delete}
                 on_move_to_queue={on_move_to_queue}
+                on_move_to_backlog={on_move_to_backlog}
             />
         },
         Page::Library       => html! { <pages::library::LibraryPage /> },

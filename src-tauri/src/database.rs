@@ -559,4 +559,38 @@ impl Database {
         )?;
         Ok(n)
     }
+
+    /* -------------------- status transitions (→ Backlog) -------------------- */
+
+    /// Move a single link from queue back to backlog.
+    pub fn move_link_to_backlog(&self, link: &str) -> Result<usize> {
+        let n = self.conn.execute("UPDATE downloads SET status='backlog' WHERE link=?1 AND status='queue'", [link])?;
+        Ok(n)
+    }
+
+    /// Move all rows of a (platform, handle, origin) collection from queue back to backlog.
+    pub fn move_collection_to_backlog(&self, platform: &str, handle: &str, origin: &str) -> Result<usize> {
+        let n = self.conn.execute(
+            "UPDATE downloads
+               SET status='backlog'
+             WHERE platform    = ?1
+               AND user_handle = ?2
+               AND origin      = ?3
+               AND status      = 'queue'",
+            [platform, handle, origin],
+        )?;
+        Ok(n)
+    }
+
+    /// Move all rows of a platform from queue back to backlog.
+    pub fn move_platform_to_backlog(&self, platform: &str) -> Result<usize> {
+        let n = self.conn.execute(
+            "UPDATE downloads
+               SET status='backlog'
+             WHERE platform = ?1
+               AND status   = 'queue'",
+            [platform],
+        )?;
+        Ok(n)
+    }
 }

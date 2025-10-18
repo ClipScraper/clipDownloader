@@ -47,6 +47,9 @@ pub fn run() {
             commands::list::move_link_to_queue,
             commands::list::move_collection_to_queue,
             commands::list::move_platform_to_queue,
+            commands::list::move_link_to_backlog,
+            commands::list::move_collection_to_backlog,
+            commands::list::move_platform_to_backlog,
             commands::list::delete_rows_by_platform,
             commands::list::delete_rows_by_collection,
 
