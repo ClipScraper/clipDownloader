@@ -109,6 +109,13 @@ pub fn home_page(props: &Props) -> Html {
         })
     };
 
+    // New: toggle output format button (video/music)
+    let output_icon_is_music = use_state(|| false);
+    let toggle_output_icon = {
+        let output_icon_is_music = output_icon_is_music.clone();
+        Callback::from(move |_| output_icon_is_music.set(!*output_icon_is_music))
+    };
+
     let cancel_download = {
         let is_downloading = is_downloading.clone();
         let download_results = download_results.clone();
@@ -178,13 +185,22 @@ pub fn home_page(props: &Props) -> Html {
                 <input id="url-input" ref={greet_input_ref} placeholder="Enter url..." oninput={on_input} disabled={*is_downloading} />
                 { if !*is_downloading {
                     html! {
-                        <button type="submit" class="download-cta" title="Download" disabled={!is_valid_url || *is_downloading}>
-                            <Icon icon_id={IconId::LucideDownload} width={"36"} height={"36"} />
-                        </button>
+                        <div style="display:flex; gap:10px; align-items:center;">
+                            <button type="submit" class="download-cta" title="Download" disabled={!is_valid_url || *is_downloading}>
+                                <Icon icon_id={IconId::LucideDownload} width={"36"} height={"36"} />
+                            </button>
+                            <button type="button" class="download-cta" title={ if *output_icon_is_music { "Music" } else { "Video" } } onclick={toggle_output_icon}>
+                                {
+                                    if *output_icon_is_music {
+                                        html!{ <Icon icon_id={IconId::LucideMusic} width={"28"} height={"28"} /> }
+                                    } else {
+                                        html!{ <Icon icon_id={IconId::LucideVideo} width={"28"} height={"28"} /> }
+                                    }
+                                }
+                            </button>
+                        </div>
                     }
-                } else {
-                    html! {}
-                }}
+                } else { html!{} }}
             </form>
 
             { if *is_downloading {
