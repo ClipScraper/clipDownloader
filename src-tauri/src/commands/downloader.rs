@@ -239,6 +239,52 @@ pub async fn download_url(app: tauri::AppHandle, url: String, state: State<'_, c
                         continue 'browser_loop;
                     }
 
+                    // ─── Pinterest and TikTok photo → gallery-dl (to temp) ───
+                    if site == "pinterest" {
+                        println!(
+                            "[DOWNLOADER][IMAGES] Pinterest via gallery-dl; policy={:?}",
+                            on_duplicate
+                        );
+                        match crate::download::image::run_gallery_dl_to_temp(&download_root, &processed_url, cookie_arg) {
+                            Ok((output, tmp_dir)) if output.status.success() => {
+                                let (moved_any, finals) = move_tmp_into_site_dir(
+                                    &tmp_dir,
+                                    &dest_dir,
+                                    &on_duplicate,
+                                    |line| {
+                                        println!("[DOWNLOADER][IMAGES] {line}");
+                                        emit_status(&window, true, line);
+                                    },
+                                )
+                                .unwrap_or((false, vec![]));
+
+                                let _ = fs::remove_dir_all(&tmp_dir);
+
+                                if moved_any {
+                                    if let Ok(db) = crate::database::Database::new() {
+                                        let first = finals.get(0).cloned().unwrap_or_default();
+                                        let _ = db.mark_link_done(&original_url, &first);
+                                    }
+
+                                    emit_status(&window, true, format!("Saved images"));
+                                    *state_clone.0.lock().unwrap() = None;
+                                    return;
+                                } else {
+                                    eprintln!("[DOWNLOADER][IMAGES] No files moved from {} -> {}", tmp_dir.display(), dest_dir.display());
+                                }
+                            }
+                            Ok((output, tmp_dir)) => {
+                                eprintln!("[tauri] gallery-dl failed (Pinterest) with {browser}; tmp={}\nstderr:\n{}", tmp_dir.display(), String::from_utf8_lossy(&output.stderr));
+                                let _ = fs::remove_dir_all(&tmp_dir);
+                            }
+                            Err(e) => {
+                                eprintln!("[tauri] gallery-dl error (Pinterest) with {browser}: {e}");
+                            }
+                        }
+
+                        continue 'browser_loop;
+                    }
+
                     // ─── TikTok photo → gallery-dl (to temp) ───
                     if is_tt_photo {
                         println!(
