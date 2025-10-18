@@ -6,6 +6,7 @@ pub enum Platform {
     Tiktok,
     Instagram,
     Youtube,
+    Pinterest,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -51,6 +52,7 @@ pub fn platform_str(p: &Platform) -> &'static str {
         Platform::Tiktok => "tiktok",
         Platform::Instagram => "instagram",
         Platform::Youtube => "youtube",
+        Platform::Pinterest => "pinterest",
     }
 }
 
