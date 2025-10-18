@@ -87,6 +87,15 @@
   line-height: 1.1;
 }
 
+/* Reserve the rightmost 20% so text never renders under the buttons */
+.container.downloads .rows .link-text { padding-right: 40%; }
+
+/* On hover, softly fade-out the trailing text so it doesn't clash with buttons */
+.container.downloads .row-line:hover .link-text {
+  -webkit-mask-image: linear-gradient(to right, rgba(0,0,0,1) 0%, rgba(0,0,0,1) 80%, rgba(0,0,0,0) 100%);
+          mask-image: linear-gradient(to right, rgba(0,0,0,1) 0%, rgba(0,0,0,1) 80%, rgba(0,0,0,0) 100%);
+}
+
 /* Right-side action area (trash + download) */
 .row-actions {
   display: flex;

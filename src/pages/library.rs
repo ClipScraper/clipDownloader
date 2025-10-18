@@ -121,12 +121,7 @@ pub fn library_page() -> Html {
                         let items_count: usize = col_map.values().map(|v| v.len()).sum();
 
                         // Gather links under this platform for actions
-                        let platform_links: Vec<String> = col_map
-                            .values()
-                            .flat_map(|rs| rs.iter().map(|r| r.link.clone()))
-                            .collect();
-                        let first_platform_link: Option<String> = platform_links.get(0).cloned();
-
+                        let platform_links: Vec<String> = col_map.values().flat_map(|rs| rs.iter().map(|r| r.link.clone())).collect();
                         let on_platform_delete = {
                             let done_rows = done_rows.clone();
                             let links = platform_links.clone();
@@ -181,8 +176,6 @@ pub fn library_page() -> Html {
                                             };
                                             // Per-collection actions (folder + delete)
                                             let links_for_collection: Vec<String> = rows.iter().map(|r| r.link.clone()).collect();
-                                            let first_collection_link: Option<String> = links_for_collection.get(0).cloned();
-
                                             let on_delete_collection = {
                                                 let done_rows = done_rows.clone();
                                                 let links = links_for_collection.clone();
