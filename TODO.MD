@@ -1,7 +1,6 @@
 PRIORITY:
 ---------
 
-- button back to backlog
 - button options mp4/mp3
 - include binaries
 
