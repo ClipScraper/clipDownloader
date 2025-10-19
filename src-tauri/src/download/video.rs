@@ -5,10 +5,13 @@ use std::process::{Command, Stdio};
 use crate::commands::parse::{last_segment, tiktok_id_from_url, youtube_id_from_url};
 use crate::database::OnDuplicate;
 
-fn base_ytdlp_args(cookie_arg: &str, is_ig_images: bool) -> Vec<String> {
+fn base_ytdlp_args(cookie_arg: &str, is_ig_images: bool, audio_only: bool) -> Vec<String> {
     let mut args: Vec<String> = vec!["--newline".into(), "-N".into(), "8".into(), "--cookies-from-browser".into(), cookie_arg.into(), "--ignore-config".into(), "--no-cache-dir".into()];
     if is_ig_images {
         args.push("--ignore-no-formats-error".into());
+    } else if audio_only {
+        // Extract audio as mp3 at best quality
+        args.extend(vec!["-x".into(), "--audio-format".into(), "mp3".into(), "--audio-quality".into(), "0".into()]);
     } else {
         args.extend(vec!["-f".into(), "bestvideo+bestaudio/best".into(), "--merge-output-format".into(), "mp4".into()]);
     }
@@ -87,7 +90,7 @@ fn sanitize<S: Into<String>>(s: S) -> String {
 // Probe uploader using a *clean* set of args that only prints the uploader.
 // Ignore empty/NA and sanitize the result.
 fn probe_uploader(cookie_arg: &str, processed_url: &str, is_ig_images: bool) -> Option<String> {
-    let mut args = base_ytdlp_args(cookie_arg, is_ig_images);
+    let mut args = base_ytdlp_args(cookie_arg, is_ig_images, false);
     args.push("--simulate".into());
     args.extend(vec!["--print".into(), "uploader".into(), processed_url.into()]);
     match Command::new("yt-dlp").args(&args).output() {
@@ -107,12 +110,12 @@ fn probe_uploader(cookie_arg: &str, processed_url: &str, is_ig_images: bool) -> 
 /* ---------- probing for non-IG/TT platforms (optional helper) ---------- */
 #[allow(dead_code)]
 fn probe_filename(cookie_arg: &str, processed_url: &str, is_ig_images: bool) -> std::io::Result<String> {
-    let mut args = base_ytdlp_args(cookie_arg, is_ig_images);
+    let mut args = base_ytdlp_args(cookie_arg, is_ig_images, false);
     args.push("--simulate".into());
     args.extend(vec!["--print".into(), "filename".into(), "-o".into(), "%(uploader)s - %(title)s [%(id)s].%(ext)s".into(), processed_url.into()]);
     let out = Command::new("yt-dlp").args(&args).output()?;
     if !out.status.success() {
-        let mut args_old = base_ytdlp_args(cookie_arg, is_ig_images);
+        let mut args_old = base_ytdlp_args(cookie_arg, is_ig_images, false);
         args_old.push("--simulate".into());
         args_old.extend(vec![            "--get-filename".into(),
             "-o".into(),
@@ -131,7 +134,7 @@ fn probe_filename(cookie_arg: &str, processed_url: &str, is_ig_images: bool) -> 
 
 /* ---------- output template selection ---------- */
 
-fn choose_output_template(out_dir: &Path, cookie_arg: &str, processed_url: &str, is_ig_images: bool, on_duplicate: &OnDuplicate) -> std::io::Result<String> {
+fn choose_output_template(out_dir: &Path, cookie_arg: &str, processed_url: &str, is_ig_images: bool, audio_only: bool, on_duplicate: &OnDuplicate) -> std::io::Result<String> {
     let rest_id = sanitize(rest_token_from_url(processed_url));
     // Prefer the real uploader; fall back to handle from URL; sanitize.
     let mut author_real = probe_uploader(cookie_arg, processed_url, is_ig_images)
@@ -149,7 +152,7 @@ fn choose_output_template(out_dir: &Path, cookie_arg: &str, processed_url: &str,
 
     // Desired base name EXACTLY: "uploader [ID]"
     let base_stem = format!("{author_real} [{rest_id}]");
-    let ext = "mp4";
+    let ext = if audio_only { "mp3" } else { "mp4" };
 
     // Pre-compute chosen name according to duplicate policy
     let mut chosen_stem = base_stem.clone();
@@ -204,7 +207,11 @@ fn choose_output_template(out_dir: &Path, cookie_arg: &str, processed_url: &str,
 
 pub fn run_yt_dlp_with_progress<F>(out_dir: &Path, cookie_arg: &str, processed_url: &str, is_ig_images: bool, on_duplicate: &OnDuplicate, mut progress_callback: F) -> std::io::Result<(bool, String)> where F: FnMut(&str) {
     // Start with clean base args
-    let mut args = base_ytdlp_args(cookie_arg, is_ig_images);
+    // Determine if audio-only mode was requested via processed_url marker (set by caller)
+    let audio_only = processed_url.ends_with("#__audio_only__");
+    let real_url = if audio_only { &processed_url[..processed_url.len()-"#__audio_only__".len()] } else { processed_url };
+
+    let mut args = base_ytdlp_args(cookie_arg, is_ig_images, audio_only);
 
     // Respect Settings: Overwrite / CreateNew / DoNothing
     args.extend(crate::settings::get_yt_dlp_duplicate_flags(on_duplicate));
@@ -217,16 +224,16 @@ pub fn run_yt_dlp_with_progress<F>(out_dir: &Path, cookie_arg: &str, processed_u
     args.push(out_dir.to_string_lossy().to_string());
 
     // Our "{uploader} [{rest_id}]" output pattern (with uniqueness if needed)
-    let output_template = choose_output_template(out_dir, cookie_arg, processed_url, is_ig_images, on_duplicate)?;
+    let output_template = choose_output_template(out_dir, cookie_arg, real_url, is_ig_images, audio_only, on_duplicate)?;
     args.push("-o".into());
     args.push(output_template.clone());
 
     // URL last
-    args.push(processed_url.to_string());
+    args.push(real_url.to_string());
 
     // Helpful planned-path log
-    let planned_path = out_dir.join(output_template.replace("%(ext)s", "mp4"));
-    println!("[YT-DLP] policy={:?} dir='{}'\nurl='{}'\nout='{}'", on_duplicate, out_dir.display(), processed_url, planned_path.display());
+    let planned_path = out_dir.join(output_template.replace("%(ext)s", if audio_only { "mp3" } else { "mp4" }));
+    println!("[YT-DLP] policy={:?} dir='{}'\nurl='{}'\nout='{}'", on_duplicate, out_dir.display(), real_url, planned_path.display());
     let mut child = Command::new("yt-dlp")
         .args(&args)
         .stdout(Stdio::piped())

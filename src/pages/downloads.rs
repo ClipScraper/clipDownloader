@@ -81,6 +81,33 @@ fn item_label_for_row(row: &ClipRow) -> String {
 
 /* ───────────────────────── helpers ───────────────────────── */
 
+fn is_instagram_photo(link: &str) -> bool {
+    let tail = url_after_domain(link);
+    let mut parts = tail.split('/').filter(|s| !s.is_empty());
+    let _maybe_user = parts.next().unwrap_or_default();
+    let b = parts.next().unwrap_or_default(); // "p" or "reel"
+    b == "p"
+}
+
+fn is_tiktok_photo(link: &str) -> bool {
+    let tail = url_after_domain(link);
+    let pieces: Vec<&str> = tail.split('/').filter(|s| !s.is_empty()).collect();
+    pieces.iter().any(|p| *p == "photo")
+}
+
+fn icon_for_row(row: &ClipRow) -> IconId {
+    let plat = platform_str(&row.platform);
+    let link = row.link.trim();
+    if (plat == "instagram" && is_instagram_photo(link)) || (plat == "tiktok" && is_tiktok_photo(link)) {
+        IconId::LucideImage
+    } else {
+        match row.media {
+            MediaKind::Pictures => IconId::LucideImage,
+            MediaKind::Video    => IconId::LucideVideo,
+        }
+    }
+}
+
 fn platform_icon_src(p: &str) -> &'static str {
     match p {
         "instagram"         => "public/instagram.webp",
@@ -390,10 +417,7 @@ pub fn downloads_page(props: &Props) -> Html {
                                                                                         };
                                                                                         html!{
                                                                                             <li class="row-line" key={row.link.clone()}>
-                                                                                                { match row.media {
-                                                                                                    MediaKind::Pictures => html!{ <Icon icon_id={IconId::LucideImage} width={"16"} height={"16"} /> },
-                                                                                                    MediaKind::Video    => html!{ <Icon icon_id={IconId::LucideVideo} width={"16"} height={"16"} /> },
-                                                                                                }}
+                                                                                                { html!{ <Icon icon_id={icon_for_row(&row)} width={"16"} height={"16"} /> } }
                                                                                                 <a class="link-text" href={row.link.clone()} target="_blank">
                                                                                                     { item_label_for_row(&row) }
                                                                                                 </a>

@@ -77,6 +77,13 @@ pub fn home_page(props: &Props) -> Html {
         });
     }
 
+    // New: toggle output format button (video/music)
+    let output_icon_is_music = use_state(|| false);
+    let toggle_output_icon = {
+        let output_icon_is_music = output_icon_is_music.clone();
+        Callback::from(move |_| output_icon_is_music.set(!*output_icon_is_music))
+    };
+
     let on_input = {
         let name = name.clone();
         Callback::from(move |e: web_sys::InputEvent| {
@@ -89,11 +96,13 @@ pub fn home_page(props: &Props) -> Html {
             }
         })
     };
+    let current_output_state = output_icon_is_music.clone();
     let greet = {
         let greet_input_ref = greet_input_ref.clone();
         let download_results = download_results.clone();
         let is_downloading = is_downloading.clone();
         let download_progress = download_progress.clone();
+        let current_output_state = current_output_state.clone();
         Callback::from(move |e: SubmitEvent| {
             e.prevent_default();
             is_downloading.set(true);
@@ -102,8 +111,18 @@ pub fn home_page(props: &Props) -> Html {
             let value = greet_input_ref.cast::<web_sys::HtmlInputElement>().unwrap().value();
             log::info("home_download_clicked", serde_json::json!({ "url": value }));
             web_sys::console::log_1(&format!("Form submitted with URL: {}", value).into());
+            let want_audio = *current_output_state;
+            // Encode Home flags directly into the URL so backend reliably honors them
+            let url_for_backend = {
+                let mut u = value.clone();
+                if want_audio { u.push_str("#__audio_only__"); }
+                // Home downloads should always target the flat destination (settings root)
+                u.push_str("#__flat__");
+                u
+            };
             wasm_bindgen_futures::spawn_local(async move {
-                let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "url": value })).unwrap();
+                let fmt = if want_audio { "audio" } else { "video" };
+                let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "url": url_for_backend, "output_format": fmt, "flat_destination": true })).unwrap();
                 let _ = invoke("download_url", args).await;
             });
         })
@@ -178,13 +197,22 @@ pub fn home_page(props: &Props) -> Html {
                 <input id="url-input" ref={greet_input_ref} placeholder="Enter url..." oninput={on_input} disabled={*is_downloading} />
                 { if !*is_downloading {
                     html! {
-                        <button type="submit" class="download-cta" title="Download" disabled={!is_valid_url || *is_downloading}>
-                            <Icon icon_id={IconId::LucideDownload} width={"36"} height={"36"} />
-                        </button>
+                        <div style="display:flex; gap:10px; align-items:center;">
+                            <button type="submit" class="download-cta" title="Download" disabled={!is_valid_url || *is_downloading}>
+                                <Icon icon_id={IconId::LucideDownload} width={"36"} height={"36"} />
+                            </button>
+                            <button type="button" class="download-cta" title={ if *output_icon_is_music { "Music" } else { "Video" } } onclick={toggle_output_icon}>
+                                {
+                                    if *output_icon_is_music {
+                                        html!{ <Icon icon_id={IconId::LucideMusic} width={"28"} height={"28"} /> }
+                                    } else {
+                                        html!{ <Icon icon_id={IconId::LucideVideo} width={"28"} height={"28"} /> }
+                                    }
+                                }
+                            </button>
+                        </div>
                     }
-                } else {
-                    html! {}
-                }}
+                } else { html!{} }}
             </form>
 
             { if *is_downloading {
