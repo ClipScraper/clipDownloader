@@ -14,6 +14,12 @@ struct DownloadResult {
     message: String,
 }
 
+#[derive(Deserialize, Clone, Debug)]
+struct LoadedSettings {
+    #[serde(default)]
+    default_output: Option<String>,
+}
+
 #[wasm_bindgen]
 extern "C" {
     #[wasm_bindgen(js_namespace = ["window", "__TAURI__", "core"])]
@@ -79,6 +85,21 @@ pub fn home_page(props: &Props) -> Html {
 
     // New: toggle output format button (video/music)
     let output_icon_is_music = use_state(|| false);
+    {
+        // Initialize toggle from settings.default_output (Audio -> true, else false)
+        let output_icon_is_music = output_icon_is_music.clone();
+        use_effect_once(move || {
+            spawn_local(async move {
+                let val = invoke("load_settings", JsValue::NULL).await;
+                if let Ok(s) = serde_wasm_bindgen::from_value::<LoadedSettings>(val) {
+                    if s.default_output.as_deref().map(|v| v.eq_ignore_ascii_case("audio")).unwrap_or(false) {
+                        output_icon_is_music.set(true);
+                    }
+                }
+            });
+            || {}
+        });
+    }
     let toggle_output_icon = {
         let output_icon_is_music = output_icon_is_music.clone();
         Callback::from(move |_| output_icon_is_music.set(!*output_icon_is_music))

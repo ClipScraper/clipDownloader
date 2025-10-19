@@ -17,10 +17,19 @@ pub struct Settings {
     pub on_duplicate: OnDuplicate,
     pub delete_mode: DeleteMode,
     pub debug_logs: bool,
+    #[serde(default)]
+    pub default_output: DefaultOutput,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq)]
 pub enum DeleteMode { Soft, Hard }
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq)]
+pub enum DefaultOutput { Audio, Video }
+
+impl Default for DefaultOutput {
+    fn default() -> Self { DefaultOutput::Video }
+}
 
 #[wasm_bindgen]
 extern "C" {
@@ -128,6 +137,16 @@ pub fn settings_page() -> Html {
         })
     };
 
+    let on_default_output_change = {
+        let settings = settings.clone();
+        Callback::from(move |e: Event| {
+            let value = e.target_unchecked_into::<web_sys::HtmlInputElement>().value();
+            let mut s = (*settings).clone();
+            s.default_output = if value == "audio" { DefaultOutput::Audio } else { DefaultOutput::Video };
+            settings.set(s);
+        })
+    };
+
     html! {
         <main class="container">
             <h1>{"Settings"}</h1>
@@ -165,6 +184,20 @@ pub fn settings_page() -> Html {
                 </div>
 
                 <div class="form-group row">
+                    <label>{"Default output"}</label>
+                    <div style="display:flex; gap: 16px; align-items:center;">
+                        <label style="display:flex; gap:6px; align-items:center;">
+                            <input type="radio" name="default-output" value="audio" onchange={on_default_output_change.clone()} checked={settings.default_output == DefaultOutput::Audio} />
+                            {"Audio"}
+                        </label>
+                        <label style="display:flex; gap:6px; align-items:center;">
+                            <input type="radio" name="default-output" value="video" onchange={on_default_output_change} checked={settings.default_output == DefaultOutput::Video} />
+                            {"Video"}
+                        </label>
+                    </div>
+                </div>
+
+                <div class="form-group row">
                     <label for="debug-logs">{"Activate debug logs"}</label>
                     <input type="checkbox" id="debug-logs" checked={settings.debug_logs} onchange={on_debug_logs_change} />
                 </div>
@@ -185,6 +218,7 @@ impl Default for Settings {
             on_duplicate: OnDuplicate::CreateNew,
             delete_mode: DeleteMode::Soft,
             debug_logs: false,
+            default_output: DefaultOutput::Video,
         }
     }
 }

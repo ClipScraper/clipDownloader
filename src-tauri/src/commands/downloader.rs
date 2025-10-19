@@ -147,6 +147,10 @@ pub async fn download_url(
                 // Normalize special Home flags embedded in URL (fallback when args missing)
                 let has_audio_flag = processed_url.contains("#__audio_only__");
                 if has_audio_flag { want_audio_only = true; }
+                // If no explicit format provided and no URL flag, honor the Settings default
+                if !want_audio_only && effective_format.is_none() {
+                    if let crate::database::DefaultOutput::Audio = s.default_output { want_audio_only = true; }
+                }
                 let has_flat_flag = processed_url.contains("#__flat__");
                 let cleaned_url = processed_url.replace("#__audio_only__", "").replace("#__flat__", "");
 
