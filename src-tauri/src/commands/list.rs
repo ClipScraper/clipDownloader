@@ -69,6 +69,25 @@ pub async fn move_platform_to_backlog(platform: String) -> Result<u64, String> {
 }
 
 #[tauri::command]
+pub async fn toggle_output_format(link: String) -> Result<(), String> {
+    let db = crate::database::Database::new().map_err(|e| e.to_string())?;
+    db.toggle_output_format_for_link(&link).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn set_output_format(link: String, format: String) -> Result<(), String> {
+    let fmt = match format.to_lowercase().as_str() {
+        "audio" => crate::database::OutputFormat::Audio,
+        "video" => crate::database::OutputFormat::Video,
+        _ => crate::database::OutputFormat::Default,
+    };
+    let db = crate::database::Database::new().map_err(|e| e.to_string())?;
+    db.set_output_format_for_link(&link, fmt).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn list_done() -> Result<Vec<crate::database::UiBacklogRow>, String> {
     let db = crate::database::Database::new().map_err(|e| e.to_string())?;
     db.list_done_ui().map_err(|e| e.to_string())

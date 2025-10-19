@@ -45,6 +45,9 @@ pub struct ClipRow {
     /// Comes from DB; optional when deserializing CSV.
     #[serde(default)]
     pub name: String,
+    /// Optional per-row preferred output; "audio" or "video" (or omitted/default)
+    #[serde(default)]
+    pub output_format: Option<String>,
 }
 
 pub fn platform_str(p: &Platform) -> &'static str {

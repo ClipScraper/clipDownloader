@@ -9,6 +9,19 @@ extern "C" {
     #[wasm_bindgen(js_namespace = ["window", "__TAURI__", "core"])]
     async fn invoke(cmd: &str, args: JsValue) -> JsValue;
 }
+fn toggle_icon_for_row(row: &ClipRow) -> IconId {
+    // If row carries explicit output_format, prefer showing music icon for audio
+    if let Some(fmt) = &row.output_format {
+        if fmt.eq_ignore_ascii_case("audio") {
+            return IconId::LucideMusic;
+        }
+        if fmt.eq_ignore_ascii_case("video") {
+            return icon_for_row(row);
+        }
+    }
+    icon_for_row(row)
+}
+
 
 #[derive(Properties, PartialEq, Clone)]
 pub struct Props {
@@ -98,6 +111,10 @@ fn is_tiktok_photo(link: &str) -> bool {
 fn icon_for_row(row: &ClipRow) -> IconId {
     let plat = platform_str(&row.platform);
     let link = row.link.trim();
+    // Pinterest: always show as Image icon (treat all pins as images in UI)
+    if plat == "pinterest" {
+        return IconId::LucideImage;
+    }
     if (plat == "instagram" && is_instagram_photo(link)) || (plat == "tiktok" && is_tiktok_photo(link)) {
         IconId::LucideImage
     } else {
@@ -123,6 +140,8 @@ fn platform_icon_src(p: &str) -> &'static str {
 pub fn downloads_page(props: &Props) -> Html {
     let expanded_platforms = use_state(|| std::collections::HashSet::<String>::new());
     let expanded_collections = use_state(|| std::collections::HashSet::<String>::new());
+    // Local overrides so icon flips instantly on click (DB persists separately)
+    let output_overrides = use_state(|| std::collections::HashMap::<String, String>::new());
 
     let on_toggle_pause_click_header = {
         let cb = props.on_toggle_pause.clone();
@@ -139,6 +158,7 @@ pub fn downloads_page(props: &Props) -> Html {
         let on_delete_prop = props.on_delete.clone();
         let on_move_prop = props.on_move_to_queue.clone();
         let on_move_back_prop = props.on_move_to_backlog.clone();
+        let output_overrides = output_overrides.clone();
 
         move |rows_in: Vec<ClipRow>, title: &str, enable_queue_action: bool| -> Html {
             use std::collections::{BTreeMap, HashSet};
@@ -415,9 +435,32 @@ pub fn downloads_page(props: &Props) -> Html {
                                                                                                 if enable_queue_action { on_move.emit(MoveItem::Row(link.clone())); }
                                                                                             })
                                                                                         };
+                                                                                        // Determine current effective format (override -> row value)
+                                                                                        let effective_fmt: Option<String> = (*output_overrides).get(&row.link).cloned().or_else(|| row.output_format.clone());
+                                                                                        let row_icon = if effective_fmt.as_deref() == Some("audio") { IconId::LucideMusic } else { icon_for_row(&row) };
+                                                                                        let on_click_toggle = {
+                                                                                            let link_for_backend = row.link.clone();
+                                                                                            let output_overrides = output_overrides.clone();
+                                                                                            let current_fmt = effective_fmt.clone();
+                                                                                            Callback::from(move |e: MouseEvent| {
+                                                                                                e.prevent_default();
+                                                                                                e.stop_propagation();
+                                                                                                // Flip locally first for instant UI feedback
+                                                                                                let mut map = (*output_overrides).clone();
+                                                                                                let next = if current_fmt.as_deref() == Some("audio") { "video" } else { "audio" };
+                                                                                                map.insert(link_for_backend.clone(), next.to_string());
+                                                                                                output_overrides.set(map);
+                                                                                                // Persist to DB
+                                                                                                let link_for_backend = link_for_backend.clone();
+                                                                                                wasm_bindgen_futures::spawn_local(async move {
+                                                                                                    let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "link": link_for_backend })).unwrap();
+                                                                                                    let _ = invoke("toggle_output_format", args).await;
+                                                                                                });
+                                                                                            })
+                                                                                        };
                                                                                         html!{
                                                                                             <li class="row-line" key={row.link.clone()}>
-                                                                                                { html!{ <Icon icon_id={icon_for_row(&row)} width={"16"} height={"16"} /> } }
+                                                                                                <span onclick={on_click_toggle.clone()}><Icon icon_id={row_icon} width={"16"} height={"16"} /></span>
                                                                                                 <a class="link-text" href={row.link.clone()} target="_blank">
                                                                                                     { item_label_for_row(&row) }
                                                                                                 </a>
