@@ -71,6 +71,9 @@ pub struct UiBacklogRow {
     #[serde(rename = "Media")]              /// "pictures" | "video"
     pub media: String,
     pub link: String,
+    /// Optional output preference for the row ("audio" | "video" | "default").
+    #[serde(default)]
+    pub output_format: String,
 }
 
 /// Lightweight info for deciding the destination collection directory.
@@ -282,6 +285,60 @@ impl Database {
         Ok(v)
     }
 
+    /// Read the preferred output format for a link (first matching, priority queue/backlog). Returns "audio" | "video" | "default".
+    pub fn output_format_for_link(&self, link: &str) -> Result<String> {
+        let mut stmt = self.conn.prepare(
+            "SELECT output_format FROM downloads WHERE link=?1 ORDER BY CASE status WHEN 'queue' THEN 0 WHEN 'backlog' THEN 1 ELSE 2 END, id LIMIT 1"
+        )?;
+        let mut rows = stmt.query([link])?;
+        if let Some(r) = rows.next()? {
+            let fmt: String = r.get(0)?;
+            Ok(fmt)
+        } else {
+            Ok("default".to_string())
+        }
+    }
+
+    /// Toggle a row's output_format between 'audio' and 'video'. If currently 'default', set to 'audio'.
+    pub fn toggle_output_format_for_link(&self, link: &str) -> Result<usize> {
+        // Find first matching row (any status); prefer queue/backlog
+        let mut stmt = self.conn.prepare(
+            "SELECT id, output_format FROM downloads WHERE link=?1 ORDER BY CASE status WHEN 'queue' THEN 0 WHEN 'backlog' THEN 1 ELSE 2 END, id LIMIT 1"
+        )?;
+        let mut rows = stmt.query([link])?;
+        if let Some(r) = rows.next()? {
+            let id: i64 = r.get(0)?;
+            let fmt: String = r.get(1)?;
+            let next = match fmt.as_str() {
+                "audio" => "video",
+                "video" => "audio",
+                _ => "audio",
+            };
+            let n = self.conn.execute("UPDATE downloads SET output_format=?1 WHERE id=?2", [next, &id.to_string()])?;
+            Ok(n)
+        } else {
+            Ok(0)
+        }
+    }
+
+    /// Explicitly set output_format for the row by link (first matching, priority queue/backlog).
+    pub fn set_output_format_for_link(&self, link: &str, fmt: OutputFormat) -> Result<usize> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id FROM downloads WHERE link=?1 ORDER BY CASE status WHEN 'queue' THEN 0 WHEN 'backlog' THEN 1 ELSE 2 END, id LIMIT 1"
+        )?;
+        let mut rows = stmt.query([link])?;
+        if let Some(r) = rows.next()? {
+            let id: i64 = r.get(0)?;
+            let n = self.conn.execute(
+                "UPDATE downloads SET output_format=?1 WHERE id=?2",
+                [format!("{:?}", fmt).to_lowercase(), id.to_string()],
+            )?;
+            Ok(n)
+        } else {
+            Ok(0)
+        }
+    }
+
     fn get_db_path() -> Result<PathBuf> {
         let config_dir = match dirs::config_dir() {
             Some(dir) => dir,
@@ -450,7 +507,7 @@ impl Database {
     /// Ordered by platform → handle → type → name (case-insensitive).
     pub fn list_backlog_ui(&self) -> Result<Vec<UiBacklogRow>> {
         let mut stmt = self.conn.prepare(
-            "SELECT platform, user_handle, origin, media, link, name
+            "SELECT platform, user_handle, origin, media, link, name, output_format
              FROM downloads
              WHERE status = 'backlog'
              ORDER BY platform COLLATE NOCASE,
@@ -460,12 +517,13 @@ impl Database {
         )?;
 
         let rows = stmt.query_map([], |row| {
-            let platform: String = row.get(0)?;
-            let handle: String   = row.get(1)?;
-            let origin: String   = row.get(2)?;
-            let media: String    = row.get(3)?;
-            let link: String     = row.get(4)?;
-            let _name: String    = row.get(5)?;
+            let platform: String      = row.get(0)?;
+            let handle: String        = row.get(1)?;
+            let origin: String        = row.get(2)?;
+            let media: String         = row.get(3)?;
+            let link: String          = row.get(4)?;
+            let _name: String         = row.get(5)?;
+            let output_format: String = row.get(6).unwrap_or_else(|_| "default".to_string());
 
             let content_type = match origin.as_str() {
                 "recommendation" | "playlist" | "profile" | "bookmarks" | "liked" | "reposts" => origin.clone(),
@@ -477,7 +535,7 @@ impl Database {
                 "video".to_string()
             };
 
-            Ok(UiBacklogRow { platform, content_type, handle, media: media_token, link })
+            Ok(UiBacklogRow { platform, content_type, handle, media: media_token, link, output_format })
         })?;
 
         let mut out = Vec::new();
@@ -490,7 +548,7 @@ impl Database {
     /// Fetch rows with `status = 'queue'`, normalized for the UI.
     pub fn list_queue_ui(&self) -> Result<Vec<UiBacklogRow>> {
         let mut stmt = self.conn.prepare(
-            "SELECT platform, user_handle, origin, media, link, name
+            "SELECT platform, user_handle, origin, media, link, name, output_format
              FROM downloads
              WHERE status = 'queue'
              ORDER BY platform COLLATE NOCASE,
@@ -500,12 +558,13 @@ impl Database {
         )?;
 
         let rows = stmt.query_map([], |row| {
-            let platform: String = row.get(0)?;
-            let handle: String   = row.get(1)?;
-            let origin: String   = row.get(2)?;
-            let media: String    = row.get(3)?;
-            let link: String     = row.get(4)?;
-            let _name: String    = row.get(5)?;
+            let platform: String      = row.get(0)?;
+            let handle: String        = row.get(1)?;
+            let origin: String        = row.get(2)?;
+            let media: String         = row.get(3)?;
+            let link: String          = row.get(4)?;
+            let _name: String         = row.get(5)?;
+            let output_format: String = row.get(6).unwrap_or_else(|_| "default".to_string());
 
             let content_type = match origin.as_str() {
                 "recommendation" | "playlist" | "profile" | "bookmarks" | "liked" | "reposts" => origin.clone(),
@@ -517,7 +576,7 @@ impl Database {
                 "video".to_string()
             };
 
-            Ok(UiBacklogRow { platform, content_type, handle, media: media_token, link })
+            Ok(UiBacklogRow { platform, content_type, handle, media: media_token, link, output_format })
         })?;
 
         let mut out = Vec::new();
@@ -529,7 +588,7 @@ impl Database {
 
     pub fn list_done_ui(&self) -> Result<Vec<UiBacklogRow>> {
         let mut stmt = self.conn.prepare(
-            "SELECT platform, user_handle, origin, media, link, name
+            "SELECT platform, user_handle, origin, media, link, name, output_format
              FROM downloads
              WHERE status = 'done'
              ORDER BY platform COLLATE NOCASE,
@@ -539,12 +598,13 @@ impl Database {
         )?;
 
         let rows = stmt.query_map([], |row| {
-            let platform: String = row.get(0)?;
-            let handle: String   = row.get(1)?;
-            let origin: String   = row.get(2)?;
-            let media: String    = row.get(3)?;
-            let link: String     = row.get(4)?;
-            let _name: String    = row.get(5)?;
+            let platform: String      = row.get(0)?;
+            let handle: String        = row.get(1)?;
+            let origin: String        = row.get(2)?;
+            let media: String         = row.get(3)?;
+            let link: String          = row.get(4)?;
+            let _name: String         = row.get(5)?;
+            let output_format: String = row.get(6).unwrap_or_else(|_| "default".to_string());
     
             let content_type = match origin.as_str() {
                 "recommendation" | "playlist" | "profile" | "bookmarks" | "liked" | "reposts" => origin.clone(),
@@ -552,13 +612,7 @@ impl Database {
             };
             let media_token = if media == "image" || media == "images" { "pictures".to_string() } else { "video".to_string() };
     
-            Ok(UiBacklogRow {
-                platform,
-                content_type,
-                handle,
-                media: media_token,
-                link,
-            })
+            Ok(UiBacklogRow { platform, content_type, handle, media: media_token, link, output_format })
         })?;
     
         let mut out = Vec::new();

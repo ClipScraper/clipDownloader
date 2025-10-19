@@ -154,6 +154,15 @@ pub async fn download_url(
                 let has_flat_flag = processed_url.contains("#__flat__");
                 let cleaned_url = processed_url.replace("#__audio_only__", "").replace("#__flat__", "");
 
+                // Finally, if still not explicitly set, consult DB row preference for this link
+                if !want_audio_only && effective_format.is_none() && !has_audio_flag {
+                    if let Ok(db) = crate::database::Database::new() {
+                        if let Ok(fmt) = db.output_format_for_link(&cleaned_url) {
+                            if fmt.eq_ignore_ascii_case("audio") { want_audio_only = true; }
+                        }
+                    }
+                }
+
                 // Use cleaned URL for site detection and DB matching
                 let site = if cleaned_url.contains("instagram.com") {
                     "instagram"

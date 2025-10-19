@@ -42,6 +42,8 @@ pub fn run() {
             commands::list::list_backlog,
             commands::list::list_queue,
             commands::list::list_done,
+            commands::list::toggle_output_format,
+            commands::list::set_output_format,
 
             // STATUS MUTATIONS
             commands::list::move_link_to_queue,
