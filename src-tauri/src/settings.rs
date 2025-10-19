@@ -1,4 +1,4 @@
-use crate::database::{OnDuplicate, Settings, DeleteMode};
+use crate::database::{OnDuplicate, Settings, DeleteMode, DefaultOutput};
 use std::{fs, path::{Path, PathBuf}};
 use uuid::Uuid;
 
@@ -22,6 +22,7 @@ impl Default for Settings {
             on_duplicate: OnDuplicate::CreateNew,
             delete_mode: DeleteMode::Soft,
             debug_logs: false,
+            default_output: DefaultOutput::Video,
         }
     }
 }
@@ -123,6 +124,7 @@ pub fn save_settings(settings: &Settings) -> Result<(), String> {
         on_duplicate: settings.on_duplicate.clone(),
         delete_mode: settings.delete_mode.clone(),
         debug_logs: settings.debug_logs,
+        default_output: settings.default_output.clone(),
     };
 
     let body = serde_json::to_string_pretty(&to_write)

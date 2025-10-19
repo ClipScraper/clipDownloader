@@ -175,6 +175,16 @@ pub enum DeleteMode {
     Hard,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum DefaultOutput {
+    Audio,
+    Video,
+}
+
+impl Default for DefaultOutput {
+    fn default() -> Self { DefaultOutput::Video }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
     pub id: Option<i64>,
@@ -182,6 +192,8 @@ pub struct Settings {
     pub on_duplicate: OnDuplicate,
     pub delete_mode: DeleteMode,
     pub debug_logs: bool,
+    #[serde(default)]
+    pub default_output: DefaultOutput,
 }
 
 /* ----------------------------- util: link normalize ----------------------------- */
