@@ -97,8 +97,20 @@ fn move_tmp_into_site_dir(tmp: &Path, dest_dir: &Path, on_duplicate: &crate::dat
 }
 
 #[tauri::command]
-pub async fn download_url(app: tauri::AppHandle, url: String, state: State<'_, crate::DownloadState>) -> Result<(), String> {
+pub async fn download_url(
+    app: tauri::AppHandle,
+    url: String,
+    state: State<'_, crate::DownloadState>,
+    output_format: Option<String>,
+    outputFormat: Option<String>,
+    flat_destination: Option<bool>,
+    flatDestination: Option<bool>,
+) -> Result<(), String> {
     println!("[BACKEND][DOWNLOADER] download_url called with: {}", url);
+    println!(
+        "[DOWNLOADER] args: output_format={:?} outputFormat={:?} flat_destination={:?} flatDestination={:?}",
+        output_format, outputFormat, flat_destination, flatDestination
+    );
     if let Some(window) = app.get_webview_window("main") {
         // Normalize minimally: strip IG query params
         let mut processed_url = url.clone();
@@ -114,9 +126,11 @@ pub async fn download_url(app: tauri::AppHandle, url: String, state: State<'_, c
         let handle = tokio::spawn({
             let window = window.clone();
             let processed_url = processed_url.clone();
-            let original_url = url.clone();
+            let original_url_arg = url.clone();
 
             async move {
+                let effective_format = output_format.or(outputFormat);
+                let mut want_audio_only = matches!(effective_format.as_deref(), Some("audio"));
                 // Load settings
                 let s = crate::settings::load_settings();
                 let download_root = PathBuf::from(s.download_directory.clone());
@@ -130,15 +144,21 @@ pub async fn download_url(app: tauri::AppHandle, url: String, state: State<'_, c
                     return;
                 }
 
-                // Compute platform name
-                let site = if processed_url.contains("instagram.com") {
+                // Normalize special Home flags embedded in URL (fallback when args missing)
+                let has_audio_flag = processed_url.contains("#__audio_only__");
+                if has_audio_flag { want_audio_only = true; }
+                let has_flat_flag = processed_url.contains("#__flat__");
+                let cleaned_url = processed_url.replace("#__audio_only__", "").replace("#__flat__", "");
+
+                // Use cleaned URL for site detection and DB matching
+                let site = if cleaned_url.contains("instagram.com") {
                     "instagram"
-                } else if processed_url.contains("tiktok.com") {
+                } else if cleaned_url.contains("tiktok.com") {
                     "tiktok"
-                } else if processed_url.contains("youtube.com") || processed_url.contains("youtu.be")
+                } else if cleaned_url.contains("youtube.com") || cleaned_url.contains("youtu.be")
                 {
                     "youtube"
-                } else if processed_url.contains("pinterest.com") || processed_url.contains("pin.it") {
+                } else if cleaned_url.contains("pinterest.com") || cleaned_url.contains("pin.it") {
                     "pinterest"
                 } else {
                     "other"
@@ -147,19 +167,25 @@ pub async fn download_url(app: tauri::AppHandle, url: String, state: State<'_, c
                 // Determine collection folder (origin - user_handle) under the platform
                 let collection_dir_label = match crate::database::Database::new()
                     .ok()
-                    .and_then(|db| db.collection_for_link(&original_url).ok().flatten())
+                    .and_then(|db| db.collection_for_link(&cleaned_url).ok().flatten())
                 {
                     Some(info) => crate::database::Database::collection_folder_label(&info.origin, &info.user_handle),
                     None => crate::database::Database::collection_folder_label("manual", "Unknown"),
                 };
 
-                // Final destination: <root>/<platform>/<origin - user_handle>
-                let dest_dir = download_root.join(site).join(collection_dir_label);
+                // Final destination: flat when requested (home page), else structured
+                let use_flat = flat_destination.or(flatDestination).unwrap_or(false) || has_flat_flag;
+                let dest_dir = if use_flat {
+                    download_root.clone()
+                } else {
+                    download_root.join(site).join(collection_dir_label)
+                };
+                println!("[DOWNLOADER] flat_destination={} dest_dir={} audio_only={}", use_flat, dest_dir.display(), want_audio_only);
                 let _ = std_fs::create_dir_all(&dest_dir);
 
-                let is_instagram = processed_url.contains("instagram.com/");
-                let is_ig_post_p = is_instagram && processed_url.contains("/p/");
-                let is_tt_photo = crate::utils::url::is_tiktok_photo(&processed_url);
+                let is_instagram = cleaned_url.contains("instagram.com/");
+                let is_ig_post_p = is_instagram && cleaned_url.contains("/p/");
+                let is_tt_photo = crate::utils::url::is_tiktok_photo(&cleaned_url);
 
                 let browsers = crate::utils::os::installed_browsers();
 
@@ -169,10 +195,11 @@ pub async fn download_url(app: tauri::AppHandle, url: String, state: State<'_, c
                     // ─── Instagram: try yt-dlp first; if /p/ fails, fallback to gallery-dl ───
                     if is_instagram {
                         let window_clone = window.clone();
+                        let effective_url = if want_audio_only { format!("{}#__audio_only__", cleaned_url) } else { cleaned_url.clone() };
                         match crate::download::video::run_yt_dlp_with_progress(
                             &dest_dir,
                             cookie_arg,
-                            &processed_url,
+                            &effective_url,
                             /* is_ig_images = */ false,
                             &on_duplicate,
                             |progress_line| {
@@ -180,11 +207,12 @@ pub async fn download_url(app: tauri::AppHandle, url: String, state: State<'_, c
                             },
                         ) {
                             Ok((true, output)) => {
-                                emit_status(&window, true, format!("Saved (video)"));
+                                let status_msg: String = if want_audio_only { "Saved (audio)".to_string() } else { "Saved (video)".to_string() };
+                                emit_status(&window, true, status_msg);
                                 if let Ok(db) = crate::database::Database::new() {
-                                    let files = parse_multiple_filenames_from_output(&output, &processed_url, Some(&dest_dir));
+                                    let files = parse_multiple_filenames_from_output(&output, &cleaned_url, Some(&dest_dir));
                                     let first_path = files.get(0).map(|t| t.2.clone()).unwrap_or_default();
-                                    let _ = db.mark_link_done(&original_url, &first_path);
+                                    let _ = db.mark_link_done(&cleaned_url, &first_path);
                                 }
 
                                 *state_clone.0.lock().unwrap() = None;
@@ -213,7 +241,7 @@ pub async fn download_url(app: tauri::AppHandle, url: String, state: State<'_, c
                                             if moved_any {
                                                 if let Ok(db) = crate::database::Database::new() {
                                                     let first = finals.get(0).cloned().unwrap_or_default();
-                                                    let _ = db.mark_link_done(&original_url, &first);
+                                                    let _ = db.mark_link_done(&original_url_arg, &first);
                                                 }
 
                                                 emit_status(&window, true, format!("Saved images"));
@@ -245,7 +273,7 @@ pub async fn download_url(app: tauri::AppHandle, url: String, state: State<'_, c
                             "[DOWNLOADER][IMAGES] Pinterest via gallery-dl; policy={:?}",
                             on_duplicate
                         );
-                        match crate::download::image::run_gallery_dl_to_temp(&download_root, &processed_url, cookie_arg) {
+                        match crate::download::image::run_gallery_dl_to_temp(&download_root, &cleaned_url, cookie_arg) {
                             Ok((output, tmp_dir)) if output.status.success() => {
                                 let (moved_any, finals) = move_tmp_into_site_dir(
                                     &tmp_dir,
@@ -263,7 +291,7 @@ pub async fn download_url(app: tauri::AppHandle, url: String, state: State<'_, c
                                 if moved_any {
                                     if let Ok(db) = crate::database::Database::new() {
                                         let first = finals.get(0).cloned().unwrap_or_default();
-                                        let _ = db.mark_link_done(&original_url, &first);
+                                        let _ = db.mark_link_done(&cleaned_url, &first);
                                     }
 
                                     emit_status(&window, true, format!("Saved images"));
@@ -291,7 +319,7 @@ pub async fn download_url(app: tauri::AppHandle, url: String, state: State<'_, c
                             "[DOWNLOADER][IMAGES] TikTok photo via gallery-dl; policy={:?}",
                             on_duplicate
                         );
-                        match crate::download::image::run_gallery_dl_to_temp(&download_root, &processed_url, cookie_arg) {
+                        match crate::download::image::run_gallery_dl_to_temp(&download_root, &cleaned_url, cookie_arg) {
                             Ok((output, tmp_dir)) if output.status.success() => {
                                 let (moved_any, finals) = move_tmp_into_site_dir(
                                     &tmp_dir,
@@ -309,7 +337,7 @@ pub async fn download_url(app: tauri::AppHandle, url: String, state: State<'_, c
                                 if moved_any {
                                     if let Ok(db) = crate::database::Database::new() {
                                         let first = finals.get(0).cloned().unwrap_or_default();
-                                        let _ = db.mark_link_done(&original_url, &first);
+                                        let _ = db.mark_link_done(&cleaned_url, &first);
                                     }
 
                                     emit_status(&window, true, format!("Saved images"));
@@ -333,10 +361,11 @@ pub async fn download_url(app: tauri::AppHandle, url: String, state: State<'_, c
 
                     // ─── Generic yt-dlp (YouTube, TikTok video, etc.) ───
                     let window_clone = window.clone();
+                    let effective_url = if want_audio_only { format!("{}#__audio_only__", cleaned_url) } else { cleaned_url.clone() };
                     match crate::download::video::run_yt_dlp_with_progress(
                         &dest_dir,
                         cookie_arg,
-                        &processed_url,
+                        &effective_url,
                         /* is_ig_images = */ false,
                         &on_duplicate,
                         |progress_line| {
@@ -344,11 +373,12 @@ pub async fn download_url(app: tauri::AppHandle, url: String, state: State<'_, c
                         },
                     ) {
                         Ok((true, output)) => {
-                            emit_status(&window, true, format!("Saved (video)"));
+                            let status_msg: String = if want_audio_only { "Saved (audio)".to_string() } else { "Saved (video)".to_string() };
+                            emit_status(&window, true, status_msg);
                             if let Ok(db) = crate::database::Database::new() {
-                                let files = parse_multiple_filenames_from_output(&output, &processed_url, Some(&dest_dir));
+                                let files = parse_multiple_filenames_from_output(&output, &cleaned_url, Some(&dest_dir));
                                 let first_path = files.get(0).map(|t| t.2.clone()).unwrap_or_default();
-                                let _ = db.mark_link_done(&original_url, &first_path);
+                                let _ = db.mark_link_done(&cleaned_url, &first_path);
                             }
 
                             *state_clone.0.lock().unwrap() = None;
