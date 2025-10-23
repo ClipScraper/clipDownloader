@@ -167,7 +167,7 @@ pub async fn download_url(
                             &window_clone,
                         ).await {
                             Ok((true, output)) => {
-                                emit_status(&window, true, if want_audio_only { "Saved (audio)".into() } else { "Saved (video)".into() });
+                                emit_status(&window, true, if want_audio_only { String::from("Saved (audio)") } else { String::from("Saved (video)") });
                                 if let Ok(db) = crate::database::Database::new() {
                                     let files = parse_multiple_filenames_from_output(&output, &cleaned_url, Some(&dest_dir));
                                     let first_path = files.get(0).map(|t| t.2.clone()).unwrap_or_default();
@@ -191,7 +191,7 @@ pub async fn download_url(
                                                     let first = finals.get(0).cloned().unwrap_or_default();
                                                     let _ = db.mark_link_done(&original_url_arg, &first);
                                                 }
-                                                emit_status(&window, true, "Saved images");
+                                                emit_status(&window, true, "Saved images".to_string());
                                                 *state_clone.0.lock().unwrap() = None;
                                                 return;
                                             } else {
@@ -225,7 +225,7 @@ pub async fn download_url(
                                         let first = finals.get(0).cloned().unwrap_or_default();
                                         let _ = db.mark_link_done(&cleaned_url, &first);
                                     }
-                                    emit_status(&window, true, "Saved images");
+                                    emit_status(&window, true, "Saved images".to_string());
                                     *state_clone.0.lock().unwrap() = None;
                                     return;
                                 } else {
@@ -247,7 +247,7 @@ pub async fn download_url(
                         &app, &dest_dir, cookie_arg, &effective_url, false, &on_duplicate, &window_clone
                     ).await {
                         Ok((true, output)) => {
-                            emit_status(&window, true, if want_audio_only { "Saved (audio)".into() } else { "Saved (video)".into() });
+                            emit_status(&window, true, if want_audio_only { String::from("Saved (audio)") } else { String::from("Saved (video)") });
                             if let Ok(db) = crate::database::Database::new() {
                                 let files = parse_multiple_filenames_from_output(&output, &cleaned_url, Some(&dest_dir));
                                 let first_path = files.get(0).map(|t| t.2.clone()).unwrap_or_default();

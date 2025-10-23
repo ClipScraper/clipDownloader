@@ -41,7 +41,8 @@
       "binaries/ffprobe"
     ],
     "resources": [
-      "resources/**"
+      "resources/ffmpeg",
+      "resources/ffprobe"
     ]
   }
 }

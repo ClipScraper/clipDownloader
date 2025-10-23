@@ -5,6 +5,7 @@ use crate::commands::event::emit_status;
 use crate::commands::parse::{last_segment, tiktok_id_from_url, youtube_id_from_url};
 use crate::database::OnDuplicate;
 
+use tauri::Manager;
 use tauri_plugin_shell::{process::CommandEvent, ShellExt};
 
 #[cfg(target_family = "windows")]

@@ -1,6 +1,7 @@
 use std::io;
 use std::path::PathBuf;
 use tempfile::tempdir;
+use tauri::Manager;
 use tauri_plugin_shell::{process::CommandEvent, ShellExt};
 
 #[cfg(target_family = "windows")]
@@ -11,16 +12,11 @@ fn path_sep() -> &'static str { ":" }
 /// Run gallery-dl (sidecar) into a temp dir; return (ok, output, tmp_path).
 pub async fn run_gallery_dl_to_temp(app: &tauri::AppHandle, _base_download_dir: &std::path::Path, url: &str, cookie_arg: &str, window: &tauri::WebviewWindow) -> io::Result<(bool, String, PathBuf)> {
     let tmp = tempdir()?;
-    let tmp_path = tmp.into_path();
+    let tmp_path = tmp.into_path(); // keep the directory; caller cleans up
 
     let res_dir = app.path().resource_dir()
-        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| ".".into()));
-    let new_path = format!(
-        "{}{}{}",
-        res_dir.to_string_lossy(),
-        path_sep(),
-        std::env::var("PATH").unwrap_or_default()
-    );
+    .unwrap_or_else(|_| std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")));
+    let new_path = format!("{}{}{}", res_dir.to_string_lossy(), path_sep(), std::env::var("PATH").unwrap_or_default());
 
     let args = vec![
         "--verbose".into(),
