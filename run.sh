@@ -5,6 +5,47 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
+# ---------- helpers ----------
+safe_install_file() {
+  # install SRC → DEST safely (handles immutable flag + perms)
+  local src="$1"; shift
+  local dest="$1"; shift
+  local dest_dir
+  dest_dir="$(dirname "$dest")"
+
+  mkdir -p "$dest_dir"
+
+  # ensure the dir is writable by current user
+  chmod u+rwx "$dest_dir" 2>/dev/null || true
+
+  # macOS: clear "uchg" immutable flag if present
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    chflags -f nouchg "$dest" 2>/dev/null || true
+  fi
+
+  # if a previous file exists, make sure we can overwrite it
+  if [ -e "$dest" ]; then
+    chmod u+w "$dest" 2>/dev/null || true
+    rm -f "$dest" 2>/dev/null || true
+  fi
+
+  # install with executable perms
+  install -m 755 "$src" "$dest"
+}
+
+safe_link_or_copy() {
+  # prefers hard/soft link if possible, else copies
+  local src="$1"; shift
+  local dest="$1"; shift
+  if ln "$src" "$dest" 2>/dev/null; then
+    chmod 755 "$dest" 2>/dev/null || true
+  elif ln -s "$src" "$dest" 2>/dev/null; then
+    :
+  else
+    safe_install_file "$src" "$dest"
+  fi
+}
+
 # ----------------------------
 # Sidecars bootstrap for DEV
 # ----------------------------
@@ -31,7 +72,6 @@ init_sidecars() {
       chmod +x "$bin_dir/yt-dlp-$triple"
     fi
   else
-    # Windows users should run run.ps1 (this path is for Git Bash users on Windows)
     if [ ! -f "$bin_dir/yt-dlp-$triple.exe" ]; then
       echo "  • fetching yt-dlp (Windows)"
       curl -fsSL -o "$bin_dir/yt-dlp-$triple.exe" https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe
@@ -48,12 +88,10 @@ init_sidecars() {
       tar -xf ffmpeg.tar.xz
       rm -f ffmpeg.tar.xz
       FDIR="$(find . -maxdepth 1 -type d -name 'ffmpeg-*linux64-gpl' | head -n1)"
-      cp "$FDIR/bin/ffmpeg" "$bin_dir/ffmpeg-$triple"
-      cp "$FDIR/bin/ffprobe" "$bin_dir/ffprobe-$triple"
-      chmod +x "$bin_dir/ffmpeg-$triple" "$bin_dir/ffprobe-$triple"
-      cp "$FDIR/bin/ffmpeg" "$res_dir/ffmpeg"
-      cp "$FDIR/bin/ffprobe" "$res_dir/ffprobe"
-      chmod +x "$res_dir/ffmpeg" "$res_dir/ffprobe"
+      safe_install_file "$FDIR/bin/ffmpeg" "$bin_dir/ffmpeg-$triple"
+      safe_install_file "$FDIR/bin/ffprobe" "$bin_dir/ffprobe-$triple"
+      safe_install_file "$FDIR/bin/ffmpeg" "$res_dir/ffmpeg"
+      safe_install_file "$FDIR/bin/ffprobe" "$res_dir/ffprobe"
       rm -rf "$FDIR"
     fi
   elif [[ "$os" == "Darwin" ]]; then
@@ -68,17 +106,16 @@ init_sidecars() {
         fp_bin="$(command -v ffprobe)"
       else
         echo "❌ FFmpeg not found and Homebrew not installed."
-        echo "   Please install Homebrew (https://brew.sh) then run: brew install ffmpeg"
-        echo "   Or place ffmpeg & ffprobe in your PATH."
+        echo "   Install Homebrew (https://brew.sh) and run: brew install ffmpeg"
         exit 1
       fi
     fi
-    [ -f "$bin_dir/ffmpeg-$triple" ]   || cp "$ff_bin" "$bin_dir/ffmpeg-$triple"
-    [ -f "$bin_dir/ffprobe-$triple" ] || cp "$fp_bin" "$bin_dir/ffprobe-$triple"
-    chmod +x "$bin_dir/ffmpeg-$triple" "$bin_dir/ffprobe-$triple"
-    cp "$ff_bin" "$res_dir/ffmpeg"
-    cp "$fp_bin" "$res_dir/ffprobe"
-    chmod +x "$res_dir/ffmpeg" "$res_dir/ffprobe"
+    [ -f "$bin_dir/ffmpeg-$triple" ]   || safe_install_file "$ff_bin" "$bin_dir/ffmpeg-$triple"
+    [ -f "$bin_dir/ffprobe-$triple" ] || safe_install_file "$fp_bin" "$bin_dir/ffprobe-$triple"
+
+    # Put unsuffixed copies into resources for yt-dlp auto-detect
+    safe_install_file "$ff_bin" "$res_dir/ffmpeg"
+    safe_install_file "$fp_bin" "$res_dir/ffprobe"
   else
     # Windows: handled in run.ps1
     :
@@ -121,6 +158,11 @@ build_gallery_dl_onefile() {
   "$py" -m pip install --upgrade pip >/dev/null
   "$pip" install --upgrade gallery-dl pyinstaller >/dev/null
 
+  # (clean any stray root-level outputs from a previous run)
+  rm -f "$SCRIPT_DIR/gallery-dl.spec" 2>/dev/null || true
+  [ -f "$SCRIPT_DIR/dist/gallery-dl" ] && rm -f "$SCRIPT_DIR/dist/gallery-dl" || true
+  [ -d "$SCRIPT_DIR/build/gallery-dl" ] && rm -rf "$SCRIPT_DIR/build/gallery-dl" || true
+
   # Find gallery-dl's __main__.py inside the venv
   local MAIN
   MAIN="$("$py" - <<'PY'
@@ -128,15 +170,17 @@ import gallery_dl, os
 print(os.path.join(os.path.dirname(gallery_dl.__file__), "__main__.py"))
 PY
 )"
-  # Build single-file executable
-  "$py" -m PyInstaller -F -n gallery-dl "$MAIN" >/dev/null
+  # Build single-file executable (force all paths under work_dir)
+  "$py" -m PyInstaller -F -n gallery-dl "$MAIN" \
+      --distpath "$work_dir/dist" \
+      --workpath "$work_dir/build" \
+      --specpath "$work_dir" >/dev/null
 
   # Move artifact to sidecars dir
   if [ -f "$work_dir/dist/gallery-dl" ]; then
-    mv "$work_dir/dist/gallery-dl" "$bin_dir/gallery-dl-$triple"
-    chmod +x "$bin_dir/gallery-dl-$triple"
+    safe_install_file "$work_dir/dist/gallery-dl" "$bin_dir/gallery-dl-$triple"
   else
-    echo "❌ PyInstaller did not produce dist/gallery-dl"; exit 1
+    echo "❌ PyInstaller did not produce $work_dir/dist/gallery-dl"; exit 1
   fi
 
   # Cleanup build junk but keep venv cache for faster rebuilds next time
