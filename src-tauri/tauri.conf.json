@@ -9,22 +9,20 @@
     "beforeBuildCommand": "trunk build",
     "frontendDist": "../dist"
   },
-    "app": {
-      "withGlobalTauri": true,
-      "windows": [
-        {
-          "title": "ClipScraper",
-          "width": 800,
-          "height": 600,
-          "dragDropEnabled": true
-        }
-      ],
-      "security": { "csp": null }
-    },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "title": "ClipScraper",
+        "width": 800,
+        "height": 600,
+        "dragDropEnabled": true
+      }
+    ],
+    "security": { "csp": null }
+  },
   "plugins": {
-    "shell": {
-      "open": true
-    }
+    "shell": { "open": true }
   },
   "bundle": {
     "active": true,
@@ -35,6 +33,15 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
+    ],
+    "externalBin": [
+      "binaries/yt-dlp",
+      "binaries/gallery-dl",
+      "binaries/ffmpeg",
+      "binaries/ffprobe"
+    ],
+    "resources": [
+      "resources/**"
     ]
   }
 }

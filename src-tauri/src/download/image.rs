@@ -1,78 +1,68 @@
 use std::io;
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::path::PathBuf;
+use tempfile::tempdir;
+use tauri_plugin_shell::{process::CommandEvent, ShellExt};
 
-/// Try several ways to invoke gallery-dl (Homebrew path, /usr/local, PATH, and python -m)
-pub fn gallery_dl_candidates() -> Vec<(String, Vec<String>)> {
-    vec![
-        ("/opt/homebrew/bin/gallery-dl".into(), vec![]),
-        ("/usr/local/bin/gallery-dl".into(), vec![]),
-        ("gallery-dl".into(), vec![]),
-        ("python3".into(), vec!["-m".into(), "gallery_dl".into()]),
-    ]
-}
+#[cfg(target_family = "windows")]
+fn path_sep() -> &'static str { ";" }
+#[cfg(not(target_family = "windows"))]
+fn path_sep() -> &'static str { ":" }
 
-/// Low-level runner used internally.
-/// NOTE: `-d` must point to an existing directory.
-fn run_gallery_dl_raw(out_dir: &Path, url: &str, cookie_arg: &str) -> io::Result<std::process::Output> {
-    // No progress flag; keep output parseable.
-    let base_args = vec![
-        "--verbose".into(),
-        "--cookies-from-browser".into(), cookie_arg.into(),
-        "-d".into(), out_dir.display().to_string(),
-        url.into(),
-    ];
-
-    let mut last_err: Option<io::Error> = None;
-    for (prog, prefix) in gallery_dl_candidates() {
-        let mut args = prefix.clone();
-        args.extend(base_args.clone());
-
-        match Command::new(&prog).args(&args).output() {
-            Ok(out) => return Ok(out),
-            Err(e) => {
-                if e.kind() == io::ErrorKind::NotFound {
-                    last_err = Some(e);
-                    continue;
-                }
-                return Err(e);
-            }
-        }
-    }
-    Err(last_err.unwrap_or_else(|| io::Error::new(io::ErrorKind::NotFound, "gallery-dl not found")))
-}
-
-/// Run gallery-dl into a **temp directory** under the user’s download root.
-/// Caller can then move files with a duplicate policy.
-pub fn run_gallery_dl_to_temp(_base_download_dir: &std::path::Path, url: &str, cookie_arg: &str) -> std::io::Result<(std::process::Output, PathBuf)> {
-    // make a temp dir we will move from afterwards
-    let tmp = tempfile::tempdir()?;
-    // Persist the directory (avoid auto-delete); TempDir::into_path() is the correct API.
+/// Run gallery-dl (sidecar) into a temp dir; return (ok, output, tmp_path).
+pub async fn run_gallery_dl_to_temp(app: &tauri::AppHandle, _base_download_dir: &std::path::Path, url: &str, cookie_arg: &str, window: &tauri::WebviewWindow) -> io::Result<(bool, String, PathBuf)> {
+    let tmp = tempdir()?;
     let tmp_path = tmp.into_path();
 
-    let base_args = vec![
+    let res_dir = app.path().resource_dir()
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| ".".into()));
+    let new_path = format!(
+        "{}{}{}",
+        res_dir.to_string_lossy(),
+        path_sep(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+
+    let args = vec![
         "--verbose".into(),
         "--cookies-from-browser".into(), cookie_arg.into(),
         "-d".into(), tmp_path.display().to_string(),
         url.into(),
     ];
 
-    let mut last_err: Option<std::io::Error> = None;
-    for (prog, prefix) in gallery_dl_candidates() {
-        let mut args = prefix.clone();
-        args.extend(base_args.clone());
-        match Command::new(&prog).args(&args).output() {
-            Ok(out) => return Ok((out, tmp_path.clone())),
-            Err(e) => {
-                if e.kind() == std::io::ErrorKind::NotFound {
-                    last_err = Some(e);
-                    continue;
+    let cmd = app.shell().sidecar("gallery-dl")
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("sidecar(gallery-dl) error: {e}")))?;
+
+    let (mut rx, _child) = cmd.args(args)
+        .env("PATH", new_path)
+        .spawn()
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("spawn gallery-dl failed: {e}")))?;
+
+    let mut all_output = String::new();
+    let mut ok = false;
+
+    while let Some(ev) = rx.recv().await {
+        match ev {
+            CommandEvent::Stdout(bytes) => {
+                let s = String::from_utf8_lossy(&bytes);
+                for line in s.lines() {
+                    let l = line.trim();
+                    if !l.is_empty() {
+                        all_output.push_str(l);
+                        all_output.push('\n');
+                        crate::commands::event::emit_status(window, true, l.to_string());
+                    }
                 }
-                return Err(e);
             }
+            CommandEvent::Stderr(bytes) => {
+                let s = String::from_utf8_lossy(&bytes);
+                all_output.push_str(&s);
+            }
+            CommandEvent::Terminated(code) => {
+                ok = code.code == Some(0);
+            }
+            _ => {}
         }
     }
-    Err(last_err.unwrap_or_else(|| std::io::Error::new(
-        std::io::ErrorKind::NotFound, "gallery-dl not found"
-    )))
+
+    Ok((ok, all_output, tmp_path))
 }

@@ -44,20 +44,106 @@ jobs:
             libwebkit2gtk-4.0-dev \
             libappindicator3-dev \
             librsvg2-dev \
-            patchelf
+            patchelf \
+            xz-utils \
+            unzip
 
-      # Build & create the GitHub Release for this tag; uploads Tauri's default artifacts
+      # ---------- Prepare sidecar binaries (yt-dlp, ffmpeg/ffprobe, gallery-dl) ----------
+      - name: Determine target triple
+        id: triple
+        shell: bash
+        run: echo "triple=$(rustc -vV | sed -n 's/^host: //p')" >> $GITHUB_OUTPUT
+
+      - name: Setup Python for gallery-dl build
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Build gallery-dl onefile (all OS)
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install gallery-dl pyinstaller
+          MAIN=$(python - <<'PY'
+          import gallery_dl, inspect, os
+          print(os.path.join(os.path.dirname(gallery_dl.__file__), "__main__.py"))
+          PY
+          )
+          pyinstaller -F -n gallery-dl "$MAIN"
+
+      - name: Prepare sidecars (macOS/Linux)
+        if: matrix.platform != 'windows-latest'
+        shell: bash
+        run: |
+          set -euo pipefail
+          TRIPLE='${{ steps.triple.outputs.triple }}'
+          mkdir -p src-tauri/binaries src-tauri/resources
+
+          # yt-dlp
+          if [[ "$RUNNER_OS" == "macOS" ]]; then
+            curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos -o yt-dlp
+          else
+            curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o yt-dlp
+          fi
+          chmod +x yt-dlp
+          mv yt-dlp "src-tauri/binaries/yt-dlp-${TRIPLE}"
+
+          # ffmpeg/ffprobe
+          if [[ "$RUNNER_OS" == "Linux" ]]; then
+            curl -L -o ffmpeg.tar.xz https://github.com/yt-dlp/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-linux64-gpl.tar.xz
+            tar -xf ffmpeg.tar.xz
+            FDIR=$(find . -maxdepth 1 -type d -name 'ffmpeg-*linux64-gpl' | head -n1)
+            cp "$FDIR/bin/ffmpeg" "src-tauri/binaries/ffmpeg-${TRIPLE}"
+            cp "$FDIR/bin/ffprobe" "src-tauri/binaries/ffprobe-${TRIPLE}"
+            chmod +x "src-tauri/binaries/ffmpeg-${TRIPLE}" "src-tauri/binaries/ffprobe-${TRIPLE}"
+            cp "$FDIR/bin/ffmpeg" src-tauri/resources/ffmpeg
+            cp "$FDIR/bin/ffprobe" src-tauri/resources/ffprobe
+            chmod +x src-tauri/resources/ffmpeg src-tauri/resources/ffprobe
+          else
+            brew install ffmpeg
+            cp /opt/homebrew/bin/ffmpeg "src-tauri/binaries/ffmpeg-${TRIPLE}"
+            cp /opt/homebrew/bin/ffprobe "src-tauri/binaries/ffprobe-${TRIPLE}"
+            chmod +x "src-tauri/binaries/ffmpeg-${TRIPLE}" "src-tauri/binaries/ffprobe-${TRIPLE}"
+            cp /opt/homebrew/bin/ffmpeg src-tauri/resources/ffmpeg
+            cp /opt/homebrew/bin/ffprobe src-tauri/resources/ffprobe
+            chmod +x src-tauri/resources/ffmpeg src-tauri/resources/ffprobe
+          fi
+
+          # gallery-dl onefile
+          mv dist/gallery-dl "src-tauri/binaries/gallery-dl-${TRIPLE}"
+          chmod +x "src-tauri/binaries/gallery-dl-${TRIPLE}"
+
+      - name: Prepare sidecars (Windows)
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        run: |
+          $triple = '${{ steps.triple.outputs.triple }}'
+          New-Item -Force -ItemType Directory -Path src-tauri\binaries | Out-Null
+          New-Item -Force -ItemType Directory -Path src-tauri\resources | Out-Null
+
+          curl.exe -L -o yt-dlp.exe https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe
+          Move-Item yt-dlp.exe "src-tauri\binaries\yt-dlp-$triple.exe"
+
+          curl.exe -L -o ffmpeg.zip https://github.com/yt-dlp/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip
+          tar -xf ffmpeg.zip
+          $dir = Get-ChildItem -Directory -Filter "ffmpeg-*win64-gpl" | Select-Object -First 1
+          Copy-Item "$($dir.FullName)\bin\ffmpeg.exe" "src-tauri\binaries\ffmpeg-$triple.exe"
+          Copy-Item "$($dir.FullName)\bin\ffprobe.exe" "src-tauri\binaries\ffprobe-$triple.exe"
+          Copy-Item "$($dir.FullName)\bin\ffmpeg.exe" "src-tauri\resources\ffmpeg.exe"
+          Copy-Item "$($dir.FullName)\bin\ffprobe.exe" "src-tauri\resources\ffprobe.exe"
+
+          Move-Item dist\gallery-dl.exe "src-tauri\binaries\gallery-dl-$triple.exe"
+
       - name: Build & publish release (macOS/Windows/Linux)
         uses: tauri-apps/tauri-action@v0.4.5
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: ${{ github.ref_name }}            # e.g. v0.0.3
-          releaseName: 'App v__VERSION__'            # __VERSION__ comes from tauri.conf.json
+          tagName: ${{ github.ref_name }}
+          releaseName: 'App v__VERSION__'
           releaseDraft: false
           prerelease: false
 
-      # Read version to produce friendly, platform-tagged filenames
       - name: Extract app version
         id: ver
         shell: bash
@@ -70,7 +156,6 @@ jobs:
           echo "version=$v" >> $GITHUB_OUTPUT
           echo "Using version: $v"
 
-      # Copy primary artifact to a friendly, platform-tagged name and attach to the same release
       - name: Rename artifact and upload friendly-named copy
         shell: bash
         env:
