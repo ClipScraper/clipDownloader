@@ -46,6 +46,7 @@ init_sidecars() {
       echo "  • fetching yt-dlp (macOS)"
       curl -fsSL https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos -o "$bin_dir/yt-dlp-$triple"
       chmod +x "$bin_dir/yt-dlp-$triple"
+      xattr -c "$bin_dir/yt-dlp-$triple" 2>/dev/null || true
     fi
   elif [[ "$os" == "Linux" ]]; then
     if [ ! -f "$bin_dir/yt-dlp-$triple" ]; then
@@ -145,6 +146,7 @@ PY
 
   if [ -f "$work_dir/dist/gallery-dl" ]; then
     safe_install_file "$work_dir/dist/gallery-dl" "$bin_dir/gallery-dl-$triple"
+    if [[ "$os" == "Darwin" ]]; then xattr -c "$bin_dir/gallery-dl-$triple" 2>/dev/null || true; fi
   else
     echo "❌ PyInstaller did not produce $work_dir/dist/gallery-dl"; exit 1
   fi
