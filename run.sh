@@ -35,13 +35,12 @@ init_sidecars() {
 
   echo "➡️  Preparing sidecars for $triple"
 
-  # --- ensure resources/ has at least one file so Tauri's glob matches ---
-  # (Tauri v2 errors if "resources/**" matches nothing)
+  # ensure at least one resource so tauri glob doesn't fail
   if [ -z "$(find "$res_dir" -type f -maxdepth 1 2>/dev/null)" ]; then
     echo "keep" > "$res_dir/KEEP.txt"
   fi
 
-  # --- yt-dlp ---
+  # yt-dlp
   if [[ "$os" == "Darwin" ]]; then
     if [ ! -f "$bin_dir/yt-dlp-$triple" ]; then
       echo "  • fetching yt-dlp (macOS)"
@@ -61,7 +60,7 @@ init_sidecars() {
     fi
   fi
 
-  # --- ffmpeg / ffprobe + unsuffixed copies in resources/ ---
+  # ffmpeg / ffprobe (+ unsuffixed copies in resources/)
   if [[ "$os" == "Linux" ]]; then
     if [ ! -f "$bin_dir/ffmpeg-$triple" ] || [ ! -f "$bin_dir/ffprobe-$triple" ]; then
       echo "  • fetching FFmpeg static (Linux)"
@@ -100,7 +99,7 @@ init_sidecars() {
     : # Windows handled in run.ps1
   fi
 
-  # --- gallery-dl onefile via local venv + PyInstaller (avoids PEP 668 trouble) ---
+  # gallery-dl onefile via local venv + PyInstaller
   build_gallery_dl_onefile "$os" "$triple" "$bin_dir"
 }
 
@@ -122,20 +121,27 @@ build_gallery_dl_onefile() {
   "$py" -m pip install --upgrade pip >/dev/null
   "$pip" install --upgrade gallery-dl pyinstaller >/dev/null
 
-  rm -f "$SCRIPT_DIR/gallery-dl.spec" 2>/dev/null || true
-  [ -f "$SCRIPT_DIR/dist/gallery-dl" ] && rm -f "$SCRIPT_DIR/dist/gallery-dl" || true
-  [ -d "$SCRIPT_DIR/build/gallery-dl" ] && rm -rf "$SCRIPT_DIR/build/gallery-dl" || true
-
+  # locate gallery-dl __main__.py
   local MAIN
   MAIN="$("$py" - <<'PY'
 import gallery_dl, os
 print(os.path.join(os.path.dirname(gallery_dl.__file__), "__main__.py"))
 PY
 )"
+
+  # Build with extra collection flags and our hook dir
+  local hooks_dir="$SCRIPT_DIR/pyinstaller-hooks"
   "$py" -m PyInstaller -F -n gallery-dl "$MAIN" \
       --distpath "$work_dir/dist" \
       --workpath "$work_dir/build" \
-      --specpath "$work_dir" >/dev/null
+      --specpath "$work_dir" \
+      --additional-hooks-dir "$SCRIPT_DIR/pyinstaller-hooks" \
+      --runtime-hook "$SCRIPT_DIR/pyinstaller-hooks/rthook-gallery-dl.py" \
+      --collect-submodules gallery_dl.extractor \
+      --collect-submodules gallery_dl.downloader \
+      --collect-submodules gallery_dl.postprocessor \
+      --collect-submodules gallery_dl.output \
+      --collect-data gallery_dl >/dev/null
 
   if [ -f "$work_dir/dist/gallery-dl" ]; then
     safe_install_file "$work_dir/dist/gallery-dl" "$bin_dir/gallery-dl-$triple"

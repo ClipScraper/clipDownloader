@@ -48,7 +48,6 @@ jobs:
             xz-utils \
             unzip
 
-      # ---------- Prepare sidecar binaries (yt-dlp, ffmpeg/ffprobe, gallery-dl) ----------
       - name: Determine target triple
         id: triple
         shell: bash
@@ -62,14 +61,21 @@ jobs:
       - name: Build gallery-dl onefile (all OS)
         shell: bash
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install gallery-dl pyinstaller
-          MAIN=$(python - <<'PY'
-          import gallery_dl, inspect, os
-          print(os.path.join(os.path.dirname(gallery_dl.__file__), "__main__.py"))
-          PY
-          )
-          pyinstaller -F -n gallery-dl "$MAIN"
+            python -m pip install --upgrade pip
+            python -m pip install gallery-dl pyinstaller
+            MAIN=$(python - <<'PY'
+            import gallery_dl, os
+            print(os.path.join(os.path.dirname(gallery_dl.__file__), "__main__.py"))
+            PY
+            )
+            pyinstaller -F -n gallery-dl "$MAIN" \
+              --additional-hooks-dir pyinstaller-hooks \
+              --runtime-hook pyinstaller-hooks/rthook-gallery-dl.py \
+              --collect-submodules gallery_dl.extractor \
+              --collect-submodules gallery_dl.downloader \
+              --collect-submodules gallery_dl.postprocessor \
+              --collect-submodules gallery_dl.output \
+              --collect-data gallery_dl
 
       - name: Prepare sidecars (macOS/Linux)
         if: matrix.platform != 'windows-latest'

@@ -58,15 +58,22 @@ jobs:
       - name: Build gallery-dl onefile (all OS)
         shell: bash
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install gallery-dl pyinstaller
-          MAIN=$(python - <<'PY'
-          import gallery_dl, inspect, os
-          print(os.path.join(os.path.dirname(gallery_dl.__file__), "__main__.py"))
-          PY
-          )
-          pyinstaller -F -n gallery-dl "$MAIN"
-
+            python -m pip install --upgrade pip
+            python -m pip install gallery-dl pyinstaller
+            MAIN=$(python - <<'PY'
+            import gallery_dl, os
+            print(os.path.join(os.path.dirname(gallery_dl.__file__), "__main__.py"))
+            PY
+            )
+            pyinstaller -F -n gallery-dl "$MAIN" \
+              --additional-hooks-dir pyinstaller-hooks \
+              --runtime-hook pyinstaller-hooks/rthook-gallery-dl.py \
+              --collect-submodules gallery_dl.extractor \
+              --collect-submodules gallery_dl.downloader \
+              --collect-submodules gallery_dl.postprocessor \
+              --collect-submodules gallery_dl.output \
+              --collect-data gallery_dl
+      
       - name: Prepare sidecars (macOS/Linux)
         if: matrix.platform != 'windows-latest'
         shell: bash
@@ -92,23 +99,20 @@ jobs:
             cp "$FDIR/bin/ffmpeg" "src-tauri/binaries/ffmpeg-${TRIPLE}"
             cp "$FDIR/bin/ffprobe" "src-tauri/binaries/ffprobe-${TRIPLE}"
             chmod +x "src-tauri/binaries/ffmpeg-${TRIPLE}" "src-tauri/binaries/ffprobe-${TRIPLE}"
-            # Unsuffixed copies so yt-dlp auto-detects without flags
             cp "$FDIR/bin/ffmpeg" src-tauri/resources/ffmpeg
             cp "$FDIR/bin/ffprobe" src-tauri/resources/ffprobe
             chmod +x src-tauri/resources/ffmpeg src-tauri/resources/ffprobe
           else
-            # macOS (Apple Silicon on macos-latest). Uses Homebrew ffmpeg.
             brew install ffmpeg
             cp /opt/homebrew/bin/ffmpeg "src-tauri/binaries/ffmpeg-${TRIPLE}"
             cp /opt/homebrew/bin/ffprobe "src-tauri/binaries/ffprobe-${TRIPLE}"
             chmod +x "src-tauri/binaries/ffmpeg-${TRIPLE}" "src-tauri/binaries/ffprobe-${TRIPLE}"
-            # Unsuffixed copies
             cp /opt/homebrew/bin/ffmpeg src-tauri/resources/ffmpeg
             cp /opt/homebrew/bin/ffprobe src-tauri/resources/ffprobe
             chmod +x src-tauri/resources/ffmpeg src-tauri/resources/ffprobe
           fi
 
-          # gallery-dl built by pyinstaller
+          # gallery-dl onefile
           mv dist/gallery-dl "src-tauri/binaries/gallery-dl-${TRIPLE}"
           chmod +x "src-tauri/binaries/gallery-dl-${TRIPLE}"
 
@@ -124,17 +128,16 @@ jobs:
           curl.exe -L -o yt-dlp.exe https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe
           Move-Item yt-dlp.exe "src-tauri\binaries\yt-dlp-$triple.exe"
 
-          # ffmpeg/ffprobe (yt-dlp FFmpeg-Builds)
+          # ffmpeg/ffprobe
           curl.exe -L -o ffmpeg.zip https://github.com/yt-dlp/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip
           tar -xf ffmpeg.zip
           $dir = Get-ChildItem -Directory -Filter "ffmpeg-*win64-gpl" | Select-Object -First 1
           Copy-Item "$($dir.FullName)\bin\ffmpeg.exe" "src-tauri\binaries\ffmpeg-$triple.exe"
           Copy-Item "$($dir.FullName)\bin\ffprobe.exe" "src-tauri\binaries\ffprobe-$triple.exe"
-          # Unsuffixed copies so yt-dlp auto-detects without flags
           Copy-Item "$($dir.FullName)\bin\ffmpeg.exe" "src-tauri\resources\ffmpeg.exe"
           Copy-Item "$($dir.FullName)\bin\ffprobe.exe" "src-tauri\resources\ffprobe.exe"
 
-          # gallery-dl (built onefile)
+          # gallery-dl (onefile exe)
           Move-Item dist\gallery-dl.exe "src-tauri\binaries\gallery-dl-$triple.exe"
 
       - name: Build (no release upload)
