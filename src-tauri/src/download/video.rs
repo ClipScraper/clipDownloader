@@ -1,19 +1,39 @@
-use std::io::{BufRead, BufReader};
+use std::io;
 use std::path::Path;
-use std::process::{Command, Stdio};
 
+use crate::commands::event::emit_status;
 use crate::commands::parse::{last_segment, tiktok_id_from_url, youtube_id_from_url};
 use crate::database::OnDuplicate;
 
+use tauri::Manager;
+use tauri_plugin_shell::{process::CommandEvent, ShellExt};
+
+#[cfg(target_family = "windows")]
+fn path_sep() -> &'static str { ";" }
+#[cfg(not(target_family = "windows"))]
+fn path_sep() -> &'static str { ":" }
+
 fn base_ytdlp_args(cookie_arg: &str, is_ig_images: bool, audio_only: bool) -> Vec<String> {
-    let mut args: Vec<String> = vec!["--newline".into(), "-N".into(), "8".into(), "--cookies-from-browser".into(), cookie_arg.into(), "--ignore-config".into(), "--no-cache-dir".into()];
+    let mut args: Vec<String> = vec![
+        "--newline".into(),
+        "-N".into(), "8".into(),
+        "--cookies-from-browser".into(), cookie_arg.into(),
+        "--ignore-config".into(),
+        "--no-cache-dir".into()
+    ];
     if is_ig_images {
         args.push("--ignore-no-formats-error".into());
     } else if audio_only {
-        // Extract audio as mp3 at best quality
-        args.extend(vec!["-x".into(), "--audio-format".into(), "mp3".into(), "--audio-quality".into(), "0".into()]);
+        args.extend(vec![
+            "-x".into(),
+            "--audio-format".into(), "mp3".into(),
+            "--audio-quality".into(), "0".into()
+        ]);
     } else {
-        args.extend(vec!["-f".into(), "bestvideo+bestaudio/best".into(), "--merge-output-format".into(), "mp4".into()]);
+        args.extend(vec![
+            "-f".into(), "bestvideo+bestaudio/best".into(),
+            "--merge-output-format".into(), "mp4".into()
+        ]);
     }
     args
 }
@@ -79,7 +99,6 @@ fn rest_token_from_url(url: &str) -> String {
 }
 
 fn sanitize<S: Into<String>>(s: S) -> String {
-    // Replace illegal filename chars, strip control/newline, collapse whitespace.
     let t = s
         .into()
         .replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|'], "_")
@@ -87,57 +106,64 @@ fn sanitize<S: Into<String>>(s: S) -> String {
     t.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-// Probe uploader using a *clean* set of args that only prints the uploader.
-// Ignore empty/NA and sanitize the result.
-fn probe_uploader(cookie_arg: &str, processed_url: &str, is_ig_images: bool) -> Option<String> {
+// Probe uploader using yt-dlp sidecar (simulate + print)
+async fn probe_uploader(
+    app: &tauri::AppHandle,
+    cookie_arg: &str,
+    processed_url: &str,
+    is_ig_images: bool,
+) -> Option<String> {
     let mut args = base_ytdlp_args(cookie_arg, is_ig_images, false);
     args.push("--simulate".into());
     args.extend(vec!["--print".into(), "uploader".into(), processed_url.into()]);
-    match Command::new("yt-dlp").args(&args).output() {
-        Ok(out) if out.status.success() => {
-            let s = String::from_utf8_lossy(&out.stdout);
-            let first = s.lines().find(|l| !l.trim().is_empty()).unwrap_or("").trim();
-            if first.is_empty() || first.eq_ignore_ascii_case("na") || first.eq_ignore_ascii_case("n/a") {
-                None
-            } else {
-                Some(sanitize(first))
+
+    let Ok(cmd) = app.shell().sidecar("yt-dlp") else { return None; };
+
+    // Ensure PATH contains the resources dir so ffmpeg is discoverable if needed
+    use tauri::path::BaseDirectory;
+    let res_dir = app.path().resolve("", BaseDirectory::Resource)
+        .unwrap_or_else(|_| std::env::current_dir().unwrap_or_else(|_| ".".into()));
+    let new_path = format!(
+        "{}{}{}",
+        res_dir.to_string_lossy(),
+        path_sep(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+
+    let Ok((mut rx, _child)) = cmd.args(args).env("PATH", new_path).spawn() else { return None; };
+
+    let mut first_line: Option<String> = None;
+    while let Some(ev) = rx.recv().await {
+        if let CommandEvent::Stdout(bytes) = ev {
+            let s = String::from_utf8_lossy(&bytes);
+            for line in s.lines() {
+                let l = line.trim();
+                if !l.is_empty() && first_line.is_none() {
+                    first_line = Some(l.to_string());
+                }
             }
         }
-        _ => None,
     }
-}
 
-/* ---------- probing for non-IG/TT platforms (optional helper) ---------- */
-#[allow(dead_code)]
-fn probe_filename(cookie_arg: &str, processed_url: &str, is_ig_images: bool) -> std::io::Result<String> {
-    let mut args = base_ytdlp_args(cookie_arg, is_ig_images, false);
-    args.push("--simulate".into());
-    args.extend(vec!["--print".into(), "filename".into(), "-o".into(), "%(uploader)s - %(title)s [%(id)s].%(ext)s".into(), processed_url.into()]);
-    let out = Command::new("yt-dlp").args(&args).output()?;
-    if !out.status.success() {
-        let mut args_old = base_ytdlp_args(cookie_arg, is_ig_images, false);
-        args_old.push("--simulate".into());
-        args_old.extend(vec![            "--get-filename".into(),
-            "-o".into(),
-            "%(uploader)s - %(title)s [%(id)s].%(ext)s".into(),
-            processed_url.into(),
-        ]);
-        let out_old = Command::new("yt-dlp").args(&args_old).output()?;
-        if !out_old.status.success() {
-            return Err(std::io::Error::new(std::io::ErrorKind::Other, format!("yt-dlp failed to probe filename: {}", String::from_utf8_lossy(&out_old.stderr))));
-        }
-        Ok(String::from_utf8_lossy(&out_old.stdout).trim().to_string())
-    } else {
-        Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
-    }
+    first_line
+        .filter(|s| !s.eq_ignore_ascii_case("na") && !s.eq_ignore_ascii_case("n/a"))
+        .map(sanitize)
 }
 
 /* ---------- output template selection ---------- */
 
-fn choose_output_template(out_dir: &Path, cookie_arg: &str, processed_url: &str, is_ig_images: bool, audio_only: bool, on_duplicate: &OnDuplicate) -> std::io::Result<String> {
+async fn choose_output_template(
+    app: &tauri::AppHandle,
+    out_dir: &Path,
+    cookie_arg: &str,
+    processed_url: &str,
+    is_ig_images: bool,
+    audio_only: bool,
+    on_duplicate: &OnDuplicate,
+) -> io::Result<String> {
     let rest_id = sanitize(rest_token_from_url(processed_url));
-    // Prefer the real uploader; fall back to handle from URL; sanitize.
-    let mut author_real = probe_uploader(cookie_arg, processed_url, is_ig_images)
+
+    let mut author_real = probe_uploader(app, cookie_arg, processed_url, is_ig_images).await
         .or_else(|| {
             if processed_url.contains("instagram.com/") {
                 ig_handle_from_url(processed_url)
@@ -150,18 +176,15 @@ fn choose_output_template(out_dir: &Path, cookie_arg: &str, processed_url: &str,
         .unwrap_or_else(|| "unknown".into());
     author_real = sanitize(author_real);
 
-    // Desired base name EXACTLY: "uploader [ID]"
     let base_stem = format!("{author_real} [{rest_id}]");
     let ext = if audio_only { "mp3" } else { "mp4" };
 
-    // Pre-compute chosen name according to duplicate policy
     let mut chosen_stem = base_stem.clone();
     let mut chosen_path = out_dir.join(format!("{chosen_stem}.{ext}"));
 
     match on_duplicate {
         OnDuplicate::CreateNew => {
             if chosen_path.exists() {
-                // First collision -> (2), then (3)...
                 let mut n: usize = 2;
                 loop {
                     let cand = out_dir.join(format!("{base_stem}({n}).{ext}"));
@@ -173,31 +196,12 @@ fn choose_output_template(out_dir: &Path, cookie_arg: &str, processed_url: &str,
                     n += 1;
                 }
             }
-            println!(
-                "[YT-DLP][template] policy=CreateNew dir='{}' -> '{}'",
-                out_dir.display(),
-                chosen_path.display()
-            );
             Ok(format!("{chosen_stem}.%(ext)s"))
         }
         OnDuplicate::Overwrite => {
-            let existed = chosen_path.exists();
-            println!(
-                "[YT-DLP][template] policy=Overwrite dir='{}' -> {} '{}'",
-                out_dir.display(),
-                if existed { "will overwrite" } else { "will create" },
-                chosen_path.display()
-            );
             Ok(format!("{base_stem}.%(ext)s"))
         }
         OnDuplicate::DoNothing => {
-            let existed = chosen_path.exists();
-            println!(
-                "[YT-DLP][template] policy=DoNothing dir='{}' -> {} '{}'",
-                out_dir.display(),
-                if existed { "exists (will skip)" } else { "will create" },
-                chosen_path.display()
-            );
             Ok(format!("{base_stem}.%(ext)s"))
         }
     }
@@ -205,83 +209,121 @@ fn choose_output_template(out_dir: &Path, cookie_arg: &str, processed_url: &str,
 
 /* ---------- runner ---------- */
 
-pub fn run_yt_dlp_with_progress<F>(out_dir: &Path, cookie_arg: &str, processed_url: &str, is_ig_images: bool, on_duplicate: &OnDuplicate, mut progress_callback: F) -> std::io::Result<(bool, String)> where F: FnMut(&str) {
-    // Start with clean base args
-    // Determine if audio-only mode was requested via processed_url marker (set by caller)
+pub async fn run_yt_dlp_with_progress(
+    app: &tauri::AppHandle,
+    out_dir: &Path,
+    cookie_arg: &str,
+    processed_url: &str,
+    is_ig_images: bool,
+    on_duplicate: &OnDuplicate,
+    window: &tauri::WebviewWindow,
+) -> io::Result<(bool, String)> {
     let audio_only = processed_url.ends_with("#__audio_only__");
-    let real_url = if audio_only { &processed_url[..processed_url.len()-"#__audio_only__".len()] } else { processed_url };
+    let real_url = if audio_only {
+        &processed_url[..processed_url.len() - "#__audio_only__".len()]
+    } else {
+        processed_url
+    };
 
     let mut args = base_ytdlp_args(cookie_arg, is_ig_images, audio_only);
-
-    // Respect Settings: Overwrite / CreateNew / DoNothing
     args.extend(crate::settings::get_yt_dlp_duplicate_flags(on_duplicate));
 
-    // Only the real run should emit these prints (used later to parse final path)
-    args.extend(vec!["--print".into(), "after_move:filepath".into(), "--print".into(), "filepath".into(), "--print".into(), "filename".into()]);
+    // Prints used by parse_multiple_filenames_from_output
+    args.extend(vec![
+        "--print".into(), "after_move:filepath".into(),
+        "--print".into(), "filepath".into(),
+        "--print".into(), "filename".into()
+    ]);
 
-    // Force destination directory ⇒ never spill into repo
+    // Destination directory (avoid spills)
     args.push("-P".into());
     args.push(out_dir.to_string_lossy().to_string());
 
-    // Our "{uploader} [{rest_id}]" output pattern (with uniqueness if needed)
-    let output_template = choose_output_template(out_dir, cookie_arg, real_url, is_ig_images, audio_only, on_duplicate)?;
+    // Force ffmpeg discovery to our bundled resources
+    use tauri::path::BaseDirectory;
+    let res_dir = app.path().resolve("", BaseDirectory::Resource)
+        .unwrap_or_else(|_| std::env::current_dir().unwrap_or_else(|_| ".".into()));
+    args.push("--ffmpeg-location".into());
+    args.push(res_dir.to_string_lossy().to_string());
+
+    // Output template with uniqueness policy
+    let output_template = choose_output_template(
+        app, out_dir, cookie_arg, real_url, is_ig_images, audio_only, on_duplicate
+    ).await?;
     args.push("-o".into());
     args.push(output_template.clone());
 
     // URL last
     args.push(real_url.to_string());
 
-    // Helpful planned-path log
-    let planned_path = out_dir.join(output_template.replace("%(ext)s", if audio_only { "mp3" } else { "mp4" }));
-    println!("[YT-DLP] policy={:?} dir='{}'\nurl='{}'\nout='{}'", on_duplicate, out_dir.display(), real_url, planned_path.display());
-    let mut child = Command::new("yt-dlp")
-        .args(&args)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
+    let planned_path = out_dir.join(
+        output_template.replace("%(ext)s", if audio_only { "mp3" } else { "mp4" })
+    );
+    println!(
+        "[YT-DLP][sidecar] policy={:?} dir='{}'\nurl='{}'\nout='{}'",
+        on_duplicate,
+        out_dir.display(),
+        real_url,
+        planned_path.display()
+    );
 
-    let stdout = child.stdout.take().unwrap();
-    let stderr = child.stderr.take().unwrap();
+    let cmd = app.shell().sidecar("yt-dlp")
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("sidecar(yt-dlp) error: {e}")))?;
 
-    let stdout_reader = BufReader::new(stdout);
-    let stderr_reader = BufReader::new(stderr);
+    let new_path = format!(
+        "{}{}{}",
+        res_dir.to_string_lossy(),
+        path_sep(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+
+    let (mut rx, _child) = cmd.args(args)
+        .env("PATH", new_path)
+        .spawn()
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("spawn yt-dlp failed: {e}")))?;
 
     let mut all_output = String::new();
     let mut already_downloaded = false;
     let mut file_skipped = false;
+    let mut ok = false;
 
-    for line in stdout_reader.lines() {
-        if let Ok(line) = line {
-            all_output.push_str(&line);
-            all_output.push('\n');
+    while let Some(event) = rx.recv().await {
+        match event {
+            CommandEvent::Stdout(bytes) => {
+                let s = String::from_utf8_lossy(&bytes);
+                for line in s.lines() {
+                    let l = line.trim();
+                    all_output.push_str(l);
+                    all_output.push('\n');
 
-            if line.contains("has already been downloaded") {
-                already_downloaded = true;
-            }
-            if line.contains("has already been recorded in the archive")
-                || line.contains("[download] Skipping")
-            {
-                file_skipped = true;
-            }
+                    if l.contains("has already been downloaded") {
+                        already_downloaded = true;
+                    }
+                    if l.contains("has already been recorded in the archive")
+                        || l.starts_with("[download] Skipping")
+                    {
+                        file_skipped = true;
+                    }
 
-            if (line.contains("[download]") || line.contains("[info]"))
-                && !line.contains("Starting download for")
-                && !line.contains("Sleeping")
-                && !line.starts_with("[info] Downloading")
-            {
-                progress_callback(&line);
+                    if (l.contains("[download]") || l.contains("[info]"))
+                        && !l.contains("Starting download for")
+                        && !l.contains("Sleeping")
+                        && !l.starts_with("[info] Downloading")
+                    {
+                        emit_status(window, false, l.to_string());
+                    }
+                }
             }
+            CommandEvent::Stderr(bytes) => {
+                let s = String::from_utf8_lossy(&bytes);
+                all_output.push_str(&s);
+            }
+            CommandEvent::Terminated(code) => {
+                ok = code.code == Some(0) || already_downloaded || file_skipped;
+            }
+            _ => {}
         }
     }
 
-    for line in stderr_reader.lines() {
-        if let Ok(line) = line {
-            all_output.push_str(&line);
-            all_output.push('\n');
-        }
-    }
-
-    let status = child.wait()?;
-    let ok = status.success() || already_downloaded || file_skipped;
     Ok((ok, all_output))
 }

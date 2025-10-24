@@ -27,3 +27,7 @@ target
 .vscode/
 .DS_Store
 .cursor/
+
+src-tauri/binaries/**
+
+.sidecars/**
