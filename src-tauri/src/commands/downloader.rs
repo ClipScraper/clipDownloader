@@ -19,12 +19,10 @@ fn move_with_policy(src: &Path, dest_dir: &Path, file_name: &str, on_duplicate: 
             ensure_parent_dir(&target);
             if target.exists() {
                 fs::remove_file(&target).ok();
-                fs::rename(src, &target)?;
-                Ok((Some(target.display().to_string()), "Overwrote"))
-            } else {
-                fs::rename(src, &target)?;
-                Ok((Some(target.display().to_string()), "Created new"))
             }
+            fs::copy(src, &target)?;
+            fs::remove_file(src)?;
+            Ok((Some(target.display().to_string()), "Overwrote"))
         }
         crate::database::OnDuplicate::DoNothing => {
             if target.exists() {
@@ -32,7 +30,8 @@ fn move_with_policy(src: &Path, dest_dir: &Path, file_name: &str, on_duplicate: 
                 Ok((None, "Skipped"))
             } else {
                 ensure_parent_dir(&target);
-                fs::rename(src, &target)?;
+                fs::copy(src, &target)?;
+                fs::remove_file(src)?;
                 Ok((Some(target.display().to_string()), "Created new"))
             }
         }
@@ -46,7 +45,8 @@ fn move_with_policy(src: &Path, dest_dir: &Path, file_name: &str, on_duplicate: 
                 }
             }
             ensure_parent_dir(&target);
-            fs::rename(src, &target)?;
+            fs::copy(src, &target)?;
+            fs::remove_file(src)?;
             Ok((Some(target.display().to_string()), "Created new"))
         }
     }

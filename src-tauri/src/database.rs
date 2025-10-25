@@ -530,17 +530,10 @@ impl Database {
             let link: String          = row.get(4)?;
             let _name: String         = row.get(5)?;
             let output_format: String = row.get(6).unwrap_or_else(|_| "default".to_string());
-
-            let content_type = match origin.as_str() {
-                "recommendation" | "playlist" | "profile" | "bookmarks" | "liked" | "reposts" => origin.clone(),
-                _ => "recommendation".to_string(),
-            };
-            let media_token = if media == "image" || media == "images" {
-                "pictures".to_string()
-            } else {
-                "video".to_string()
-            };
-
+    
+            let content_type = origin.clone();
+            let media_token = if media == "image" || media == "images" { "pictures".to_string() } else { "video".to_string() };
+    
             Ok(UiBacklogRow { platform, content_type, handle, media: media_token, link, output_format })
         })?;
 
