@@ -2,9 +2,8 @@ PRIORITY:
 ---------
 
 - button options mp4/mp3
-- include binaries
-- audio from tiktok/instagram
-
+- keep downloading even when on a different tab
+- download by default setting
 ---------
 
 
