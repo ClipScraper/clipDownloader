@@ -7,6 +7,8 @@ use yew::prelude::*;
 use std::cell::RefCell;
 use crate::components::sidebar::Sidebar;
 use crate::log;
+use std::collections::HashMap;
+use crate::pages::downloads::ActiveDownload;
 
 #[wasm_bindgen]
 extern "C" {
@@ -148,8 +150,7 @@ pub fn app() -> Html {
     let backlog_rows = use_state(|| Vec::<ClipRow>::new());
     let queue_rows   = use_state(|| Vec::<ClipRow>::new());
 
-    let active_download = use_state(|| Option::<ClipRow>::None);
-    let download_progress = use_state(|| String::new());
+    let active_downloads = use_state(HashMap::<String, ActiveDownload>::new);
     let is_downloading = use_state(|| false);
     let is_paused = use_state(|| true);
 
@@ -194,14 +195,13 @@ pub fn app() -> Html {
     }
 
     {
-        let download_progress = download_progress.clone();
-        let active_download = active_download.clone();
+        let active_downloads = active_downloads.clone();
         let is_downloading = is_downloading.clone();
         let queue_rows = queue_rows.clone();
         use_effect_with((), move |_| {
             spawn_local(async move {
                 #[derive(serde::Deserialize)]
-                struct DownloadResult { success: bool, message: String }
+                struct DownloadResult { url: String, success: bool, message: String }
                 let handler = Closure::<dyn FnMut(JsValue)>::new(move |event: JsValue| {
                     let payload = js_sys::Reflect::get(&event, &JsValue::from_str("payload"))
                         .unwrap_or(event.clone());
@@ -212,18 +212,23 @@ pub fn app() -> Html {
                             msg.starts_with("Failed") ||
                             msg.starts_with("File already exists");
                         if is_complete {
-                            log::info("download_complete", serde_json::json!({ "success": dr.success, "message": msg }));
-                            is_downloading.set(false);
+                            log::info("download_complete", serde_json::json!({ "url": dr.url, "success": dr.success, "message": msg }));
                             if !dr.success {
-                                if let Some(row) = (*active_download).clone() {
+                                if let Some(active) = active_downloads.get(&dr.url) {
                                     let mut q = (*queue_rows).clone();
-                                    q.insert(0, row);
+                                    q.insert(0, active.row.clone());
                                     queue_rows.set(q);
                                 }
                             }
-                            active_download.set(None);
+                            let mut new_map = (*active_downloads).clone();
+                            new_map.remove(&dr.url);
+                            active_downloads.set(new_map);
                         } else {
-                            download_progress.set(msg);
+                            let mut new_map = (*active_downloads).clone();
+                            if let Some(active) = new_map.get_mut(&dr.url) {
+                                active.progress = msg;
+                            }
+                            active_downloads.set(new_map);
                         }
                     }
                 });
@@ -236,18 +241,21 @@ pub fn app() -> Html {
 
     let start_next_download = {
         let queue_rows = queue_rows.clone();
-        let active_download = active_download.clone();
-        let download_progress = download_progress.clone();
-        let is_downloading = is_downloading.clone();
+        let active_downloads = active_downloads.clone();
         Callback::from(move |_| {
             if let Some(next) = (*queue_rows).get(0).cloned() {
                 log::info("queue_autostart", serde_json::json!({ "url": next.link }));
                 let mut q = (*queue_rows).clone();
                 q.remove(0);
                 queue_rows.set(q);
-                active_download.set(Some(next.clone()));
-                is_downloading.set(true);
-                download_progress.set("Starting download...".to_string());
+
+                let mut new_map = (*active_downloads).clone();
+                new_map.insert(next.link.clone(), ActiveDownload {
+                    row: next.clone(),
+                    progress: "Starting...".to_string(),
+                });
+                active_downloads.set(new_map);
+
                 spawn_local(async move {
                     let args = serde_wasm_bindgen::to_value(
                         &serde_json::json!({ "url": next.link })
@@ -262,8 +270,7 @@ pub fn app() -> Html {
 
     {
         let page = page.clone();
-        let is_downloading = is_downloading.clone();
-        let active_download = active_download.clone();
+        let active_downloads = active_downloads.clone();
         let queue_rows = queue_rows.clone();
         let is_paused = is_paused.clone();
         let settings = settings.clone();
@@ -275,16 +282,14 @@ pub fn app() -> Html {
                 settings.download_automatically,
                 settings.keep_downloading_on_other_pages,
                 (*queue_rows).len(),
-                (*active_download).is_some(),
-                *is_downloading,
+                active_downloads.len(),
                 *is_paused,
             ),
-            move |(p, auto, keep, qlen, has_active, busy, paused)| {
+            move |(p, auto, keep, qlen, active_len, paused)| {
                 let on_dl_page = *p == Page::Downloads;
-                if !*busy && !*has_active && *qlen > 0 && !*paused {
-                    if *auto && (*keep || on_dl_page) {
-                        start_next_download.emit(());
-                    }
+                let can_download = *auto && (*keep || on_dl_page);
+                if *qlen > 0 && !*paused && *active_len < settings.parallel_downloads as usize && can_download {
+                    start_next_download.emit(());
                 }
                 || ()
             },
@@ -293,23 +298,23 @@ pub fn app() -> Html {
 
     let on_toggle_pause = {
         let is_paused = is_paused.clone();
-        let is_downloading = is_downloading.clone();
-        let active_download = active_download.clone();
+        let active_downloads = active_downloads.clone();
         let queue_rows = queue_rows.clone();
         Callback::from(move |_| {
             let going_to_pause = !*is_paused;
             log::info("queue_toggle", serde_json::json!({ "pausing": going_to_pause }));
-            if going_to_pause && *is_downloading {
-                if let Some(row) = (*active_download).clone() {
-                    let mut q = (*queue_rows).clone();
-                    q.insert(0, row);
-                    queue_rows.set(q);
+            if going_to_pause && !active_downloads.is_empty() {
+                let mut q = (*queue_rows).clone();
+                for (url, active) in active_downloads.iter() {
+                    q.insert(0, active.row.clone());
+                    let url_clone = url.clone();
+                    spawn_local(async move {
+                        let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "url": url_clone })).unwrap();
+                        let _ = invoke("cancel_download", args).await;
+                    });
                 }
-                let _ = spawn_local(async {
-                    let _ = invoke("cancel_download", JsValue::NULL).await;
-                });
-                is_downloading.set(false);
-                active_download.set(None);
+                queue_rows.set(q);
+                active_downloads.set(HashMap::new());
             }
             is_paused.set(!*is_paused);
         })
@@ -495,9 +500,7 @@ pub fn app() -> Html {
                 backlog={(*backlog_rows).clone()}
                 queue={(*queue_rows).clone()}
                 active={
-                    (*active_download).clone().map(|row|
-                        pages::downloads::ActiveDownload{ row, progress: (*download_progress).clone() }
-                    )
+                    (*active_downloads).values().cloned().collect::<Vec<_>>()
                 }
                 paused = {*is_paused}
                 on_toggle_pause={on_toggle_pause}

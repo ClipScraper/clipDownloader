@@ -27,8 +27,7 @@ fn toggle_icon_for_row(row: &ClipRow) -> IconId {
 pub struct Props {
     pub backlog: Vec<ClipRow>,
     pub queue: Vec<ClipRow>,
-    /// Optional currently running job (progress text is intentionally NOT shown).
-    pub active: Option<ActiveDownload>,
+    pub active: Vec<ActiveDownload>,
     pub paused: bool,
     pub on_toggle_pause: Callback<()>,
     pub on_delete: Callback<DeleteItem>,
@@ -561,28 +560,26 @@ pub fn downloads_page(props: &Props) -> Html {
             </div>
 
             {
-                if let Some(active) = &props.active {
-                    let plat_label = platform_str(&active.row.platform).to_string();
+                if !props.active.is_empty() {
                     html!{
                         <div class="summary">
                             <div class="rows-card no-indent">
                                 <ul class="rows">
-                                    <li class="row-line">
-                                        <img class="brand-icon" src={platform_icon_src(&plat_label)} />
-                                        <span class="link-text">{ collection_title(&active.row) }</span>
-                                        <span class="link-text" style="opacity:0.9;">{" - "}{ item_label_for_row(&active.row) }</span>
-                                        <div class="row-actions">
-                                            <button class="icon-btn" type_="button" title={ if props.paused { "Play" } else { "Pause" } } onclick={on_toggle_pause_click_row}>
-                                                {
-                                                    if props.paused {
-                                                        html!{<Icon icon_id={IconId::LucidePlay}  width={"18"} height={"18"} />}
-                                                    } else {
-                                                        html!{<Icon icon_id={IconId::LucidePause} width={"18"} height={"18"} />}
-                                                    }
-                                                }
-                                            </button>
-                                        </div>
-                                    </li>
+                                    {
+                                        for props.active.iter().map(|active| {
+                                            let plat_label = platform_str(&active.row.platform).to_string();
+                                            html! {
+                                                <li class="row-line">
+                                                    <img class="brand-icon" src={platform_icon_src(&plat_label)} />
+                                                    <span class="link-text">{ collection_title(&active.row) }</span>
+                                                    <span class="link-text" style="opacity:0.9;">{" - "}{ item_label_for_row(&active.row) }</span>
+                                                    <div class="row-actions">
+                                                        <span class="progress-text">{ &active.progress }</span>
+                                                    </div>
+                                                </li>
+                                            }
+                                        })
+                                    }
                                 </ul>
                             </div>
                         </div>

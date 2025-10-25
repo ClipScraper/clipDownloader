@@ -201,9 +201,12 @@ pub struct Settings {
     pub download_automatically: bool,
     #[serde(default = "default_true")]
     pub keep_downloading_on_other_pages: bool,
+    #[serde(default = "default_parallel_downloads")]
+    pub parallel_downloads: u8,
 }
 
 fn default_true() -> bool { true }
+fn default_parallel_downloads() -> u8 { 3 }
 
 /* ----------------------------- util: link normalize ----------------------------- */
 fn normalize_link(mut s: String) -> String {

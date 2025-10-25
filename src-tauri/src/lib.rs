@@ -7,9 +7,10 @@ mod logging;
 
 use std::sync::Mutex;
 use tokio::task::JoinHandle;
+use std::collections::HashMap;
 
 #[derive(Clone)]
-pub struct DownloadState(pub std::sync::Arc<Mutex<Option<JoinHandle<()>>>>);
+pub struct DownloadState(pub std::sync::Arc<Mutex<HashMap<String, JoinHandle<()>>>>);
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {

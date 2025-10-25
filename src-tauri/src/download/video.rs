@@ -310,13 +310,20 @@ pub async fn run_yt_dlp_with_progress(
                         && !l.contains("Sleeping")
                         && !l.starts_with("[info] Downloading")
                     {
-                        emit_status(window, false, l.to_string());
+                        emit_status(window, real_url, false, l.to_string());
                     }
                 }
             }
             CommandEvent::Stderr(bytes) => {
                 let s = String::from_utf8_lossy(&bytes);
-                all_output.push_str(&s);
+                for line in s.lines() {
+                    let l = line.trim();
+                    if !l.is_empty() {
+                        all_output.push_str(l);
+                        all_output.push('\n');
+                        emit_status(window, real_url, false, l.to_string());
+                    }
+                }
             }
             CommandEvent::Terminated(code) => {
                 ok = code.code == Some(0) || already_downloaded || file_skipped;
