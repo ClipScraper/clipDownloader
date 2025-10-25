@@ -197,7 +197,13 @@ pub struct Settings {
     pub debug_logs: bool,
     #[serde(default)]
     pub default_output: DefaultOutput,
+    #[serde(default = "default_true")]
+    pub download_automatically: bool,
+    #[serde(default = "default_true")]
+    pub keep_downloading_on_other_pages: bool,
 }
+
+fn default_true() -> bool { true }
 
 /* ----------------------------- util: link normalize ----------------------------- */
 fn normalize_link(mut s: String) -> String {

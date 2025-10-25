@@ -1,11 +1,7 @@
 PRIORITY:
 ---------
-
 - button options mp4/mp3
-- keep downloading even when on a different tab
-- download by default setting
 ---------
-
 
 - handle errors
 - get collections from extension

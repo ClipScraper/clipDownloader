@@ -19,7 +19,13 @@ pub struct Settings {
     pub debug_logs: bool,
     #[serde(default)]
     pub default_output: DefaultOutput,
+    #[serde(default = "default_true")]
+    pub download_automatically: bool,
+    #[serde(default = "default_true")]
+    pub keep_downloading_on_other_pages: bool,
 }
+
+fn default_true() -> bool { true }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq)]
 pub enum DeleteMode { Soft, Hard }
@@ -103,6 +109,26 @@ pub fn settings_page() -> Html {
             let checked = e.target_unchecked_into::<web_sys::HtmlInputElement>().checked();
             let mut s = (*settings).clone();
             s.debug_logs = checked;
+            settings.set(s);
+        })
+    };
+
+    let on_download_automatically_change = {
+        let settings = settings.clone();
+        Callback::from(move |e: Event| {
+            let checked = e.target_unchecked_into::<web_sys::HtmlInputElement>().checked();
+            let mut s = (*settings).clone();
+            s.download_automatically = checked;
+            settings.set(s);
+        })
+    };
+
+    let on_keep_downloading_change = {
+        let settings = settings.clone();
+        Callback::from(move |e: Event| {
+            let checked = e.target_unchecked_into::<web_sys::HtmlInputElement>().checked();
+            let mut s = (*settings).clone();
+            s.keep_downloading_on_other_pages = checked;
             settings.set(s);
         })
     };
@@ -202,6 +228,16 @@ pub fn settings_page() -> Html {
                     <input type="checkbox" id="debug-logs" checked={settings.debug_logs} onchange={on_debug_logs_change} />
                 </div>
 
+                <div class="form-group row">
+                    <label for="download-automatically">{"Download automatically"}</label>
+                    <input type="checkbox" id="download-automatically" checked={settings.download_automatically} onchange={on_download_automatically_change} />
+                </div>
+
+                <div class="form-group row">
+                    <label for="keep-downloading">{"Keep downloading on other pages"}</label>
+                    <input type="checkbox" id="keep-downloading" checked={settings.keep_downloading_on_other_pages} onchange={on_keep_downloading_change} />
+                </div>
+
                 <div class="form-group center">
                     <button onclick={on_save}>{"Save"}</button>
                 </div>
@@ -219,6 +255,8 @@ impl Default for Settings {
             delete_mode: DeleteMode::Soft,
             debug_logs: false,
             default_output: DefaultOutput::Video,
+            download_automatically: true,
+            keep_downloading_on_other_pages: true,
         }
     }
 }
