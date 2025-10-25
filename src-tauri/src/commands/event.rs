@@ -6,12 +6,17 @@ pub struct DownloadResult {
     pub message: String,
 }
 
-pub fn emit_status(window: &tauri::WebviewWindow, ok: bool, msg: impl Into<String>) {
-    let _ = window.emit(
-        "download-status",
-        DownloadResult {
-            success: ok,
-            message: msg.into(),
-        },
-    );
+#[derive(serde::Serialize)]
+pub(crate) struct StatusPayload {
+    pub url: String,
+    pub success: bool,
+    pub message: String,
+}
+
+/// Send a `download-status` event to the frontend.
+pub(crate) fn emit_status(window: &tauri::WebviewWindow, url: &str, success: bool, message: String) {
+    let p = StatusPayload { url: url.to_string(), success, message };
+    if let Err(e) = window.emit("download-status", &p) {
+        eprintln!("[tauri] emit_status failed: {e}");
+    }
 }

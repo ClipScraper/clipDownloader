@@ -25,6 +25,7 @@ impl Default for Settings {
             default_output: DefaultOutput::Video,
             download_automatically: true,
             keep_downloading_on_other_pages: true,
+            parallel_downloads: 3,
         }
     }
 }
@@ -129,6 +130,7 @@ pub fn save_settings(settings: &Settings) -> Result<(), String> {
         default_output: settings.default_output.clone(),
         download_automatically: settings.download_automatically,
         keep_downloading_on_other_pages: settings.keep_downloading_on_other_pages,
+        parallel_downloads: settings.parallel_downloads,
     };
 
     let body = serde_json::to_string_pretty(&to_write)

@@ -23,9 +23,12 @@ pub struct Settings {
     pub download_automatically: bool,
     #[serde(default = "default_true")]
     pub keep_downloading_on_other_pages: bool,
+    #[serde(default = "default_parallel_downloads")]
+    pub parallel_downloads: u8,
 }
 
 fn default_true() -> bool { true }
+fn default_parallel_downloads() -> u8 { 3 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq)]
 pub enum DeleteMode { Soft, Hard }
@@ -129,6 +132,16 @@ pub fn settings_page() -> Html {
             let checked = e.target_unchecked_into::<web_sys::HtmlInputElement>().checked();
             let mut s = (*settings).clone();
             s.keep_downloading_on_other_pages = checked;
+            settings.set(s);
+        })
+    };
+
+    let on_parallel_downloads_change = {
+        let settings = settings.clone();
+        Callback::from(move |e: Event| {
+            let value = e.target_unchecked_into::<web_sys::HtmlInputElement>().value_as_number() as u8;
+            let mut s = (*settings).clone();
+            s.parallel_downloads = value.max(1);
             settings.set(s);
         })
     };
@@ -238,6 +251,11 @@ pub fn settings_page() -> Html {
                     <input type="checkbox" id="keep-downloading" checked={settings.keep_downloading_on_other_pages} onchange={on_keep_downloading_change} />
                 </div>
 
+                <div class="form-group row">
+                    <label for="parallel-downloads">{"Parallel downloads"}</label>
+                    <input type="number" id="parallel-downloads" min="1" value={settings.parallel_downloads.to_string()} onchange={on_parallel_downloads_change} />
+                </div>
+
                 <div class="form-group center">
                     <button onclick={on_save}>{"Save"}</button>
                 </div>
@@ -257,6 +275,7 @@ impl Default for Settings {
             default_output: DefaultOutput::Video,
             download_automatically: true,
             keep_downloading_on_other_pages: true,
+            parallel_downloads: 3,
         }
     }
 }

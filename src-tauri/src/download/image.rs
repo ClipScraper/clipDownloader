@@ -45,7 +45,7 @@ pub async fn run_gallery_dl_to_temp(app: &tauri::AppHandle, _base_download_dir: 
                     if !l.is_empty() {
                         all_output.push_str(l);
                         all_output.push('\n');
-                        crate::commands::event::emit_status(window, true, l.to_string());
+                        crate::commands::event::emit_status(window, url, true, l.to_string());
                     }
                 }
             }

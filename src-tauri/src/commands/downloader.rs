@@ -106,8 +106,8 @@ pub async fn download_url(
                 let on_duplicate = s.on_duplicate.clone();
 
                 if let Err(e) = std_fs::create_dir_all(&download_root) {
-                    emit_status(&window, false, format!("Failed to create download dir: {e}"));
-                    *state_clone.0.lock().unwrap() = None;
+                    emit_status(&window, &processed_url, false, format!("Failed to create download dir: {e}"));
+                    state_clone.0.lock().unwrap().remove(&original_url_arg);
                     return;
                 }
 
@@ -167,13 +167,13 @@ pub async fn download_url(
                             &window_clone,
                         ).await {
                             Ok((true, output)) => {
-                                emit_status(&window, true, if want_audio_only { String::from("Saved (audio)") } else { String::from("Saved (video)") });
+                                emit_status(&window, &cleaned_url, true, if want_audio_only { String::from("Saved (audio)") } else { String::from("Saved (video)") });
                                 if let Ok(db) = crate::database::Database::new() {
                                     let files = parse_multiple_filenames_from_output(&output, &cleaned_url, Some(&dest_dir));
                                     let first_path = files.get(0).map(|t| t.2.clone()).unwrap_or_default();
                                     let _ = db.mark_link_done(&cleaned_url, &first_path);
                                 }
-                                *state_clone.0.lock().unwrap() = None;
+                                state_clone.0.lock().unwrap().remove(&original_url_arg);
                                 return;
                             }
                             Ok((false, _)) | Err(_) => {
@@ -183,7 +183,7 @@ pub async fn download_url(
                                         Ok((ok, _out, tmp_dir)) if ok => {
                                             let (moved_any, finals) = move_tmp_into_site_dir(
                                                 &tmp_dir, &dest_dir, &on_duplicate,
-                                                |line| { println!("[DOWNLOADER][IMAGES] {line}"); emit_status(&window, true, line); },
+                                                |line| { println!("[DOWNLOADER][IMAGES] {line}"); emit_status(&window, &cleaned_url, true, line); },
                                             ).unwrap_or((false, vec![]));
                                             let _ = fs::remove_dir_all(&tmp_dir);
                                             if moved_any {
@@ -191,8 +191,8 @@ pub async fn download_url(
                                                     let first = finals.get(0).cloned().unwrap_or_default();
                                                     let _ = db.mark_link_done(&original_url_arg, &first);
                                                 }
-                                                emit_status(&window, true, "Saved images".to_string());
-                                                *state_clone.0.lock().unwrap() = None;
+                                                emit_status(&window, &cleaned_url, true, "Saved images".to_string());
+                                                state_clone.0.lock().unwrap().remove(&original_url_arg);
                                                 return;
                                             } else {
                                                 eprintln!("[DOWNLOADER][IMAGES] No files moved from {} -> {}", tmp_dir.display(), dest_dir.display());
@@ -217,7 +217,7 @@ pub async fn download_url(
                             Ok((ok, _output, tmp_dir)) if ok => {
                                 let (moved_any, finals) = move_tmp_into_site_dir(
                                     &tmp_dir, &dest_dir, &on_duplicate,
-                                    |line| { println!("[DOWNLOADER][IMAGES] {line}"); emit_status(&window, true, line); },
+                                    |line| { println!("[DOWNLOADER][IMAGES] {line}"); emit_status(&window, &cleaned_url, true, line); },
                                 ).unwrap_or((false, vec![]));
                                 let _ = fs::remove_dir_all(&tmp_dir);
                                 if moved_any {
@@ -225,8 +225,8 @@ pub async fn download_url(
                                         let first = finals.get(0).cloned().unwrap_or_default();
                                         let _ = db.mark_link_done(&cleaned_url, &first);
                                     }
-                                    emit_status(&window, true, "Saved images".to_string());
-                                    *state_clone.0.lock().unwrap() = None;
+                                    emit_status(&window, &cleaned_url, true, "Saved images".to_string());
+                                    state_clone.0.lock().unwrap().remove(&original_url_arg);
                                     return;
                                 } else {
                                     eprintln!("[DOWNLOADER][IMAGES] No files moved from {} -> {}", tmp_dir.display(), dest_dir.display());
@@ -247,13 +247,13 @@ pub async fn download_url(
                         &app, &dest_dir, cookie_arg, &effective_url, false, &on_duplicate, &window_clone
                     ).await {
                         Ok((true, output)) => {
-                            emit_status(&window, true, if want_audio_only { String::from("Saved (audio)") } else { String::from("Saved (video)") });
+                            emit_status(&window, &cleaned_url, true, if want_audio_only { String::from("Saved (audio)") } else { String::from("Saved (video)") });
                             if let Ok(db) = crate::database::Database::new() {
                                 let files = parse_multiple_filenames_from_output(&output, &cleaned_url, Some(&dest_dir));
                                 let first_path = files.get(0).map(|t| t.2.clone()).unwrap_or_default();
                                 let _ = db.mark_link_done(&cleaned_url, &first_path);
                             }
-                            *state_clone.0.lock().unwrap() = None;
+                            state_clone.0.lock().unwrap().remove(&original_url_arg);
                             return;
                         }
                         Ok((false, output)) => eprintln!("[tauri] yt-dlp failed with browser: {browser}\noutput:\n{output}"),
@@ -262,14 +262,14 @@ pub async fn download_url(
                 }
 
                 if is_instagram || is_tt_photo {
-                    emit_status(&window, false, "Failed to fetch media. Ensure bundled tools are present and your chosen browser is logged in.");
+                    emit_status(&window, &cleaned_url, false, "Failed to fetch media. Ensure bundled tools are present and your chosen browser is logged in.".to_string());
                 } else {
-                    emit_status(&window, false, "Failed to download with any available browser's cookies.");
+                    emit_status(&window, &cleaned_url, false, "Failed to download with any available browser's cookies.".to_string());
                 }
-                *state_clone.0.lock().unwrap() = None;
+                state_clone.0.lock().unwrap().remove(&original_url_arg);
             }
         });
-        *state.0.lock().unwrap() = Some(handle);
+        state.0.lock().unwrap().insert(url.clone(), handle);
     } else {
         eprintln!("Could not get main window.");
     }
@@ -277,11 +277,11 @@ pub async fn download_url(
 }
 
 #[tauri::command]
-pub async fn cancel_download(state: State<'_, crate::DownloadState>) -> Result<(), String> {
-    println!("[BACKEND][DOWNLOADER] cancel_download called");
-    if let Some(handle) = state.0.lock().unwrap().take() {
+pub async fn cancel_download(state: State<'_, crate::DownloadState>, url: String) -> Result<(), String> {
+    println!("[BACKEND][DOWNLOADER] cancel_download called for {}", url);
+    if let Some(handle) = state.0.lock().unwrap().remove(&url) {
         handle.abort();
-        println!("[tauri] Download cancelled.");
+        println!("[tauri] Download cancelled for {}.", url);
     }
     Ok(())
 }
