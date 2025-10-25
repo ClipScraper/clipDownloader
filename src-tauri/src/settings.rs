@@ -23,6 +23,8 @@ impl Default for Settings {
             delete_mode: DeleteMode::Soft,
             debug_logs: false,
             default_output: DefaultOutput::Video,
+            download_automatically: true,
+            keep_downloading_on_other_pages: true,
         }
     }
 }
@@ -125,6 +127,8 @@ pub fn save_settings(settings: &Settings) -> Result<(), String> {
         delete_mode: settings.delete_mode.clone(),
         debug_logs: settings.debug_logs,
         default_output: settings.default_output.clone(),
+        download_automatically: settings.download_automatically,
+        keep_downloading_on_other_pages: settings.keep_downloading_on_other_pages,
     };
 
     let body = serde_json::to_string_pretty(&to_write)

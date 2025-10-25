@@ -1,14 +1,12 @@
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
 use crate::pages;
+use crate::pages::settings::Settings;
 use crate::types::{ClipRow, Platform, ContentType};
 use yew::prelude::*;
 use std::cell::RefCell;
 use crate::components::sidebar::Sidebar;
 use crate::log;
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Tauri v2 JS bridges
 
 #[wasm_bindgen]
 extern "C" {
@@ -27,8 +25,6 @@ fn log_invoke_err(cmd: &str, e: JsValue) {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Page {Home, Downloads, Library, Settings, Extension, Sponsor}
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Drop de-dupe guard
 thread_local! {
     static LAST_DROP: RefCell<(String, f64)> = RefCell::new(("".to_string(), 0.0));
 }
@@ -127,7 +123,6 @@ async fn start_dragdrop_listener() {
     }
 }
 
-/* ---------------- movement to Queue types ---------------- */
 pub enum DeleteItem {
     Platform(Platform),
     Collection(Platform, String, ContentType),
@@ -148,24 +143,39 @@ pub enum MoveBackItem {
 #[function_component(App)]
 pub fn app() -> Html {
     let page = use_state(|| Page::Home);
+    let settings = use_state(Settings::default);
 
     let backlog_rows = use_state(|| Vec::<ClipRow>::new());
     let queue_rows   = use_state(|| Vec::<ClipRow>::new());
 
-    // Auto-downloader state
     let active_download = use_state(|| Option::<ClipRow>::None);
     let download_progress = use_state(|| String::new());
     let is_downloading = use_state(|| false);
-    let is_paused = use_state(|| true); // ← queue pause/resume
+    let is_paused = use_state(|| true);
 
-    // Load both sections when entering Downloads
+    {
+        let settings = settings.clone();
+        use_effect_with((), move |_| {
+            spawn_local(async move {
+                if let Ok(loaded) = invoke("load_settings", JsValue::NULL).await {
+                    if let Ok(s) = serde_wasm_bindgen::from_value(loaded) {
+                        settings.set(s);
+                    }
+                }
+            });
+            || ()
+        });
+    }
+
     {
         let backlog_rows = backlog_rows.clone();
         let queue_rows = queue_rows.clone();
         let is_paused = is_paused.clone();
-        use_effect_with(*page, move |p| {
+        let settings = settings.clone();
+
+        use_effect_with((*page, settings.download_automatically), move |(p, auto)| {
             if *p == Page::Downloads {
-                is_paused.set(true);
+                is_paused.set(!*auto);
                 spawn_local(async move {
                     if let Ok(js) = invoke("list_backlog", JsValue::NULL).await {
                         if let Ok(rows) = serde_wasm_bindgen::from_value::<Vec<ClipRow>>(js) {
@@ -183,7 +193,6 @@ pub fn app() -> Html {
         });
     }
 
-    // Listener for downloader progress/completion
     {
         let download_progress = download_progress.clone();
         let active_download = active_download.clone();
@@ -225,42 +234,63 @@ pub fn app() -> Html {
         });
     }
 
-    // Auto-start next queued item while on Downloads page
-    {
-        let page = page.clone();
+    let start_next_download = {
         let queue_rows = queue_rows.clone();
         let active_download = active_download.clone();
         let download_progress = download_progress.clone();
         let is_downloading = is_downloading.clone();
+        Callback::from(move |_| {
+            if let Some(next) = (*queue_rows).get(0).cloned() {
+                log::info("queue_autostart", serde_json::json!({ "url": next.link }));
+                let mut q = (*queue_rows).clone();
+                q.remove(0);
+                queue_rows.set(q);
+                active_download.set(Some(next.clone()));
+                is_downloading.set(true);
+                download_progress.set("Starting download...".to_string());
+                spawn_local(async move {
+                    let args = serde_wasm_bindgen::to_value(
+                        &serde_json::json!({ "url": next.link })
+                    ).unwrap();
+                    if let Err(e) = invoke("download_url", args).await {
+                        log_invoke_err("download_url", e);
+                    }
+                });
+            }
+        })
+    };
+
+    {
+        let page = page.clone();
+        let is_downloading = is_downloading.clone();
+        let active_download = active_download.clone();
+        let queue_rows = queue_rows.clone();
         let is_paused = is_paused.clone();
+        let settings = settings.clone();
+        let start_next_download = start_next_download.clone();
+
         use_effect_with(
-            ((*page), (*queue_rows).len(), (*active_download).is_some(), *is_downloading, *is_paused),
-            move |(p, qlen, has_active, busy, paused)| {
-                if *p == Page::Downloads && !*busy && !*has_active && *qlen > 0 && !*paused {
-                    if let Some(next) = (*queue_rows).get(0).cloned() {
-                        log::info("queue_autostart", serde_json::json!({ "url": next.link }));
-                        // Remove from queue visually
-                        let mut q = (*queue_rows).clone();
-                        q.remove(0);
-                        queue_rows.set(q);
-                        // Mark active and kick off
-                        active_download.set(Some(next.clone()));
-                        is_downloading.set(true);
-                        download_progress.set("Starting download...".to_string());
-                        spawn_local(async move {
-                            let args = serde_wasm_bindgen::to_value(
-                                &serde_json::json!({ "url": next.link })
-                            ).unwrap();
-                            let _ = invoke("download_url", args).await;
-                        });
+            (
+                *page,
+                settings.download_automatically,
+                settings.keep_downloading_on_other_pages,
+                (*queue_rows).len(),
+                (*active_download).is_some(),
+                *is_downloading,
+                *is_paused,
+            ),
+            move |(p, auto, keep, qlen, has_active, busy, paused)| {
+                let on_dl_page = *p == Page::Downloads;
+                if !*busy && !*has_active && *qlen > 0 && !*paused {
+                    if *auto && (*keep || on_dl_page) {
+                        start_next_download.emit(());
                     }
                 }
                 || ()
-            }
+            },
         );
     }
 
-    // Pause / Resume control
     let on_toggle_pause = {
         let is_paused = is_paused.clone();
         let is_downloading = is_downloading.clone();
@@ -270,7 +300,6 @@ pub fn app() -> Html {
             let going_to_pause = !*is_paused;
             log::info("queue_toggle", serde_json::json!({ "pausing": going_to_pause }));
             if going_to_pause && *is_downloading {
-                // Cancel current and put it back on top of the queue
                 if let Some(row) = (*active_download).clone() {
                     let mut q = (*queue_rows).clone();
                     q.insert(0, row);
@@ -290,7 +319,6 @@ pub fn app() -> Html {
         let backlog_rows = backlog_rows.clone();
         let queue_rows = queue_rows.clone();
         Callback::from(move |item: DeleteItem| {
-            // Delete only affects the currently shown lists in-memory.
             let mut trim = |v: Vec<ClipRow>| -> Vec<ClipRow> {
                 match &item {
                     DeleteItem::Platform(p) => v.into_iter().filter(|r| r.platform != *p).collect(),
@@ -310,12 +338,10 @@ pub fn app() -> Html {
             match item {
                 MoveItem::Platform(plat) => {
                     let plat_str = crate::types::platform_str(&plat).to_string();
-                    // backend mutation
                     spawn_local(async move {
                         let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "platform": plat_str })).unwrap();
                         let _ = invoke("move_platform_to_queue", args).await;
                     });
-                    // front-end state move
                     let mut moved = Vec::new();
                     let mut kept  = Vec::new();
                     for r in (*backlog_rows).clone() {
