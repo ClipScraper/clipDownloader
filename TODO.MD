@@ -1,6 +1,8 @@
 PRIORITY:
 ---------
 - button options mp4/mp3
+- text overlap
+- sync dl/library
 ---------
 
 - handle errors
