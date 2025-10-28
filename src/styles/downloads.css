@@ -94,14 +94,18 @@
 }
 
 /* Reserve the rightmost 20% so text never renders under the buttons */
-.container.downloads .rows .link-text { padding-right: 40%; }
+.container.downloads .rows .link-text {
+  -webkit-mask-image: linear-gradient(to right, black 85%, transparent);
+          mask-image: linear-gradient(to right, black 85%, transparent);
+}
 
 /* For library, allow text to scroll on hover if it's too long */
 .container.library .row-line .link-text {
   -webkit-mask-image: linear-gradient(to right, black 85%, transparent);
           mask-image: linear-gradient(to right, black 85%, transparent);
 }
-.container.library .row-line:hover .link-text {
+.container.library .row-line:hover .link-text,
+.container.downloads .row-line:hover .link-text {
   -webkit-mask-image: none;
           mask-image: none;
   animation: marquee 8s linear infinite;
@@ -137,7 +141,7 @@
   transition: opacity 0.2s ease-in-out;
 
   /* Style */
-  background: var(--bg-color);
+  background: #3B3B3B;
   border-radius: 8px;
   padding: 0 4px;
   height: 36px;

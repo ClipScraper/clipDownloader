@@ -194,7 +194,7 @@ pub fn settings_page() -> Html {
                     <label for="download-dir">{"Default Download Directory"}</label>
                     <div class="input-group">
                         <input type="text" id="download-dir" readonly=true value={settings.download_directory.clone()} />
-                        <button onclick={on_directory_pick}>{"Browse"}</button>
+                        <button onclick={on_directory_pick}>{"Select"}</button>
                         <button onclick={on_open_directory} class="icon-btn">
                             <Icon icon_id={IconId::LucideFolder} width={"30"} height={"30"} />
                         </button>
