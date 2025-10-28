@@ -1,201 +1,182 @@
-name: Tag & Build Tauri Release
+name: Release on PR merge (Tauri – macOS ARM/Intel, Windows, Linux)
 
 on:
-  push:
-    tags:
-      - 'v[0-9]+.[0-9]+.[0-9]+*'
-  workflow_dispatch:
+  pull_request:
+    types: [closed]
+    branches: [main, master]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-on-pr-merge-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  build-tauri:
-    permissions:
-      contents: write
+  build:
+    if: github.event.pull_request.merged == true
     strategy:
       fail-fast: false
       matrix:
-        platform: [macos-latest, ubuntu-20.04, windows-latest]
+        include:
+          - os: macos-14
+            label: macos-arm64
+            triple: aarch64-apple-darwin
+          - os: macos-13
+            label: macos-x86_64
+            triple: x86_64-apple-darwin
+          - os: windows-latest
+            label: windows-x86_64
+            triple: x86_64-pc-windows-msvc
+          - os: ubuntu-20.04
+            label: linux-x86_64
+            triple: x86_64-unknown-linux-gnu
 
-    runs-on: ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+
+    env:
+      CARGO_TERM_COLOR: always
+      BUNDLE_DIR: src-tauri/target/release/bundle
+      BIN_DIR: src-tauri/binaries
+      RES_DIR: src-tauri/resources
 
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
 
-      - name: Install Rust stable
+      - name: Setup Rust (stable)
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Add WebAssembly target (wasm32-unknown-unknown)
+      - name: Add wasm32 target (for Yew/Trunk)
         run: rustup target add wasm32-unknown-unknown
 
-      - name: Install Trunk (for Yew build)
-        run: cargo install trunk
+      - name: Install trunk & wasm-bindgen
+        run: |
+          cargo install --locked trunk
+          cargo install --locked wasm-bindgen-cli
 
-      - name: Rust cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: './src-tauri -> target'
+      - name: Install Tauri CLI (v2 beta)
+        run: cargo install --locked tauri-cli --version "^2.0.0-beta"
 
-      - name: Install Linux dependencies
-        if: matrix.platform == 'ubuntu-20.04'
+      # Platform deps
+      - name: Linux dependencies
+        if: startsWith(matrix.os, 'ubuntu')
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            libgtk-3-dev \
-            libwebkit2gtk-4.0-dev \
-            libappindicator3-dev \
-            librsvg2-dev \
-            patchelf \
-            xz-utils \
-            unzip
+            libgtk-3-dev libwebkit2gtk-4.0-dev \
+            libayatana-appindicator3-dev librsvg2-dev \
+            ffmpeg
 
-      - name: Determine target triple
-        id: triple
-        shell: bash
-        run: echo "triple=$(rustc -vV | sed -n 's/^host: //p')" >> $GITHUB_OUTPUT
+      - name: macOS ffmpeg
+        if: startsWith(matrix.os, 'macos')
+        run: brew install ffmpeg || true
 
-      - name: Setup Python for gallery-dl build
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
+      - name: Windows ffmpeg
+        if: startsWith(matrix.os, 'windows')
+        shell: powershell
+        run: choco install ffmpeg -y --no-progress
 
-      - name: Build gallery-dl onefile (all OS)
-        shell: bash
-        run: |
-            python -m pip install --upgrade pip
-            python -m pip install gallery-dl pyinstaller
-            MAIN=$(python - <<'PY'
-            import gallery_dl, os
-            print(os.path.join(os.path.dirname(gallery_dl.__file__), "__main__.py"))
-            PY
-            )
-            pyinstaller -F -n gallery-dl "$MAIN" \
-              --additional-hooks-dir pyinstaller-hooks \
-              --runtime-hook pyinstaller-hooks/rthook-gallery-dl.py \
-              --collect-submodules gallery_dl.extractor \
-              --collect-submodules gallery_dl.downloader \
-              --collect-submodules gallery_dl.postprocessor \
-              --collect-submodules gallery_dl.output \
-              --collect-data gallery_dl
-
-      - name: Prepare sidecars (macOS/Linux)
-        if: matrix.platform != 'windows-latest'
+      # Sidecars: yt-dlp, ffmpeg/ffprobe copied into resources, gallery-dl (onefile)
+      - name: Prepare sidecars (Linux/macOS)
+        if: startsWith(matrix.os, 'ubuntu') || startsWith(matrix.os, 'macos')
         shell: bash
         run: |
           set -euo pipefail
-          TRIPLE='${{ steps.triple.outputs.triple }}'
-          mkdir -p src-tauri/binaries src-tauri/resources
+          mkdir -p "$BIN_DIR" "$RES_DIR"
 
           # yt-dlp
-          if [[ "$RUNNER_OS" == "macOS" ]]; then
-            curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos -o yt-dlp
+          if [[ "${{ matrix.label }}" == macos-* ]]; then
+            curl -L "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos" -o "$BIN_DIR/yt-dlp-${{ matrix.triple }}"
+            chmod +x "$BIN_DIR/yt-dlp-${{ matrix.triple }}"
           else
-            curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o yt-dlp
+            curl -L "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp" -o "$BIN_DIR/yt-dlp-${{ matrix.triple }}"
+            chmod +x "$BIN_DIR/yt-dlp-${{ matrix.triple }}"
           fi
-          chmod +x yt-dlp
-          mv yt-dlp "src-tauri/binaries/yt-dlp-${TRIPLE}"
 
-          # ffmpeg/ffprobe
-          if [[ "$RUNNER_OS" == "Linux" ]]; then
-            curl -L -o ffmpeg.tar.xz https://github.com/yt-dlp/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-linux64-gpl.tar.xz
-            tar -xf ffmpeg.tar.xz
-            FDIR=$(find . -maxdepth 1 -type d -name 'ffmpeg-*linux64-gpl' | head -n1)
-            cp "$FDIR/bin/ffmpeg" "src-tauri/binaries/ffmpeg-${TRIPLE}"
-            cp "$FDIR/bin/ffprobe" "src-tauri/binaries/ffprobe-${TRIPLE}"
-            chmod +x "src-tauri/binaries/ffmpeg-${TRIPLE}" "src-tauri/binaries/ffprobe-${TRIPLE}"
-            cp "$FDIR/bin/ffmpeg" src-tauri/resources/ffmpeg
-            cp "$FDIR/bin/ffprobe" src-tauri/resources/ffprobe
-            chmod +x src-tauri/resources/ffmpeg src-tauri/resources/ffprobe
-          else
-            brew install ffmpeg
-            cp /opt/homebrew/bin/ffmpeg "src-tauri/binaries/ffmpeg-${TRIPLE}"
-            cp /opt/homebrew/bin/ffprobe "src-tauri/binaries/ffprobe-${TRIPLE}"
-            chmod +x "src-tauri/binaries/ffmpeg-${TRIPLE}" "src-tauri/binaries/ffprobe-${TRIPLE}"
-            cp /opt/homebrew/bin/ffmpeg src-tauri/resources/ffmpeg
-            cp /opt/homebrew/bin/ffprobe src-tauri/resources/ffprobe
-            chmod +x src-tauri/resources/ffmpeg src-tauri/resources/ffprobe
-          fi
+          # ffmpeg/ffprobe → resources (unsuffixed for PATH discovery)
+          cp "$(which ffmpeg)" "$RES_DIR/ffmpeg"
+          cp "$(dirname "$(which ffmpeg)")/ffprobe" "$RES_DIR/ffprobe"
 
           # gallery-dl onefile
-          mv dist/gallery-dl "src-tauri/binaries/gallery-dl-${TRIPLE}"
-          chmod +x "src-tauri/binaries/gallery-dl-${TRIPLE}"
+          python3 -m pip install --upgrade pip wheel setuptools pyinstaller gallery-dl
+          MAIN=$(python3 - <<'PY'
+import gallery_dl, inspect, os
+print(os.path.join(os.path.dirname(inspect.getfile(gallery_dl)),"__main__.py"))
+PY
+)
+          pyinstaller --onefile --name "gallery-dl-${{ matrix.triple }}" "$MAIN"
+          mv "dist/gallery-dl-${{ matrix.triple }}" "$BIN_DIR/"
 
       - name: Prepare sidecars (Windows)
-        if: matrix.platform == 'windows-latest'
-        shell: pwsh
+        if: startsWith(matrix.os, 'windows')
+        shell: powershell
         run: |
-          $triple = '${{ steps.triple.outputs.triple }}'
-          New-Item -Force -ItemType Directory -Path src-tauri\binaries | Out-Null
-          New-Item -Force -ItemType Directory -Path src-tauri\resources | Out-Null
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Force -Path $env:BIN_DIR, $env:RES_DIR | Out-Null
 
-          curl.exe -L -o yt-dlp.exe https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe
-          Move-Item yt-dlp.exe "src-tauri\binaries\yt-dlp-$triple.exe"
+          # yt-dlp.exe
+          Invoke-WebRequest "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe" -OutFile "$env:BIN_DIR\yt-dlp-${{ matrix.triple }}.exe"
 
-          curl.exe -L -o ffmpeg.zip https://github.com/yt-dlp/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip
-          tar -xf ffmpeg.zip
-          $dir = Get-ChildItem -Directory -Filter "ffmpeg-*win64-gpl" | Select-Object -First 1
-          Copy-Item "$($dir.FullName)\bin\ffmpeg.exe" "src-tauri\binaries\ffmpeg-$triple.exe"
-          Copy-Item "$($dir.FullName)\bin\ffprobe.exe" "src-tauri\binaries\ffprobe-$triple.exe"
-          Copy-Item "$($dir.FullName)\bin\ffmpeg.exe" "src-tauri\resources\ffmpeg.exe"
-          Copy-Item "$($dir.FullName)\bin\ffprobe.exe" "src-tauri\resources\ffprobe.exe"
+          # ffmpeg/ffprobe → resources
+          Copy-Item (Get-Command ffmpeg).Source "$env:RES_DIR\ffmpeg.exe"
+          Copy-Item (Join-Path (Split-Path (Get-Command ffmpeg).Source) "ffprobe.exe") "$env:RES_DIR\ffprobe.exe"
 
-          Move-Item dist\gallery-dl.exe "src-tauri\binaries\gallery-dl-$triple.exe"
+          # gallery-dl onefile
+          py -m pip install --upgrade pip wheel setuptools pyinstaller gallery-dl
+          $main = py - << 'PY'
+import gallery_dl, inspect, os
+print(os.path.join(os.path.dirname(inspect.getfile(gallery_dl)),"__main__.py"))
+PY
+          py -m PyInstaller --onefile --name "gallery-dl-${{ matrix.triple }}" "$main"
+          Move-Item ".\dist\gallery-dl-${{ matrix.triple }}.exe" "$env:BIN_DIR\"
 
-      - name: Build & publish release (macOS/Windows/Linux)
-        uses: tauri-apps/tauri-action@v0.4.5
+      # Build frontend (Trunk)
+      - name: Build frontend
+        run: trunk build --release
+
+      # Build the Tauri app (unsigned; CI-friendly)
+      - name: Build Tauri app
+        run: |
+          cargo tauri build --ci
+          echo "---- Bundles ----"
+          ls -R "$BUNDLE_DIR" || true
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: bundles-${{ matrix.label }}
+          path: ${{ env.BUNDLE_DIR }}/**/*
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: [build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Derive release metadata
+        id: meta
+        run: |
+          PR="${{ github.event.pull_request.number }}"
+          TAG="vpr-${PR}-${GITHUB_SHA:0:7}"
+          NAME="PR #${PR} — ${{ github.event.pull_request.title }}"
+          echo "tag=$TAG"   >> $GITHUB_OUTPUT
+          echo "name=$NAME" >> $GITHUB_OUTPUT
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: ${{ steps.meta.outputs.name }}
+          draft: false
+          prerelease: true
+          generate_release_notes: true
+          files: dist/**/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tagName: ${{ github.ref_name }}
-          releaseName: 'App v__VERSION__'
-          releaseDraft: false
-          prerelease: false
-
-      - name: Extract app version
-        id: ver
-        shell: bash
-        run: |
-          v=$(python - <<'PY'
-          import json
-          print(json.load(open("src-tauri/tauri.conf.json"))["version"])
-          PY
-          )
-          echo "version=$v" >> $GITHUB_OUTPUT
-          echo "Using version: $v"
-
-      - name: Rename artifact and upload friendly-named copy
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          ROOT="src-tauri/target/release/bundle"
-          VER="${{ steps.ver.outputs.version }}"
-          case "${{ matrix.platform }}" in
-            macos-latest)
-              LABEL="macOS"
-              SRC=$(ls "$ROOT"/dmg/*.dmg 2>/dev/null | head -n1 || true)
-              ;;
-            windows-latest)
-              LABEL="Windows"
-              for f in "$ROOT"/msi/*.msi "$ROOT"/nsis/*.exe "$ROOT"/*/*.exe "$ROOT"/*/*.zip; do
-                [ -e "$f" ] && SRC="$f" && break
-              done
-              ;;
-            ubuntu-20.04)
-              LABEL="Linux"
-              for f in "$ROOT"/appimage/*.AppImage "$ROOT"/deb/*.deb "$ROOT"/rpm/*.rpm "$ROOT"/*/*.tar.gz; do
-                [ -e "$f" ] && SRC="$f" && break
-              done
-              ;;
-          esac
-
-          if [ -z "${SRC:-}" ]; then
-            echo "No bundle found on $LABEL; nothing to upload."
-            exit 0
-          fi
-
-          EXT="${SRC##*.}"
-          NEW="ClipScraperApp_${LABEL}_${VER}.${EXT}"
-          cp -f "$SRC" "$NEW"
-          echo "Uploading $NEW (from $SRC) to release ${{ github.ref_name }}"
-          gh release upload "${{ github.ref_name }}" "$NEW" --clobber

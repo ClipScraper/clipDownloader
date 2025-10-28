@@ -66,12 +66,18 @@
   height: 40px;
   position: relative;
 }
+.row-line > svg {
+  flex-shrink: 0;
+}
 .row-line:hover .row-actions { visibility: visible; opacity: 1; }
 
-/* Library wants row actions always visible */
+/* Library wants row actions always visible, and in the flex flow */
 .container.library .row-actions {
   visibility: visible;
   opacity: 1;
+  position: static;
+  transform: none;
+  background-color: #3B3B3B;
 }
 
 /* Make the link text take remaining space and ellipsis,
@@ -88,7 +94,27 @@
 }
 
 /* Reserve the rightmost 20% so text never renders under the buttons */
-.container.downloads .rows .link-text { padding-right: 40%; }
+.container.downloads .rows .link-text {
+  -webkit-mask-image: linear-gradient(to right, black 85%, transparent);
+          mask-image: linear-gradient(to right, black 85%, transparent);
+}
+
+/* For library, allow text to scroll on hover if it's too long */
+.container.library .row-line .link-text {
+  -webkit-mask-image: linear-gradient(to right, black 85%, transparent);
+          mask-image: linear-gradient(to right, black 85%, transparent);
+}
+.container.library .row-line:hover .link-text,
+.container.downloads .row-line:hover .link-text {
+  -webkit-mask-image: none;
+          mask-image: none;
+  animation: marquee 8s linear infinite;
+}
+
+@keyframes marquee {
+  from { text-indent: 0; }
+  to { text-indent: -180px; }
+}
 
 /* On hover, softly fade-out the trailing text so it doesn't clash with buttons */
 .container.downloads .row-line:hover .link-text {
@@ -115,7 +141,7 @@
   transition: opacity 0.2s ease-in-out;
 
   /* Style */
-  background: var(--bg-color);
+  background: #3B3B3B;
   border-radius: 8px;
   padding: 0 4px;
   height: 36px;
