@@ -1,9 +1,9 @@
-name: Release on PR merge (Tauri – macOS ARM/Intel, Windows, Linux)
+name: Release on PR merge (Tauri - macOS ARM/Intel, Windows, Linux)
 
 on:
   pull_request:
     types: [closed]
-    branches: [main, master]
+    branches: [master]
 
 permissions:
   contents: write
@@ -102,10 +102,10 @@ jobs:
           # gallery-dl onefile
           python3 -m pip install --upgrade pip wheel setuptools pyinstaller gallery-dl
           MAIN=$(python3 - <<'PY'
-import gallery_dl, inspect, os
-print(os.path.join(os.path.dirname(inspect.getfile(gallery_dl)),"__main__.py"))
-PY
-)
+          import gallery_dl, inspect, os
+          print(os.path.join(os.path.dirname(inspect.getfile(gallery_dl)),"__main__.py"))
+          PY
+          )
           pyinstaller --onefile --name "gallery-dl-${{ matrix.triple }}" "$MAIN"
           mv "dist/gallery-dl-${{ matrix.triple }}" "$BIN_DIR/"
 
@@ -126,9 +126,9 @@ PY
           # gallery-dl onefile
           py -m pip install --upgrade pip wheel setuptools pyinstaller gallery-dl
           $main = py - << 'PY'
-import gallery_dl, inspect, os
-print(os.path.join(os.path.dirname(inspect.getfile(gallery_dl)),"__main__.py"))
-PY
+          import gallery_dl, inspect, os
+          print(os.path.join(os.path.dirname(inspect.getfile(gallery_dl)),"__main__.py"))
+          PY
           py -m PyInstaller --onefile --name "gallery-dl-${{ matrix.triple }}" "$main"
           Move-Item ".\dist\gallery-dl-${{ matrix.triple }}.exe" "$env:BIN_DIR\"
 
