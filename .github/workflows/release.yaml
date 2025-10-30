@@ -93,18 +93,18 @@ jobs:
 
           # yt-dlp
           if [[ "${{ matrix.label }}" == macos-* ]]; then
-            curl -L "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos" -o "$BIN_DIR/yt-dlp-${{ matrix.triple }}"
-            chmod +x "$BIN_DIR/yt-dlp-${{ matrix.triple }}"
+            curl -L "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos" -o "$BIN_DIR/yt-dlp"
+            chmod +x "$BIN_DIR/yt-dlp"
           else
-            curl -L "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp" -o "$BIN_DIR/yt-dlp-${{ matrix.triple }}"
-            chmod +x "$BIN_DIR/yt-dlp-${{ matrix.triple }}"
+            curl -L "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp" -o "$BIN_DIR/yt-dlp"
+            chmod +x "$BIN_DIR/yt-dlp"
           fi
 
-          # ffmpeg/ffprobe → resources (unsuffixed for PATH discovery) AND binaries/ (suffixed for build)
+          # ffmpeg/ffprobe → resources (unsuffixed for PATH discovery) AND binaries/ (unsuffixed for build)
           cp "$(which ffmpeg)" "$RES_DIR/ffmpeg"
-          cp "$(which ffmpeg)" "$BIN_DIR/ffmpeg-${{ matrix.triple }}"
+          cp "$(which ffmpeg)" "$BIN_DIR/ffmpeg"
           cp "$(dirname "$(which ffmpeg)")/ffprobe" "$RES_DIR/ffprobe"
-          cp "$(dirname "$(which ffmpeg)")/ffprobe" "$BIN_DIR/ffprobe-${{ matrix.triple }}"
+          cp "$(dirname "$(which ffmpeg)")/ffprobe" "$BIN_DIR/ffprobe"
 
           # gallery-dl onefile (in a venv)
           python3 -m venv .venv
@@ -115,8 +115,8 @@ jobs:
           print(os.path.join(os.path.dirname(inspect.getfile(gallery_dl)),"__main__.py"))
           PY
           )
-          pyinstaller --onefile --name "gallery-dl-${{ matrix.triple }}" "$MAIN"
-          mv "dist/gallery-dl-${{ matrix.triple }}" "$BIN_DIR/"
+          pyinstaller --onefile --name "gallery-dl" "$MAIN"
+          mv "dist/gallery-dl" "$BIN_DIR/"
 
       - name: Prepare sidecars (Windows)
         if: startsWith(matrix.os, 'windows')
@@ -126,13 +126,13 @@ jobs:
           New-Item -ItemType Directory -Force -Path $env:BIN_DIR, $env:RES_DIR | Out-Null
 
           # yt-dlp.exe
-          Invoke-WebRequest "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe" -OutFile "$env:BIN_DIR\yt-dlp-${{ matrix.triple }}.exe"
+          Invoke-WebRequest "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe" -OutFile "$env:BIN_DIR\yt-dlp.exe"
 
           # ffmpeg/ffprobe → resources AND binaries/
           Copy-Item (Get-Command ffmpeg).Source "$env:RES_DIR\ffmpeg.exe"
-          Copy-Item (Get-Command ffmpeg).Source "$env:BIN_DIR\ffmpeg-${{ matrix.triple }}.exe"
+          Copy-Item (Get-Command ffmpeg).Source "$env:BIN_DIR\ffmpeg.exe"
           Copy-Item (Join-Path (Split-Path (Get-Command ffmpeg).Source) "ffprobe.exe") "$env:RES_DIR\ffprobe.exe"
-          Copy-Item (Join-Path (Split-Path (Get-Command ffmpeg).Source) "ffprobe.exe") "$env:BIN_DIR\ffprobe-${{ matrix.triple }}.exe"
+          Copy-Item (Join-Path (Split-Path (Get-Command ffmpeg).Source) "ffprobe.exe") "$env:BIN_DIR\ffprobe.exe"
 
           # gallery-dl onefile (in a venv)
           py -m venv .venv
@@ -142,8 +142,8 @@ jobs:
           import gallery_dl, inspect, os
           print(os.path.join(os.path.dirname(inspect.getfile(gallery_dl)),"__main__.py"))
           PY
-          py -m PyInstaller --onefile --name "gallery-dl-${{ matrix.triple }}" "$main"
-          Move-Item ".\dist\gallery-dl-${{ matrix.triple }}.exe" "$env:BIN_DIR\"
+          py -m PyInstaller --onefile --name "gallery-dl" "$main"
+          Move-Item ".\dist\gallery-dl.exe" "$env:BIN_DIR\"
 
       # Build frontend (Trunk)
       - name: Build frontend
