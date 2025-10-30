@@ -100,9 +100,11 @@ jobs:
             chmod +x "$BIN_DIR/yt-dlp-${{ matrix.triple }}"
           fi
 
-          # ffmpeg/ffprobe → resources (unsuffixed for PATH discovery)
+          # ffmpeg/ffprobe → resources (unsuffixed for PATH discovery) AND binaries/ (suffixed for build)
           cp "$(which ffmpeg)" "$RES_DIR/ffmpeg"
+          cp "$(which ffmpeg)" "$BIN_DIR/ffmpeg-${{ matrix.triple }}"
           cp "$(dirname "$(which ffmpeg)")/ffprobe" "$RES_DIR/ffprobe"
+          cp "$(dirname "$(which ffmpeg)")/ffprobe" "$BIN_DIR/ffprobe-${{ matrix.triple }}"
 
           # gallery-dl onefile (in a venv)
           python3 -m venv .venv
@@ -126,9 +128,11 @@ jobs:
           # yt-dlp.exe
           Invoke-WebRequest "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe" -OutFile "$env:BIN_DIR\yt-dlp-${{ matrix.triple }}.exe"
 
-          # ffmpeg/ffprobe → resources
+          # ffmpeg/ffprobe → resources AND binaries/
           Copy-Item (Get-Command ffmpeg).Source "$env:RES_DIR\ffmpeg.exe"
+          Copy-Item (Get-Command ffmpeg).Source "$env:BIN_DIR\ffmpeg-${{ matrix.triple }}.exe"
           Copy-Item (Join-Path (Split-Path (Get-Command ffmpeg).Source) "ffprobe.exe") "$env:RES_DIR\ffprobe.exe"
+          Copy-Item (Join-Path (Split-Path (Get-Command ffmpeg).Source) "ffprobe.exe") "$env:BIN_DIR\ffprobe-${{ matrix.triple }}.exe"
 
           # gallery-dl onefile (in a venv)
           py -m venv .venv
