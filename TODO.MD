@@ -19,25 +19,15 @@ PRIORITY:
 - parallel downloads
 - button to prioritize in backlog
 - sanitize logs
-- revert button to put back from queue to backlog
 - make sure that clicking trash removes from library
-- split db into files (wtf did I mean there -_-')
 - add play & trash button in library
 - add settings option to download mp3 or mp4
-
-settings: 
-- button:
-    - allow db duplicate / replace db duplicaet
-
-make sure image/videos have same settings code
 
 #################################### Bug:
 - Using download url on a playlist like: https://www.youtube.com/watch?v=wD0Mm6WIcYs&list=RD0vb1CtGkqtw&index=3 downloads the entire playlist without adding the videos in the database
 - Cancel to interrupt DL of videos doesn't work, it kept downloading the full playlist even after clicking Cancel
 - instagram name doesn't match exactly: eg https://www.instagram.com/p/DEZ5PboSW-l/ -> CuteyTaoTao🥰❤️🤩 [DEZ5PboSW-l].mp4 instead of dudunatao
 - keeps downlaod going even after leaving /download page
-
-
 
 
 - drag and drop doesn't work:
