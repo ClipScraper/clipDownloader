@@ -10,7 +10,6 @@ PRIORITY:
 - add tests
 - option to cap file name size
 - complete sidebar
-
 - create a button to put next to DL button in /home | Queue button, to put a download for later
 - rename greet var from home
 
@@ -29,12 +28,10 @@ PRIORITY:
 - instagram name doesn't match exactly: eg https://www.instagram.com/p/DEZ5PboSW-l/ -> CuteyTaoTao🥰❤️🤩 [DEZ5PboSW-l].mp4 instead of dudunatao
 - keeps downlaod going even after leaving /download page
 
-
 - drag and drop doesn't work:
 [BACKEND] [commands/files.rs] [read_csv_from_path] /Users/hjoncour/Downloads/0e93bac9-133d-44d0-b814-9502ebdaed9d.csv
 
 -install yt dlp on windows
 fix color buttons on windows
-
 
 - Add "moved" to library section for files that were "done" but whose path changed
