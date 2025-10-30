@@ -5,18 +5,21 @@ on:
     types: [closed]
     branches: [master]
   push:
-    branches: [master]
+    branches:
+      - "**"
 
 permissions:
   contents: write
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ github.head_ref || github.ref }}-${{ github.workflow }}
   cancel-in-progress: false
 
 jobs:
   build:
-    if: (github.event.pull_request.merged == true) || (github.event_name == 'push' && contains(github.event.head_commit.message, '[release]'))
+    if: |
+      (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true) ||
+      (github.event_name == 'push' && contains(github.event.head_commit.message, '[release]'))
     strategy:
       fail-fast: false
       matrix:
@@ -101,7 +104,9 @@ jobs:
           cp "$(which ffmpeg)" "$RES_DIR/ffmpeg"
           cp "$(dirname "$(which ffmpeg)")/ffprobe" "$RES_DIR/ffprobe"
 
-          # gallery-dl onefile
+          # gallery-dl onefile (in a venv)
+          python3 -m venv .venv
+          source .venv/bin/activate
           python3 -m pip install --upgrade pip wheel setuptools pyinstaller gallery-dl
           MAIN=$(python3 - <<'PY'
           import gallery_dl, inspect, os
@@ -125,7 +130,9 @@ jobs:
           Copy-Item (Get-Command ffmpeg).Source "$env:RES_DIR\ffmpeg.exe"
           Copy-Item (Join-Path (Split-Path (Get-Command ffmpeg).Source) "ffprobe.exe") "$env:RES_DIR\ffprobe.exe"
 
-          # gallery-dl onefile
+          # gallery-dl onefile (in a venv)
+          py -m venv .venv
+          .\.venv\Scripts\Activate.ps1
           py -m pip install --upgrade pip wheel setuptools pyinstaller gallery-dl
           $main = py - << 'PY'
           import gallery_dl, inspect, os
@@ -157,17 +164,32 @@ jobs:
     needs: [build]
     runs-on: ubuntu-latest
     steps:
+      - name: Find Pull Request
+        id: find_pr
+        if: github.event_name == 'push'
+        uses: daspn/find-pr@v2.0.0
+        with:
+          commit-sha: ${{ github.sha }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Derive release metadata
         id: meta
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
+            # Scenario: PR merged to master
             echo "tag=vpr-${{ github.event.pull_request.number }}-${GITHUB_SHA:0:7}" >> $GITHUB_OUTPUT
             echo "name=PR #${{ github.event.pull_request.number }} — ${{ github.event.pull_request.title }}" >> $GITHUB_OUTPUT
             echo "prerelease=true" >> $GITHUB_OUTPUT
             echo "draft=false" >> $GITHUB_OUTPUT
+          elif [ -n "${{ steps.find_pr.outputs.number }}" ]; then
+            # Scenario: push with [release] to a PR branch
+            PR_NUMBER="${{ steps.find_pr.outputs.number }}"
+            COMMIT_MSG=$(echo "${{ github.event.head_commit.message }}" | sed 's/\[release\]//g' | xargs)
+            echo "tag=vpr-${PR_NUMBER}-commit-${GITHUB_SHA:0:7}" >> $GITHUB_OUTPUT
+            echo "name=PR #${PR_NUMBER} — $COMMIT_MSG" >> $GITHUB_OUTPUT
+            echo "prerelease=true" >> $GITHUB_OUTPUT
+            echo "draft=false" >> $GITHUB_OUTPUT
           else
-            # For push with [release]
-            # Strip '[release]' and trim whitespace from commit message for release name
+            # Scenario: push with [release] directly to master (or another non-PR branch)
             COMMIT_MSG=$(echo "${{ github.event.head_commit.message }}" | sed 's/\[release\]//g' | xargs)
             echo "tag=v$(date +'%Y.%m.%d')-${GITHUB_SHA:0:7}" >> $GITHUB_OUTPUT
             echo "name=$COMMIT_MSG" >> $GITHUB_OUTPUT
