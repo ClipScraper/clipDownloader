@@ -95,6 +95,7 @@ jobs:
           if [[ "${{ matrix.label }}" == macos-* ]]; then
             curl -L "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos" -o "$BIN_DIR/yt-dlp-${{ matrix.triple }}"
             chmod +x "$BIN_DIR/yt-dlp-${{ matrix.triple }}"
+            xattr -c "$BIN_DIR/yt-dlp-${{ matrix.triple }}"
           else
             curl -L "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp" -o "$BIN_DIR/yt-dlp-${{ matrix.triple }}"
             chmod +x "$BIN_DIR/yt-dlp-${{ matrix.triple }}"
@@ -124,6 +125,9 @@ jobs:
             --collect-submodules gallery_dl.output \
             --collect-data gallery_dl
           mv "dist/gallery-dl-${{ matrix.triple }}" "$BIN_DIR/"
+          if [[ "${{ matrix.label }}" == macos-* ]]; then
+            xattr -c "$BIN_DIR/gallery-dl-${{ matrix.triple }}"
+          fi
 
       - name: Prepare sidecars (Windows)
         if: startsWith(matrix.os, 'windows')
