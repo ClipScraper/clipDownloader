@@ -1,20 +1,21 @@
-name: Release on PR merge (Tauri – macOS ARM/Intel, Windows, Linux)
-
+name: Release on PR merge or [release] commit (Tauri - macOS ARM/Intel, Windows, Linux)
 on:
   pull_request:
     types: [closed]
-    branches: [main, master]
-
+    branches: [master]
+  push:
+    branches:
+      - "**"
 permissions:
   contents: write
-
 concurrency:
-  group: release-on-pr-merge-${{ github.ref }}
-  cancel-in-progress: false
-
+  group: release-${{ github.head_ref || github.ref }}-${{ github.workflow }}
+  cancel-in-progress: true
 jobs:
   build:
-    if: github.event.pull_request.merged == true
+    if: |
+      (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true) ||
+      (github.event_name == 'push' && contains(github.event.head_commit.message, '[release]'))
     strategy:
       fail-fast: false
       matrix:
@@ -28,15 +29,14 @@ jobs:
           - os: windows-latest
             label: windows-x86_64
             triple: x86_64-pc-windows-msvc
-          - os: ubuntu-20.04
-            label: linux-x86_64
-            triple: x86_64-unknown-linux-gnu
-
+          # - os: ubuntu-20.04
+          #   label: linux-x86_64
+          #   triple: x86_64-unknown-linux-gnu
     runs-on: ${{ matrix.os }}
 
     env:
       CARGO_TERM_COLOR: always
-      BUNDLE_DIR: src-tauri/target/release/bundle
+      BUNDLE_DIR: target/release/bundle
       BIN_DIR: src-tauri/binaries
       RES_DIR: src-tauri/resources
 
@@ -45,39 +45,48 @@ jobs:
         uses: actions/checkout@v4
         with: { fetch-depth: 0 }
 
-      - name: Setup Rust (stable)
+      - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
 
-      - name: Add wasm32 target (for Yew/Trunk)
-        run: rustup target add wasm32-unknown-unknown
-
-      - name: Install trunk & wasm-bindgen
+      - name: Cache cargo binaries
+        id: cache-cargo-binaries
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin
+          key: ${{ runner.os }}-${{ runner.arch }}-cargo-binaries-v1-${{ hashFiles('.github/workflows/release.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-cargo-binaries-v1-
+      - name: Install cargo tools (if not cached)
+        if: runner.os != 'Windows'
         run: |
-          cargo install --locked trunk
-          cargo install --locked wasm-bindgen-cli
-
-      - name: Install Tauri CLI (v2 beta)
-        run: cargo install --locked tauri-cli --version "^2.0.0-beta"
-
+          if ! command -v trunk &> /dev/null; then cargo install --locked trunk; fi
+          if ! command -v wasm-bindgen &> /dev/null; then cargo install --locked wasm-bindgen-cli; fi
+          if ! command -v cargo-tauri &> /dev/null; then cargo install --locked tauri-cli --version "^2.0.0-beta"; fi
+      - name: Install cargo tools (if not cached) (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          if (-not (Get-Command trunk -ErrorAction SilentlyContinue)) { cargo install --locked trunk }
+          if (-not (Get-Command wasm-bindgen -ErrorAction SilentlyContinue)) { cargo install --locked wasm-bindgen-cli }
+          if (-not (Get-Command cargo-tauri -ErrorAction SilentlyContinue)) { cargo install --locked tauri-cli --version "^2.0.0-beta" }
       # Platform deps
-      - name: Linux dependencies
-        if: startsWith(matrix.os, 'ubuntu')
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libgtk-3-dev libwebkit2gtk-4.0-dev \
-            libayatana-appindicator3-dev librsvg2-dev \
-            ffmpeg
-
+      # - name: Linux dependencies
+      #   if: startsWith(matrix.os, 'ubuntu')
+      #   run: |
+      #     sudo apt-get update
+      #     sudo apt-get install -y \
+      #       libgtk-3-dev libwebkit2gtk-4.0-dev \
+      #       libayatana-appindicator3-dev librsvg2-dev \
+      #       ffmpeg
       - name: macOS ffmpeg
         if: startsWith(matrix.os, 'macos')
         run: brew install ffmpeg || true
-
       - name: Windows ffmpeg
         if: startsWith(matrix.os, 'windows')
         shell: powershell
         run: choco install ffmpeg -y --no-progress
-
       # Sidecars: yt-dlp, ffmpeg/ffprobe copied into resources, gallery-dl (onefile)
       - name: Prepare sidecars (Linux/macOS)
         if: startsWith(matrix.os, 'ubuntu') || startsWith(matrix.os, 'macos')
@@ -85,64 +94,77 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$BIN_DIR" "$RES_DIR"
-
           # yt-dlp
           if [[ "${{ matrix.label }}" == macos-* ]]; then
             curl -L "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos" -o "$BIN_DIR/yt-dlp-${{ matrix.triple }}"
             chmod +x "$BIN_DIR/yt-dlp-${{ matrix.triple }}"
+            xattr -c "$BIN_DIR/yt-dlp-${{ matrix.triple }}"
           else
             curl -L "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp" -o "$BIN_DIR/yt-dlp-${{ matrix.triple }}"
             chmod +x "$BIN_DIR/yt-dlp-${{ matrix.triple }}"
           fi
-
-          # ffmpeg/ffprobe → resources (unsuffixed for PATH discovery)
+          # ffmpeg/ffprobe → resources (unsuffixed) AND binaries/ (suffixed)
           cp "$(which ffmpeg)" "$RES_DIR/ffmpeg"
+          cp "$(which ffmpeg)" "$BIN_DIR/ffmpeg-${{ matrix.triple }}"
           cp "$(dirname "$(which ffmpeg)")/ffprobe" "$RES_DIR/ffprobe"
-
-          # gallery-dl onefile
+          cp "$(dirname "$(which ffmpeg)")/ffprobe" "$BIN_DIR/ffprobe-${{ matrix.triple }}"
+          # gallery-dl onefile (in a venv)
+          python3 -m venv .venv
+          source .venv/bin/activate
           python3 -m pip install --upgrade pip wheel setuptools pyinstaller gallery-dl
           MAIN=$(python3 - <<'PY'
-import gallery_dl, inspect, os
-print(os.path.join(os.path.dirname(inspect.getfile(gallery_dl)),"__main__.py"))
-PY
-)
-          pyinstaller --onefile --name "gallery-dl-${{ matrix.triple }}" "$MAIN"
+          import gallery_dl, inspect, os
+          print(os.path.join(os.path.dirname(inspect.getfile(gallery_dl)),"__main__.py"))
+          PY
+          )
+          pyinstaller --onefile --name "gallery-dl-${{ matrix.triple }}" "$MAIN" \
+            --additional-hooks-dir pyinstaller-hooks \
+            --runtime-hook pyinstaller-hooks/rthook-gallery-dl.py \
+            --collect-submodules gallery_dl.extractor \
+            --collect-submodules gallery_dl.downloader \
+            --collect-submodules gallery_dl.postprocessor \
+            --collect-submodules gallery_dl.output \
+            --collect-data gallery_dl
           mv "dist/gallery-dl-${{ matrix.triple }}" "$BIN_DIR/"
-
+          if [[ "${{ matrix.label }}" == macos-* ]]; then
+            xattr -c "$BIN_DIR/gallery-dl-${{ matrix.triple }}"
+          fi
       - name: Prepare sidecars (Windows)
         if: startsWith(matrix.os, 'windows')
         shell: powershell
         run: |
           $ErrorActionPreference = "Stop"
           New-Item -ItemType Directory -Force -Path $env:BIN_DIR, $env:RES_DIR | Out-Null
-
           # yt-dlp.exe
           Invoke-WebRequest "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe" -OutFile "$env:BIN_DIR\yt-dlp-${{ matrix.triple }}.exe"
-
-          # ffmpeg/ffprobe → resources
+          # ffmpeg/ffprobe → resources (unsuffixed) AND binaries/ (suffixed)
           Copy-Item (Get-Command ffmpeg).Source "$env:RES_DIR\ffmpeg.exe"
+          Copy-Item (Get-Command ffmpeg).Source "$env:BIN_DIR\ffmpeg-${{ matrix.triple }}.exe"
           Copy-Item (Join-Path (Split-Path (Get-Command ffmpeg).Source) "ffprobe.exe") "$env:RES_DIR\ffprobe.exe"
-
-          # gallery-dl onefile
+          Copy-Item (Join-Path (Split-Path (Get-Command ffmpeg).Source) "ffprobe.exe") "$env:BIN_DIR\ffprobe-${{ matrix.triple }}.exe"
+          # gallery-dl onefile (in a venv)
+          py -m venv .venv
+          .\.venv\Scripts\Activate.ps1
           py -m pip install --upgrade pip wheel setuptools pyinstaller gallery-dl
-          $main = py - << 'PY'
-import gallery_dl, inspect, os
-print(os.path.join(os.path.dirname(inspect.getfile(gallery_dl)),"__main__.py"))
-PY
-          py -m PyInstaller --onefile --name "gallery-dl-${{ matrix.triple }}" "$main"
+          $main = py -c "import gallery_dl, inspect, os; print(os.path.join(os.path.dirname(inspect.getfile(gallery_dl)), '__main__.py'))"
+          py -m PyInstaller --onefile --name "gallery-dl-${{ matrix.triple }}" "$main" `
+            --additional-hooks-dir pyinstaller-hooks `
+            --runtime-hook pyinstaller-hooks/rthook-gallery-dl.py `
+            --collect-submodules gallery_dl.extractor `
+            --collect-submodules gallery_dl.downloader `
+            --collect-submodules gallery_dl.postprocessor `
+            --collect-submodules gallery_dl.output `
+            --collect-data gallery_dl
           Move-Item ".\dist\gallery-dl-${{ matrix.triple }}.exe" "$env:BIN_DIR\"
-
       # Build frontend (Trunk)
       - name: Build frontend
         run: trunk build --release
-
       # Build the Tauri app (unsigned; CI-friendly)
       - name: Build Tauri app
         run: |
           cargo tauri build --ci
           echo "---- Bundles ----"
           ls -R "$BUNDLE_DIR" || true
-
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -150,33 +172,68 @@ PY
           path: ${{ env.BUNDLE_DIR }}/**/*
           if-no-files-found: error
           retention-days: 7
-
   publish:
     needs: [build]
+    if: |
+      always() && (
+        (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true) ||
+        (github.event_name == 'push' && contains(github.event.head_commit.message, '[release]'))
+      )
     runs-on: ubuntu-latest
     steps:
+      - name: Check build job conclusion
+        if: needs.build.result != 'success'
+        run: |
+          echo "One or more build jobs failed. Skipping release."
+          exit 1
+
+      - name: Find Pull Request
+        id: find_pr
+        if: github.event_name == 'push'
+        uses: jwalton/gh-find-current-pr@v1
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Derive release metadata
         id: meta
         run: |
-          PR="${{ github.event.pull_request.number }}"
-          TAG="vpr-${PR}-${GITHUB_SHA:0:7}"
-          NAME="PR #${PR} — ${{ github.event.pull_request.title }}"
-          echo "tag=$TAG"   >> $GITHUB_OUTPUT
-          echo "name=$NAME" >> $GITHUB_OUTPUT
-
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            # Scenario: PR merged to master
+            echo "tag=vpr-${{ github.event.pull_request.number }}-${GITHUB_SHA:0:7}" >> $GITHUB_OUTPUT
+            echo "name=PR #${{ github.event.pull_request.number }} — ${{ github.event.pull_request.title }}" >> $GITHUB_OUTPUT
+            echo "prerelease=true" >> $GITHUB_OUTPUT
+            echo "draft=false" >> $GITHUB_OUTPUT
+          elif [ -n "${{ steps.find_pr.outputs.number }}" ]; then
+            # Scenario: push with [release] to a PR branch
+            PR_NUMBER="${{ steps.find_pr.outputs.number }}"
+            COMMIT_MSG=$(echo "${{ github.event.head_commit.message }}" | sed 's/\[release\]//g' | xargs)
+            echo "tag=vpr-${PR_NUMBER}-commit-${GITHUB_SHA:0:7}" >> $GITHUB_OUTPUT
+            echo "name=PR #${PR_NUMBER} — $COMMIT_MSG" >> $GITHUB_OUTPUT
+            echo "prerelease=true" >> $GITHUB_OUTPUT
+            echo "draft=false" >> $GITHUB_OUTPUT
+          else
+            # Scenario: push with [release] directly to master (or another non-PR branch)
+            COMMIT_MSG=$(echo "${{ github.event.head_commit.message }}" | sed 's/\[release\]//g' | xargs)
+            echo "tag=v$(date +'%Y.%m.%d')-${GITHUB_SHA:0:7}" >> $GITHUB_OUTPUT
+            echo "name=$COMMIT_MSG" >> $GITHUB_OUTPUT
+            echo "prerelease=false" >> $GITHUB_OUTPUT
+            echo "draft=false" >> $GITHUB_OUTPUT
+          fi
       - name: Download all build artifacts
         uses: actions/download-artifact@v4
         with:
           path: dist
-
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.meta.outputs.tag }}
           name: ${{ steps.meta.outputs.name }}
-          draft: false
-          prerelease: true
+          draft: ${{ steps.meta.outputs.draft }}
+          prerelease: ${{ steps.meta.outputs.prerelease }}
           generate_release_notes: true
-          files: dist/**/*
+          files: |
+            dist/**/*.dmg
+            dist/**/*.msi
+            dist/**/*-setup.exe
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
