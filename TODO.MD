@@ -15,11 +15,9 @@ PRIORITY:
 
 - Cancel download
 - preview next download
-- parallel downloads
 - button to prioritize in backlog
 - sanitize logs
 - make sure that clicking trash removes from library
-- add play & trash button in library
 - add settings option to download mp3 or mp4
 
 #################################### Bug:
