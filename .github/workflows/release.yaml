@@ -271,4 +271,277 @@ jobs:
           extension-path: ${{ env.ZIP_NAME }}
           oauth-client-id: ${{ vars.CWS_CLIENT_ID }}
           oauth-client-secret: ${{ secrets.CWS_CLIENT_SECRET }}
+          oauth-refresh-token: ${{ secrets.CWS_REFRESH_TOKEN }}name: Release (GitHub + Chrome Web Store)
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+    branches: [master]
+  push:
+    branches: [master]
+
+permissions:
+  contents: write
+  pull-requests: read
+
+env:
+  NODE_VERSION: "20"
+  ZIP_NAME: extension.zip
+  PKG_DIR: .cws-package
+
+jobs:
+  # A) While PR is open: if any commit message contains [test-release],
+  #    create a GitHub pre-release and push to the Chrome Web Store.
+  pr-test-release:
+    if: github.event_name == 'pull_request' && github.event.action != 'closed'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check PR is from same repo (secrets are unavailable for forks)
+        id: same-repo
+        run: |
+          if [ "${{ github.event.pull_request.head.repo.full_name }}" != "${{ github.repository }}" ]; then
+            echo "from_fork=true" >> $GITHUB_OUTPUT
+          else
+            echo "from_fork=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect [test-release] in PR commits
+        id: detect
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const {owner, repo} = context.repo;
+            const number = context.payload.pull_request.number;
+            const resp = await github.rest.pulls.listCommits({
+              owner, repo, pull_number: number, per_page: 250
+            });
+            const has = resp.data.some(c => /\[test-release\]/i.test(c.commit.message));
+            core.info(`Found [test-release] in PR #${number} commits: ${has}`);
+            core.setOutput('has_test', has ? 'true' : 'false');
+
+      - name: Stop early if not a test-release or from a fork
+        if: steps.detect.outputs.has_test != 'true' || steps.same-repo.outputs.from_fork == 'true'
+        run: echo "Skipping test release."
+
+      - name: Setup Node
+        if: steps.detect.outputs.has_test == 'true' && steps.same-repo.outputs.from_fork != 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install & Build
+        if: steps.detect.outputs.has_test == 'true' && steps.same-repo.outputs.from_fork != 'true'
+        run: |
+          if [ -f pnpm-lock.yaml ]; then
+            corepack enable
+            pnpm i --frozen-lockfile
+            pnpm build || true
+          elif [ -f yarn.lock ]; then
+            yarn --frozen-lockfile
+            yarn build || true
+          elif [ -f package-lock.json ]; then
+            npm ci
+            npm run build || true
+          fi
+
+      - name: Package Chrome extension (ensure manifest at ZIP root)
+        if: steps.detect.outputs.has_test == 'true' && steps.same-repo.outputs.from_fork != 'true'
+        run: |
+          set -euo pipefail
+          rm -rf "${{ env.PKG_DIR }}" "${{ env.ZIP_NAME }}"
+          mkdir -p "${{ env.PKG_DIR }}"
+
+          # Prefer common build dirs; fall back to repo root
+          OUT=""
+          for d in dist build release; do
+            if [ -d "$d" ]; then OUT="$d"; break; fi
+          done
+          if [ -z "$OUT" ]; then OUT="."; fi
+
+          if [ "$OUT" = "." ]; then
+            # Copy a safe, conventional set from repo root
+            for p in manifest.json icons assets _locales images styles css js lib src background content popup options; do
+              [ -e "$p" ] && rsync -a --exclude 'node_modules' --exclude '.git' --exclude '.github' "$p" "${{ env.PKG_DIR }}/"
+            done
+          else
+            # Copy built output first
+            rsync -a "$OUT"/ "${{ env.PKG_DIR }}/"
+            # If manifest.json isn't in the build dir, copy from repo root
+            if [ ! -f "${{ env.PKG_DIR }}/manifest.json" ] && [ -f "manifest.json" ]; then
+              cp manifest.json "${{ env.PKG_DIR }}/"
+            fi
+            # Bring over common asset dirs if missing
+            for d in icons assets _locales images; do
+              if [ ! -e "${{ env.PKG_DIR }}/$d" ] && [ -e "$d" ]; then
+                rsync -a "$d" "${{ env.PKG_DIR }}/"
+              fi
+            done
+          fi
+
+          # Hard fail if manifest still missing
+          test -f "${{ env.PKG_DIR }}/manifest.json" || { echo "::error::manifest.json not found at ZIP root"; ls -la "${{ env.PKG_DIR }}"; exit 1; }
+
+          (cd "${{ env.PKG_DIR }}" && zip -qr "../${{ env.ZIP_NAME }}" .)
+          ls -lh "${{ env.ZIP_NAME }}"
+
+      - name: Create GitHub pre-release (test)
+        if: steps.detect.outputs.has_test == 'true' && steps.same-repo.outputs.from_fork != 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: pr-test-${{ github.event.pull_request.number }}-${{ github.run_number }}
+          name: PR Test Release #${{ github.event.pull_request.number }} (run ${{ github.run_number }})
+          prerelease: true
+          generate_release_notes: true
+          files: ${{ env.ZIP_NAME }}
+
+      - name: Publish to Chrome Web Store (TEST)
+        if: steps.detect.outputs.has_test == 'true' && steps.same-repo.outputs.from_fork != 'true'
+        uses: browser-actions/release-chrome-extension@v0
+        with:
+          extension-id: ${{ vars.CWS_EXTENSION_ID }}
+          extension-path: ${{ env.ZIP_NAME }}
+          oauth-client-id: ${{ vars.CWS_CLIENT_ID }}
+          oauth-client-secret: ${{ secrets.CWS_CLIENT_SECRET }}
+          oauth-refresh-token: ${{ secrets.CWS_REFRESH_TOKEN }}
+
+  # B) When PR is merged into master: always release to GitHub and CWS.
+  pr-merge-release:
+    if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install & Build
+        run: |
+          if [ -f pnpm-lock.yaml ]; then
+            corepack enable
+            pnpm i --frozen-lockfile
+            pnpm build || true
+          elif [ -f yarn.lock ]; then
+            yarn --frozen-lockfile
+            yarn build || true
+          elif [ -f package-lock.json ]; then
+            npm ci
+            npm run build || true
+          fi
+
+      - name: Package Chrome extension (ensure manifest at ZIP root)
+        run: |
+          set -euo pipefail
+          rm -rf "${{ env.PKG_DIR }}" "${{ env.ZIP_NAME }}"
+          mkdir -p "${{ env.PKG_DIR }}"
+          OUT=""
+          for d in dist build release; do
+            if [ -d "$d" ]; then OUT="$d"; break; fi
+          done
+          if [ -z "$OUT" ]; then OUT="."; fi
+          if [ "$OUT" = "." ] ; then
+            for p in manifest.json icons assets _locales images styles css js lib src background content popup options; do
+              [ -e "$p" ] && rsync -a --exclude 'node_modules' --exclude '.git' --exclude '.github' "$p" "${{ env.PKG_DIR }}/"
+            done
+          else
+            rsync -a "$OUT"/ "${{ env.PKG_DIR }}/"
+            [ ! -f "${{ env.PKG_DIR }}/manifest.json" ] && [ -f "manifest.json" ] && cp manifest.json "${{ env.PKG_DIR }}/"
+            for d in icons assets _locales images; do
+              if [ ! -e "${{ env.PKG_DIR }}/$d" ] && [ -e "$d" ]; then rsync -a "$d" "${{ env.PKG_DIR }}/"; fi
+            done
+          fi
+          test -f "${{ env.PKG_DIR }}/manifest.json" || { echo "::error::manifest.json not found"; exit 1; }
+          (cd "${{ env.PKG_DIR }}" && zip -qr "../${{ env.ZIP_NAME }}" .)
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: auto-pr-${{ github.event.pull_request.number }}-${{ github.run_number }}
+          name: Auto release for PR #${{ github.event.pull_request.number }}
+          generate_release_notes: true
+          files: ${{ env.ZIP_NAME }}
+
+      - name: Publish to Chrome Web Store
+        uses: browser-actions/release-chrome-extension@v0
+        with:
+          extension-id: ${{ vars.CWS_EXTENSION_ID }}
+          extension-path: ${{ env.ZIP_NAME }}
+          oauth-client-id: ${{ vars.CWS_CLIENT_ID }}
+          oauth-client-secret: ${{ secrets.CWS_CLIENT_SECRET }}
+          oauth-refresh-token: ${{ secrets.CWS_REFRESH_TOKEN }}
+
+  # C) Any push to master where ANY commit message contains [release]:
+  #    release to GitHub and CWS.
+  push-release-flag:
+    if: github.event_name == 'push' && contains(toJson(github.event.commits), '[release]')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install & Build
+        run: |
+          if [ -f pnpm-lock.yaml ]; then
+            corepack enable
+            pnpm i --frozen-lockfile
+            pnpm build || true
+          elif [ -f yarn.lock ]; then
+            yarn --frozen-lockfile
+            yarn build || true
+          elif [ -f package-lock.json ]; then
+            npm ci
+            npm run build || true
+          fi
+
+      - name: Package Chrome extension (ensure manifest at ZIP root)
+        run: |
+          set -euo pipefail
+          rm -rf "${{ env.PKG_DIR }}" "${{ env.ZIP_NAME }}"
+          mkdir -p "${{ env.PKG_DIR }}"
+          OUT=""
+          for d in dist build release; do
+            if [ -d "$d" ]; then OUT="$d"; break; fi
+          done
+          if [ -z "$OUT" ]; then OUT="."; fi
+          if [ "$OUT" = "." ] ; then
+            for p in manifest.json icons assets _locales images styles css js lib src background content popup options; do
+              [ -e "$p" ] && rsync -a --exclude 'node_modules' --exclude '.git' --exclude '.github' "$p" "${{ env.PKG_DIR }}/"
+            done
+          else
+            rsync -a "$OUT"/ "${{ env.PKG_DIR }}/"
+            [ ! -f "${{ env.PKG_DIR }}/manifest.json" ] && [ -f "manifest.json" ] && cp manifest.json "${{ env.PKG_DIR }}/"
+            for d in icons assets _locales images; do
+              if [ ! -e "${{ env.PKG_DIR }}/$d" ] && [ -e "$d" ]; then rsync -a "$d" "${{ env.PKG_DIR }}/"; fi
+            done
+          fi
+          test -f "${{ env.PKG_DIR }}/manifest.json" || { echo "::error::manifest.json not found"; exit 1; }
+          (cd "${{ env.PKG_DIR }}" && zip -qr "../${{ env.ZIP_NAME }}" .)
+
+      - name: Create GitHub release (flagged)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: flagged-release-${{ github.run_number }}
+          name: Flagged [release] — run ${{ github.run_number }}
+          generate_release_notes: true
+          files: ${{ env.ZIP_NAME }}
+
+      - name: Publish to Chrome Web Store (flagged)
+        uses: browser-actions/release-chrome-extension@v0
+        with:
+          extension-id: ${{ vars.CWS_EXTENSION_ID }}
+          extension-path: ${{ env.ZIP_NAME }}
+          oauth-client-id: ${{ vars.CWS_CLIENT_ID }}
+          oauth-client-secret: ${{ secrets.CWS_CLIENT_SECRET }}
           oauth-refresh-token: ${{ secrets.CWS_REFRESH_TOKEN }}
