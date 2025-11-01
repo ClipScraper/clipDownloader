@@ -41,7 +41,7 @@ jobs:
 
     env:
       CARGO_TERM_COLOR: always
-      BUNDLE_DIR: src-tauri/target/release/bundle
+      BUNDLE_DIR: target/release/bundle
       BIN_DIR: src-tauri/binaries
       RES_DIR: src-tauri/resources
 
@@ -50,19 +50,34 @@ jobs:
         uses: actions/checkout@v4
         with: { fetch-depth: 0 }
 
-      - name: Setup Rust (stable)
+      - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
 
-      - name: Add wasm32 target (for Yew/Trunk)
-        run: rustup target add wasm32-unknown-unknown
+      - name: Cache cargo binaries
+        id: cache-cargo-binaries
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin
+          key: ${{ runner.os }}-cargo-binaries-v1-${{ hashFiles('.github/workflows/release.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-binaries-v1-
 
-      - name: Install trunk & wasm-bindgen
+      - name: Install cargo tools (if not cached)
+        if: runner.os != 'Windows'
         run: |
-          cargo install --locked trunk
-          cargo install --locked wasm-bindgen-cli
+          if ! command -v trunk &> /dev/null; then cargo install --locked trunk; fi
+          if ! command -v wasm-bindgen &> /dev/null; then cargo install --locked wasm-bindgen-cli; fi
+          if ! command -v cargo-tauri &> /dev/null; then cargo install --locked tauri-cli --version "^2.0.0-beta"; fi
 
-      - name: Install Tauri CLI (v2 beta)
-        run: cargo install --locked tauri-cli --version "^2.0.0-beta"
+      - name: Install cargo tools (if not cached) (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          if (-not (Get-Command trunk -ErrorAction SilentlyContinue)) { cargo install --locked trunk }
+          if (-not (Get-Command wasm-bindgen -ErrorAction SilentlyContinue)) { cargo install --locked wasm-bindgen-cli }
+          if (-not (Get-Command cargo-tauri -ErrorAction SilentlyContinue)) { cargo install --locked tauri-cli --version "^2.0.0-beta" }
 
       # Platform deps
       - name: Linux dependencies
