@@ -4,8 +4,8 @@ use gloo_timers::callback::Timeout;
 
 #[wasm_bindgen]
 extern "C" {
-    #[wasm_bindgen(js_namespace = ["window", "__TAURI__", "clipboard"])]
-    async fn writeText(text: &str);
+    #[wasm_bindgen(js_namespace = ["window", "__TAURI__", "core"])]
+    async fn invoke(cmd: &str, args: JsValue) -> JsValue;
 }
 
 #[function_component(SponsorPage)]
@@ -16,8 +16,10 @@ pub fn sponsor_page() -> Html {
         Callback::from(move |_| {
             let recently_copied = recently_copied.clone();
             let id_str = id.to_string();
+            let address_str = address.to_string();
             wasm_bindgen_futures::spawn_local(async move {
-                writeText(address).await;
+                let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "text": address_str })).unwrap();
+                invoke("plugin:clipboard|write_text", args).await;
             });
             recently_copied.set(id_str);
             let recently_copied_clone = recently_copied.clone();
