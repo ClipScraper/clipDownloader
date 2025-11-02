@@ -1,0 +1,36 @@
+/* src/styles/sponsor.css */
+
+.donation-addresses {
+    text-align: left;
+    margin: 30px 0;
+    font-family: monospace;
+    font-size: 0.95em;
+}
+
+.address {
+    display: flex;
+    align-items: center;
+    margin-bottom: 15px;
+}
+
+.address .label {
+    font-weight: bold;
+    color: #a9a9b3;
+    min-width: 130px;
+}
+
+.address .value {
+    color: #fff;
+    word-break: break-all;
+}
+
+.copy-icon {
+    margin-left: 15px;
+    cursor: pointer;
+    color: #a9a9b3;
+    transition: color 0.2s;
+}
+
+.copy-icon:hover {
+    color: #fff;
+}

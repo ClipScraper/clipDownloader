@@ -19,8 +19,8 @@ pub fn extension_page() -> Html {
 
     html! {
         <div class="container">
+            <h1>{ "Choose Your Platform" }</h1>
             <section class="download-options">
-                <h1>{ "Choose Your Platform" }</h1>
                 <div class="platform-grid">
                     <div class="platform-card">
                         <div class="platform-icon"><i class="fab fa-chrome"></i></div>
