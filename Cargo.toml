@@ -46,7 +46,8 @@ yew_icons = { version = "0.8.0", features = [
     "LucidePlay",
     "LucideHeart",
     "LucideRotateCcw",
-    "LucideMusic"
+    "LucideMusic",
+    "LucideListEnd"
 ] }
 lucide-yew = { version = "2", features = ["arrows"] }
 
