@@ -42,23 +42,17 @@ pub fn sponsor_page() -> Html {
                 <div class="address">
                     <span class="label">{"BTC:"}</span>
                     <span class="value">{btc_addr}</span>
-                    <i class={classes!("copy-icon", "fas", if *recently_copied == "btc" { "fa-check" } else { "fa-copy" })}
-                       onclick={make_copy_callback(btc_addr, "btc", recently_copied.clone())}
-                       title="Copy address"></i>
+                    <i class={classes!("copy-icon", "fas", if *recently_copied == "btc" { "fa-check" } else { "fa-copy" })} onclick={make_copy_callback(btc_addr, "btc", recently_copied.clone())} title="Copy address"></i>
                 </div>
                 <div class="address">
                     <span class="label">{"ETH (ERC20):"}</span>
                     <span class="value">{eth_addr}</span>
-                    <i class={classes!("copy-icon", "fas", if *recently_copied == "eth" { "fa-check" } else { "fa-copy" })}
-                       onclick={make_copy_callback(eth_addr, "eth", recently_copied.clone())}
-                       title="Copy address"></i>
+                    <i class={classes!("copy-icon", "fas", if *recently_copied == "eth" { "fa-check" } else { "fa-copy" })} onclick={make_copy_callback(eth_addr, "eth", recently_copied.clone())} title="Copy address"></i>
                 </div>
                 <div class="address">
                     <span class="label">{"USDT (ERC20):"}</span>
                     <span class="value">{eth_addr}</span>
-                    <i class={classes!("copy-icon", "fas", if *recently_copied == "usdt" { "fa-check" } else { "fa-copy" })}
-                       onclick={make_copy_callback(eth_addr, "usdt", recently_copied.clone())}
-                       title="Copy address"></i>
+                    <i class={classes!("copy-icon", "fas", if *recently_copied == "usdt" { "fa-check" } else { "fa-copy" })} onclick={make_copy_callback(eth_addr, "usdt", recently_copied.clone())} title="Copy address"></i>
                 </div>
             </div>
 
