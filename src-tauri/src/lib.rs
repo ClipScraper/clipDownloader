@@ -23,6 +23,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_clipboard::init())
         .invoke_handler(tauri::generate_handler![
             // SETTINGS
             commands::settings_cmd::load_settings,

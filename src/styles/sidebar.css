@@ -77,3 +77,7 @@
   box-shadow: none;
 }
 
+.flipped-icon {
+  transform: scaleX(-1);
+}
+

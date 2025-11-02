@@ -7,6 +7,8 @@
     "core:default",
     "opener:default",
     "dialog:default",
+    "shell:allow-open",
+    "clipboard:allow-write-text",
     {
       "identifier": "shell:allow-execute",
       "allow": [
