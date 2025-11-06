@@ -43,6 +43,10 @@
     "resources": [
       "resources/ffmpeg",
       "resources/ffprobe"
-    ]
+    ],
+    "macOS": {
+      "hardenedRuntime": true,
+      "entitlements": "src-tauri/macos/entitlements.plist",
+    }
   }
 }
