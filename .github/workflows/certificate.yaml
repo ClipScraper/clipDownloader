@@ -2,8 +2,10 @@ name: Apple certificate quick check (PR-only)
 
 on:
   push:
+    # Run on all branches EXCEPT master, so merges to master won't trigger this
     branches-ignore:
       - master
+  # Optional: allow manual runs from the Actions tab
   workflow_dispatch:
 
 permissions:
@@ -15,14 +17,18 @@ concurrency:
 
 jobs:
   cert_check:
+    # Only run when the latest commit message includes the flag
     if: ${{ contains(github.event.head_commit.message, '[apple-cert-check]') }}
     runs-on: macos-14
+
     env:
       KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+
     steps:
       - name: Checkout (shallow)
         uses: actions/checkout@v4
-        with: { fetch-depth: 1 }
+        with:
+          fetch-depth: 1
 
       - name: Import Developer ID certificate
         env:
@@ -31,7 +37,7 @@ jobs:
         run: |
           set -euxo pipefail
 
-          # derive a temp keychain path from the runner's temp dir
+          # Use runner temp for an ephemeral keychain and share path with later steps
           KEYCHAIN_PATH="$RUNNER_TEMP/build.keychain-db"
           echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
 
@@ -53,9 +59,11 @@ jobs:
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security set-keychain-settings -t 3600 -u "$KEYCHAIN_PATH"
 
+          # Import and allow required tools access
           security import certificate.p12 -k "$KEYCHAIN_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" \
             -T /usr/bin/codesign -T /usr/bin/security -T /usr/bin/xcrun -T /usr/bin/notarytool
 
+          # Best-effort: set partition list (can be flaky on CI)
           security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH" || true
 
           echo "== identities =="
@@ -93,6 +101,7 @@ jobs:
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
         run: |
           set -euxo pipefail
+          # Build a minimal .app bundle
           mkdir -p CertCheck.app/Contents/MacOS
           cat > CertCheck.app/Contents/Info.plist <<'PLIST'
           <?xml version="1.0" encoding="UTF-8"?>
@@ -109,14 +118,18 @@ jobs:
           cp hello CertCheck.app/Contents/MacOS/hello
           chmod +x CertCheck.app/Contents/MacOS/hello
 
+          # Sign the .app and verify
           /usr/bin/codesign --force --options runtime --timestamp -s "$APPLE_SIGNING_IDENTITY" -v CertCheck.app
           /usr/bin/codesign --verify --deep --strict --verbose=4 CertCheck.app
 
+          # Zip preserving resource forks
           /usr/bin/ditto -c -k --sequesterRsrc --keepParent CertCheck.app CertCheck.zip
 
+          # Authenticate and submit with --wait (immediate result)
           xcrun notarytool authenticate --key ./AuthKey.p8 --key-id "$APPLE_API_KEY" --issuer "$APPLE_API_ISSUER" --validate
           xcrun notarytool submit CertCheck.zip --key ./AuthKey.p8 --key-id "$APPLE_API_KEY" --issuer "$APPLE_API_ISSUER" --wait --output-format json | tee notary-result.json
 
+          # Staple the ticket
           xcrun stapler staple -v CertCheck.app
 
       - name: Upload preflight artifacts
