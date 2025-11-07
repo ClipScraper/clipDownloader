@@ -22,7 +22,6 @@ jobs:
     env:
       # Secrets used by steps
       KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
-
       # Precomputed booleans (become "true"/"false" strings)
       HAS_P8: ${{ secrets.APPLE_API_KEY_P8 != '' }}
       HAS_NOTARY_CREDS: ${{ secrets.APPLE_API_KEY != '' && secrets.APPLE_API_ISSUER != '' && secrets.APPLE_API_KEY_P8 != '' }}
@@ -43,15 +42,10 @@ jobs:
           KEYCHAIN_PATH="$RUNNER_TEMP/build.keychain-db"
           echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
 
-          if [[ -z "${APPLE_CERTIFICATE:-}" ]]; then
-            echo "Missing APPLE_CERTIFICATE secret (base64 of .p12)"; exit 1
-          fi
-          if [[ -z "${APPLE_CERTIFICATE_PASSWORD:-}" ]]; then
-            echo "Missing APPLE_CERTIFICATE_PASSWORD secret"; exit 1
-          fi
-          if [[ -z "${KEYCHAIN_PASSWORD:-}" ]]; then
-            echo "Missing KEYCHAIN_PASSWORD secret"; exit 1
-          fi
+          # Sanity checks
+          [[ -n "${APPLE_CERTIFICATE:-}" ]] || { echo "Missing APPLE_CERTIFICATE"; exit 1; }
+          [[ -n "${APPLE_CERTIFICATE_PASSWORD:-}" ]] || { echo "Missing APPLE_CERTIFICATE_PASSWORD"; exit 1; }
+          [[ -n "${KEYCHAIN_PASSWORD:-}" ]] || { echo "Missing KEYCHAIN_PASSWORD"; exit 1; }
 
           echo "$APPLE_CERTIFICATE" | base64 --decode > certificate.p12
 
@@ -61,11 +55,17 @@ jobs:
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security set-keychain-settings -t 3600 -u "$KEYCHAIN_PATH"
 
-          # Import and allow required tools access
-          security import certificate.p12 -k "$KEYCHAIN_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" \
-            -T /usr/bin/codesign -T /usr/bin/security -T /usr/bin/xcrun -T /usr/bin/notarytool
+          # Build the trusted apps list; notarytool path varies on runners
+          NOTARYTOOL_PATH="$(xcrun -f notarytool || true)"
+          TRUST_APPS=( -T /usr/bin/codesign -T /usr/bin/security -T /usr/bin/xcrun )
+          if [[ -n "$NOTARYTOOL_PATH" && -x "$NOTARYTOOL_PATH" ]]; then
+            TRUST_APPS+=( -T "$NOTARYTOOL_PATH" )
+          fi
 
-          # Best-effort: set partition list
+          # Import and allow required tools access
+          security import certificate.p12 -k "$KEYCHAIN_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" "${TRUST_APPS[@]}"
+
+          # Best-effort: set partition list (covers Apple tools; harmless if fails)
           security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH" || true
 
           echo "== identities =="
@@ -124,6 +124,7 @@ jobs:
 
           /usr/bin/ditto -c -k --sequesterRsrc --keepParent CertCheck.app CertCheck.zip
 
+          # Use xcrun to locate notarytool (path varies)
           xcrun notarytool authenticate --key ./AuthKey.p8 --key-id "$APPLE_API_KEY" --issuer "$APPLE_API_ISSUER" --validate
           xcrun notarytool submit CertCheck.zip --key ./AuthKey.p8 --key-id "$APPLE_API_KEY" --issuer "$APPLE_API_ISSUER" --wait --output-format json | tee notary-result.json
           xcrun stapler staple -v CertCheck.app
