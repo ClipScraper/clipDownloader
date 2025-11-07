@@ -1,9 +1,12 @@
-name: Apple certificate quick check (PR-only)
+name: Apple certificate quick check (PR commits with [apple-cert-check])
 
 on:
+  # Runs whenever you push commits to any branch (except master).
+  # This covers commits pushed to a PR branch.
   push:
     branches-ignore:
       - master
+  # Manual trigger still available.
   workflow_dispatch:
 
 permissions:
@@ -15,16 +18,20 @@ concurrency:
 
 jobs:
   cert_check:
-    # Only run when the latest commit message includes the flag
-    if: contains(github.event.head_commit.message, '[apple-cert-check]')
+    # ✅ Run when ANY commit in the pushed batch contains the flag.
+    # (Push events to PR branches include the full commits array.)
+    if: contains(toJSON(github.event.commits), '[apple-cert-check]')
     runs-on: macos-14
+
     env:
       KEYCHAIN_PATH: ${{ runner.temp }}/build.keychain-db
       KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+
     steps:
       - name: Checkout (shallow)
         uses: actions/checkout@v4
-        with: { fetch-depth: 1 }
+        with:
+          fetch-depth: 1
 
       - name: Import Developer ID certificate
         env:
@@ -42,7 +49,10 @@ jobs:
             echo "Missing KEYCHAIN_PASSWORD secret"; exit 1
           fi
 
-          echo "$APPLE_CERTIFICATE" | base64 --decode > certificate.p12
+          # BSD (macOS) base64 uses -D, some builds accept --decode.
+          # Try -D first, fallback to --decode.
+          printf "%s" "$APPLE_CERTIFICATE" | base64 -D > certificate.p12 2>/dev/null || \
+          printf "%s" "$APPLE_CERTIFICATE" | base64 --decode > certificate.p12
 
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security list-keychains -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | tr -d '"')
