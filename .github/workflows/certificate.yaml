@@ -15,7 +15,6 @@ concurrency:
 
 jobs:
   cert_check:
-    # Run only on PR branch pushes when the latest commit message contains this flag
     if: ${{ contains(github.event.head_commit.message, '[apple-cert-check]') }}
     runs-on: macos-14
 
@@ -33,7 +32,7 @@ jobs:
       - name: Import Developer ID certificate
         shell: bash
         env:
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}               # base64 of .p12 (must include private key)
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}               # base64 of .p12 (with private key)
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
         run: |
           set -euxo pipefail
@@ -41,45 +40,41 @@ jobs:
           KEYCHAIN_PATH="$RUNNER_TEMP/build.keychain-db"
           echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
 
-          # Sanity checks
           [[ -n "${APPLE_CERTIFICATE:-}" ]] || { echo "Missing APPLE_CERTIFICATE"; exit 1; }
           [[ -n "${APPLE_CERTIFICATE_PASSWORD:-}" ]] || { echo "Missing APPLE_CERTIFICATE_PASSWORD"; exit 1; }
           [[ -n "${KEYCHAIN_PASSWORD:-}" ]] || { echo "Missing KEYCHAIN_PASSWORD"; exit 1; }
 
           echo "$APPLE_CERTIFICATE" | base64 --decode > certificate.p12
 
-          # Create & unlock ephemeral keychain
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security list-keychains -d user -s "$KEYCHAIN_PATH"
           security default-keychain -s "$KEYCHAIN_PATH"
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security set-keychain-settings -t 3600 -u "$KEYCHAIN_PATH"
 
-          # Import and allow required tools access (don't hard-code notarytool path)
+          # Import and allow required tools access (no hard-coded notarytool path)
           security import certificate.p12 -k "$KEYCHAIN_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" \
             -T /usr/bin/codesign -T /usr/bin/security -T /usr/bin/xcrun
 
-          # Best-effort private key access for Apple tools
+          # Best-effort: give Apple tools access to the key
           security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH" || true
 
-          echo "== identities =="
+          echo "== identities (codesigning) =="
           security find-identity -v -p codesigning "$KEYCHAIN_PATH" || true
 
-          # Prefer a Developer ID Application identity
-          CERT_APP="$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" \
-            | awk -F\" '/Developer ID Application/{print $2; exit}')"
+          # Accept both "Developer ID Application" and "Mac Developer ID Application" label variants
+          CERT_APP=$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" \
+            | awk -F\" '/(Developer ID Application|Mac Developer ID Application)/{print $2; exit}')
 
           if [[ -z "$CERT_APP" ]]; then
-            # Helpful diagnostics: did the user import the Installer cert by mistake?
-            if security find-certificate -a -c "Developer ID Installer" "$KEYCHAIN_PATH" | grep -qi "Developer ID Installer"; then
-              echo "::error::You imported a 'Developer ID Installer' certificate. For app signing, you must export 'Developer ID Application: <Your Name> (TEAMID)' as a .p12 (with private key) from Keychain Access → My Certificates, then update APPLE_CERTIFICATE/APPLE_CERTIFICATE_PASSWORD."
-            else
-              echo "::error::No 'Developer ID Application' identity found. Ensure the .p12 includes the private key and is the 'Developer ID Application' cert for your team."
-            fi
+            echo "::error::You imported a 'Developer ID Installer' certificate. For app signing, you must export 'Developer ID Application: <Your Name> (TEAMID)' as a .p12 (with private key) from Keychain Access → My Certificates, then update APPLE_CERTIFICATE/APPLE_CERTIFICATE_PASSWORD."
+            # Show any Installer certs to make the situation obvious
+            security find-certificate -a -c "Developer ID Installer" "$KEYCHAIN_PATH" || true
             exit 1
           fi
 
           echo "APPLE_SIGNING_IDENTITY=$CERT_APP" >> "$GITHUB_ENV"
+          echo "Using signing identity: $CERT_APP"
 
       - name: Build and sign a tiny Mach-O (codesign smoke test)
         shell: bash
@@ -131,7 +126,7 @@ jobs:
 
           /usr/bin/ditto -c -k --sequesterRsrc --keepParent CertCheck.app CertCheck.zip
 
-          # Notarize via xcrun (path to notarytool varies across runners)
+          # Notarize via xcrun (path independent)
           xcrun notarytool authenticate --key ./AuthKey.p8 --key-id "$APPLE_API_KEY" --issuer "$APPLE_API_ISSUER" --validate
           xcrun notarytool submit CertCheck.zip --key ./AuthKey.p8 --key-id "$APPLE_API_KEY" --issuer "$APPLE_API_ISSUER" --wait --output-format json | tee notary-result.json
           xcrun stapler staple -v CertCheck.app
