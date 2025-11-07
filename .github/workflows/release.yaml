@@ -209,9 +209,9 @@ jobs:
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security set-keychain-settings -t 3600 -u "$KEYCHAIN_PATH"
 
-          # Import the .p12 and explicitly allow common tools
+          # Import the .p12 and explicitly allow common tools (no hard-coded /usr/bin/notarytool path)
           security import certificate.p12 -k "$KEYCHAIN_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" \
-            -T /usr/bin/codesign -T /usr/bin/security -T /usr/bin/productbuild -T /usr/bin/xcrun -T /usr/bin/notarytool
+            -T /usr/bin/codesign -T /usr/bin/security -T /usr/bin/productbuild -T /usr/bin/xcrun
 
           # Best effort: set partition list (can be flaky on CI). Do not fail the build here.
           security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH" || true
@@ -240,16 +240,30 @@ jobs:
             printf "%s" "$APPLE_API_KEY_P8" > AuthKey.p8
           fi
 
-      # Build the Tauri app (signed + notarized on macOS via API key if present)
+      # Build the Tauri app (signed + notarized on macOS when creds are present)
       - name: Build Tauri app
         env:
+          # App Store Connect API key auth (preferred for CI)
           APPLE_API_ISSUER:   ${{ secrets.APPLE_API_KEY_P8 != '' && secrets.APPLE_API_ISSUER || '' }}
           APPLE_API_KEY:      ${{ secrets.APPLE_API_KEY_P8 != '' && secrets.APPLE_API_KEY    || '' }}
           APPLE_API_KEY_PATH: ${{ secrets.APPLE_API_KEY_P8 != '' && './AuthKey.p8' || '' }}
+          # Apple ID fallback (supported by Tauri; leave empty if unused)
+          APPLE_ID:           ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD:     ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID:      ${{ secrets.APPLE_TEAM_ID }}
         run: |
           cargo tauri build --ci
           echo "---- Bundles ----"
           ls -R "$BUNDLE_DIR" || true
+
+      # Best-effort staple (if Tauri notarized successfully)
+      - name: Staple notarization ticket (macOS)
+        if: startsWith(matrix.os, 'macos')
+        shell: bash
+        run: |
+          set -euxo pipefail
+          find "$BUNDLE_DIR" -name "*.app" -type d -print0 | xargs -0 -I{} sh -c 'xcrun stapler staple -v "{}" || true'
+          find "$BUNDLE_DIR" -name "*.dmg" -type f -print0 | xargs -0 -I{} sh -c 'xcrun stapler staple -v "{}" || true'
 
       - name: Cleanup keychain (macOS)
         if: startsWith(matrix.os, 'macos')
