@@ -248,7 +248,7 @@ jobs:
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_KEY_P8 != '' && secrets.APPLE_API_ISSUER || '' }}
           APPLE_API_KEY:    ${{ secrets.APPLE_API_KEY_P8 != '' && secrets.APPLE_API_KEY    || '' }}
           APPLE_API_KEY_PATH: ${{ secrets.APPLE_API_KEY_P8 != '' && './AuthKey.p8' || '' }}
-          # APPLE_SIGNING_IDENTITY is set above on macOS
+          # APPLE_SIGNING_IDENTITY is set above on macOS 
         run: |
           cargo tauri build --ci
           echo "---- Bundles ----"
