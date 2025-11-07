@@ -27,7 +27,7 @@ jobs:
           - os: macos-14
             label: macos-arm64
             triple: aarch64-apple-darwin
-          - os: macos-12
+          - os: macos-13
             label: macos-x86_64
             triple: x86_64-apple-darwin
           - os: windows-latest
@@ -244,10 +244,10 @@ jobs:
       # Build the Tauri app (signed + notarized on macOS via API key if present)
       - name: Build Tauri app
         env:
-          # App Store Connect API key auth (preferred for CI)
-          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
-          APPLE_API_KEY_PATH: ./AuthKey.p8
+          # Only set notarization vars if we actually wrote AuthKey.p8
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_KEY_P8 != '' && secrets.APPLE_API_ISSUER || '' }}
+          APPLE_API_KEY:    ${{ secrets.APPLE_API_KEY_P8 != '' && secrets.APPLE_API_KEY    || '' }}
+          APPLE_API_KEY_PATH: ${{ secrets.APPLE_API_KEY_P8 != '' && './AuthKey.p8' || '' }}
           # APPLE_SIGNING_IDENTITY is set above on macOS
         run: |
           cargo tauri build --ci
