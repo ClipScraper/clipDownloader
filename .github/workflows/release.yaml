@@ -6,7 +6,7 @@ on:
     branches: [master]
   push:
     branches:
-      - "**"
+      - master
 
 permissions:
   contents: write
@@ -186,8 +186,7 @@ jobs:
           Copy-Item "$env:BIN_DIR\ffprobe-${{ matrix.triple }}.exe" "$env:BIN_DIR\ffprobe.exe"
           Copy-Item "$env:BIN_DIR\gallery-dl-${{ matrix.triple }}.exe" "$env:BIN_DIR\gallery-dl.exe"
 
-      # Build frontend (Trunk)
-      - name: Build frontend
+      - name: Build frontend (Trunk)
         run: trunk build --release
 
       # === macOS: import Developer ID Application cert into a dedicated keychain and validate ===
@@ -220,11 +219,11 @@ jobs:
           echo "== Available code signing identities =="
           security find-identity -v -p codesigning "$KEYCHAIN_PATH" || true
 
-          # Require a Developer ID Application identity (not 'Mac Installer Submission', not 'Apple Development')
+          # Require a Developer ID Application identity
           CERT_ID=$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" | grep 'Developer ID Application' | head -n1 | awk -F\" '{print $2}' || true)
           if [[ -z "$CERT_ID" ]]; then
             echo "ERROR: A 'Developer ID Application' identity was not found in the imported .p12."
-            echo "Tip: In Keychain Access → My Certificates, export 'Developer ID Application: <Your Name> (TEAMID)' as .p12 (with private key) and update APPLE_CERTIFICATE."
+            echo "Tip: Export 'Developer ID Application: <Your Name> (TEAMID)' as .p12 (with private key) and update APPLE_CERTIFICATE."
             exit 1
           fi
           echo "APPLE_SIGNING_IDENTITY=$CERT_ID" >> $GITHUB_ENV
@@ -244,11 +243,9 @@ jobs:
       # Build the Tauri app (signed + notarized on macOS via API key if present)
       - name: Build Tauri app
         env:
-          # Only set notarization vars if we actually wrote AuthKey.p8
-          APPLE_API_ISSUER: ${{ secrets.APPLE_API_KEY_P8 != '' && secrets.APPLE_API_ISSUER || '' }}
-          APPLE_API_KEY:    ${{ secrets.APPLE_API_KEY_P8 != '' && secrets.APPLE_API_KEY    || '' }}
+          APPLE_API_ISSUER:   ${{ secrets.APPLE_API_KEY_P8 != '' && secrets.APPLE_API_ISSUER || '' }}
+          APPLE_API_KEY:      ${{ secrets.APPLE_API_KEY_P8 != '' && secrets.APPLE_API_KEY    || '' }}
           APPLE_API_KEY_PATH: ${{ secrets.APPLE_API_KEY_P8 != '' && './AuthKey.p8' || '' }}
-          # APPLE_SIGNING_IDENTITY is set above on macOS 
         run: |
           cargo tauri build --ci
           echo "---- Bundles ----"
