@@ -21,8 +21,9 @@ jobs:
 
     env:
       KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+      # Run notarization if we have either API-key creds OR Apple-ID creds
+      HAS_NOTARY_CREDS: ${{ (secrets.APPLE_API_KEY != '' && secrets.APPLE_API_ISSUER != '' && secrets.APPLE_API_KEY_P8 != '') || (secrets.APPLE_ID != '' && secrets.APPLE_PASSWORD != '' && secrets.APPLE_TEAM_ID != '') }}
       HAS_P8: ${{ secrets.APPLE_API_KEY_P8 != '' }}
-      HAS_NOTARY_CREDS: ${{ secrets.APPLE_API_KEY != '' && secrets.APPLE_API_ISSUER != '' && secrets.APPLE_API_KEY_P8 != '' }}
 
     steps:
       - name: Checkout (shallow)
@@ -68,7 +69,7 @@ jobs:
             | awk -F\" '/(Developer ID Application|Mac Developer ID Application)/{print $2; exit}')
 
           if [[ -z "$CERT_APP" ]]; then
-            echo "::error::You imported a 'Developer ID Installer' certificate. For app signing, you must export 'Developer ID Application: <Your Name> (TEAMID)' as a .p12 (with private key) from Keychain Access → My Certificates, then update APPLE_CERTIFICATE/APPLE_CERTIFICATE_PASSWORD."
+            echo "::error::You imported a 'Developer ID Installer' certificate. For app signing, export 'Developer ID Application: <Your Name> (TEAMID)' as a .p12 (with private key) and update APPLE_CERTIFICATE/APPLE_CERTIFICATE_PASSWORD."
             security find-certificate -a -c "Developer ID Installer" "$KEYCHAIN_PATH" || true
             exit 1
           fi
@@ -101,8 +102,13 @@ jobs:
         if: ${{ env.HAS_NOTARY_CREDS == 'true' }}
         shell: bash
         env:
+          # API-key creds (preferred)
           APPLE_API_KEY:    ${{ secrets.APPLE_API_KEY }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          # Apple-ID fallback creds
+          APPLE_ID:         ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD:   ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID:    ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -euxo pipefail
           mkdir -p CertCheck.app/Contents/MacOS
@@ -126,10 +132,31 @@ jobs:
 
           /usr/bin/ditto -c -k --sequesterRsrc --keepParent CertCheck.app CertCheck.zip
 
-          # Submit for notarization with key-based credentials and wait for result
-          xcrun notarytool submit CertCheck.zip \
-            --key ./AuthKey.p8 --key-id "$APPLE_API_KEY" --issuer "$APPLE_API_ISSUER" \
-            --wait --output-format json | tee notary-result.json
+          # --- Notarize: try API-key first, then Apple-ID fallback on any failure ---
+          try_key() {
+            xcrun notarytool submit CertCheck.zip \
+              --key ./AuthKey.p8 --key-id "$APPLE_API_KEY" --issuer "$APPLE_API_ISSUER" \
+              --wait --output-format json | tee notary-result.json
+          }
+          try_apple_id() {
+            xcrun notarytool submit CertCheck.zip \
+              --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_PASSWORD" \
+              --wait --output-format json | tee notary-result.json
+          }
+
+          if [[ -n "${APPLE_API_KEY:-}" && -n "${APPLE_API_ISSUER:-}" && -f AuthKey.p8 ]]; then
+            set +e
+            try_key
+            EC=$?
+            set -e
+            if [[ $EC -ne 0 ]]; then
+              echo "Key-based notarization failed with code $EC — falling back to Apple ID…"
+              try_apple_id
+            fi
+          else
+            echo "API-key credentials not present — using Apple ID notarization."
+            try_apple_id
+          fi
 
           # Staple the ticket
           xcrun stapler staple -v CertCheck.app
