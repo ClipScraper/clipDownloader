@@ -2,10 +2,8 @@ name: Apple certificate quick check (PR-only)
 
 on:
   push:
-    # Run on all branches EXCEPT master, so merges to master won't trigger this
     branches-ignore:
       - master
-  # Optional: allow manual runs from the UI
   workflow_dispatch:
 
 permissions:
