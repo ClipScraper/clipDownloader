@@ -126,10 +126,7 @@ jobs:
 
           /usr/bin/ditto -c -k --sequesterRsrc --keepParent CertCheck.app CertCheck.zip
 
-          # Quick credentials sanity check (fast)
-          xcrun notarytool history --key ./AuthKey.p8 --key-id "$APPLE_API_KEY" --issuer "$APPLE_API_ISSUER" --output-format json >/dev/null
-
-          # Submit for notarization and wait for result
+          # Submit for notarization with key-based credentials and wait for result
           xcrun notarytool submit CertCheck.zip \
             --key ./AuthKey.p8 --key-id "$APPLE_API_KEY" --issuer "$APPLE_API_ISSUER" \
             --wait --output-format json | tee notary-result.json
