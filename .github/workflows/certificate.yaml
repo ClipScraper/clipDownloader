@@ -15,11 +15,17 @@ concurrency:
 
 jobs:
   cert_check:
+    # Only run on PR branch pushes when the latest commit message contains the flag
     if: ${{ contains(github.event.head_commit.message, '[apple-cert-check]') }}
     runs-on: macos-14
 
     env:
+      # Secrets used by steps
       KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+
+      # Precomputed booleans (become "true"/"false" strings)
+      HAS_P8: ${{ secrets.APPLE_API_KEY_P8 != '' }}
+      HAS_NOTARY_CREDS: ${{ secrets.APPLE_API_KEY != '' && secrets.APPLE_API_ISSUER != '' && secrets.APPLE_API_KEY_P8 != '' }}
 
     steps:
       - name: Checkout (shallow)
@@ -55,9 +61,11 @@ jobs:
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security set-keychain-settings -t 3600 -u "$KEYCHAIN_PATH"
 
+          # Import and allow required tools access
           security import certificate.p12 -k "$KEYCHAIN_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" \
             -T /usr/bin/codesign -T /usr/bin/security -T /usr/bin/xcrun -T /usr/bin/notarytool
 
+          # Best-effort: set partition list
           security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH" || true
 
           echo "== identities =="
@@ -81,7 +89,7 @@ jobs:
           /usr/bin/codesign --verify --strict --verbose=4 hello
 
       - name: (Optional) Write App Store Connect API key
-        if: ${{ secrets.APPLE_API_KEY_P8 != '' }}
+        if: ${{ env.HAS_P8 == 'true' }}
         env:
           APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
         run: |
@@ -89,7 +97,7 @@ jobs:
           printf "%s" "$APPLE_API_KEY_P8" > AuthKey.p8
 
       - name: (Optional) Notarize a minimal .app bundle end-to-end
-        if: ${{ secrets.APPLE_API_KEY != '' && secrets.APPLE_API_ISSUER != '' && secrets.APPLE_API_KEY_P8 != '' }}
+        if: ${{ env.HAS_NOTARY_CREDS == 'true' }}
         env:
           APPLE_API_KEY:    ${{ secrets.APPLE_API_KEY }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
