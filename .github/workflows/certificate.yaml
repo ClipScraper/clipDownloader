@@ -15,6 +15,7 @@ concurrency:
 
 jobs:
   cert_check:
+    # Run only on PR branch pushes when the latest commit message contains this flag
     if: ${{ contains(github.event.head_commit.message, '[apple-cert-check]') }}
     runs-on: macos-14
 
@@ -68,7 +69,6 @@ jobs:
 
           if [[ -z "$CERT_APP" ]]; then
             echo "::error::You imported a 'Developer ID Installer' certificate. For app signing, you must export 'Developer ID Application: <Your Name> (TEAMID)' as a .p12 (with private key) from Keychain Access → My Certificates, then update APPLE_CERTIFICATE/APPLE_CERTIFICATE_PASSWORD."
-            # Show any Installer certs to make the situation obvious
             security find-certificate -a -c "Developer ID Installer" "$KEYCHAIN_PATH" || true
             exit 1
           fi
@@ -126,9 +126,15 @@ jobs:
 
           /usr/bin/ditto -c -k --sequesterRsrc --keepParent CertCheck.app CertCheck.zip
 
-          # Notarize via xcrun (path independent)
-          xcrun notarytool authenticate --key ./AuthKey.p8 --key-id "$APPLE_API_KEY" --issuer "$APPLE_API_ISSUER" --validate
-          xcrun notarytool submit CertCheck.zip --key ./AuthKey.p8 --key-id "$APPLE_API_KEY" --issuer "$APPLE_API_ISSUER" --wait --output-format json | tee notary-result.json
+          # Quick credentials sanity check (fast)
+          xcrun notarytool history --key ./AuthKey.p8 --key-id "$APPLE_API_KEY" --issuer "$APPLE_API_ISSUER" --output-format json >/dev/null
+
+          # Submit for notarization and wait for result
+          xcrun notarytool submit CertCheck.zip \
+            --key ./AuthKey.p8 --key-id "$APPLE_API_KEY" --issuer "$APPLE_API_ISSUER" \
+            --wait --output-format json | tee notary-result.json
+
+          # Staple the ticket
           xcrun stapler staple -v CertCheck.app
 
       - name: Upload preflight artifacts
