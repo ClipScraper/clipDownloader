@@ -1,12 +1,15 @@
 name: Release on PR merge or [release] commit (Tauri - macOS ARM/Intel, Windows, Linux)
 
 on:
+  # 1) Run when a PR into master is merged (any branch → master)
   pull_request:
     types: [closed]
     branches: [master]
+  # 2) Run on every push to any branch (so PR branch commits fire),
+  #    but jobs below will only run if the commit message contains "[release]"
   push:
     branches:
-      - "**"   # allow pushes on any branch; gated by commit message below
+      - "**"
 
 permissions:
   contents: write
@@ -17,16 +20,14 @@ concurrency:
 
 jobs:
   build:
-    # Run if: (a) a PR into master was merged (unless title has [no-release]), OR
-    # (b) this is a push and ANY commit message in the push contains "[release]"
+    # PR merge → master OR push commit contains "[release]"
     if: |
       (github.event_name == 'pull_request' &&
        github.event.action == 'closed' &&
        github.event.pull_request.merged == true &&
        !contains(github.event.pull_request.title, '[no-release]')) ||
       (github.event_name == 'push' &&
-       (contains(github.event.head_commit.message, '[release]') ||
-        contains(toJson(github.event.commits), '[release]')))
+       contains(github.event.head_commit.message, '[release]'))
     strategy:
       fail-fast: false
       matrix:
@@ -104,7 +105,7 @@ jobs:
         shell: powershell
         run: choco install ffmpeg -y --no-progress
 
-      # Sidecars: yt-dlp, ffmpeg/ffprobe, gallery-dl
+      # Sidecars: yt-dlp, ffmpeg/ffprobe copied into resources + binaries (suffixed & unsuffixed for externalBin)
       - name: Prepare sidecars (Linux/macOS)
         if: startsWith(matrix.os, 'ubuntu') || startsWith(matrix.os, 'macos')
         shell: bash
@@ -216,7 +217,7 @@ jobs:
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security set-keychain-settings -t 3600 -u "$KEYCHAIN_PATH"
 
-          # Import the .p12 and explicitly allow common tools (no hard-coded /usr/bin/notarytool path)
+          # Import the .p12 and explicitly allow common tools (do not hard-code /usr/bin/notarytool)
           security import certificate.p12 -k "$KEYCHAIN_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" \
             -T /usr/bin/codesign -T /usr/bin/security -T /usr/bin/productbuild -T /usr/bin/xcrun
 
@@ -234,6 +235,12 @@ jobs:
             exit 1
           fi
           echo "APPLE_SIGNING_IDENTITY=$CERT_ID" >> $GITHUB_ENV
+
+      - name: Validate entitlements (macOS)
+        if: startsWith(matrix.os, 'macos')
+        run: |
+          test -f src-tauri/macos/entitlements.plist || { echo "src-tauri/macos/entitlements.plist missing"; exit 1; }
+          plutil -lint src-tauri/macos/entitlements.plist
 
       # === macOS: (optional) write App Store Connect API key to AuthKey.p8 if provided ===
       - name: Write API key file (macOS)
@@ -294,8 +301,7 @@ jobs:
          github.event.pull_request.merged == true &&
          !contains(github.event.pull_request.title, '[no-release]')) ||
         (github.event_name == 'push' &&
-         (contains(github.event.head_commit.message, '[release]') ||
-          contains(toJson(github.event.commits), '[release]')))
+         contains(github.event.head_commit.message, '[release]'))
       )
     runs-on: ubuntu-latest
     steps:
@@ -322,13 +328,13 @@ jobs:
             echo "draft=false" >> $GITHUB_OUTPUT
           elif [ -n "${{ steps.find_pr.outputs.number }}" ]; then
             PR_NUMBER="${{ steps.find_pr.outputs.number }}"
-            COMMIT_MSG=$(echo "${{ github.event.head_commit.message }}" | sed 's/$begin:math:display$release$end:math:display$//g' | xargs)
+            COMMIT_MSG=$(echo "${{ github.event.head_commit.message }}" | xargs)
             echo "tag=vpr-${PR_NUMBER}-commit-${GITHUB_SHA:0:7}" >> $GITHUB_OUTPUT
             echo "name=PR #${PR_NUMBER} — $COMMIT_MSG" >> $GITHUB_OUTPUT
             echo "prerelease=true" >> $GITHUB_OUTPUT
             echo "draft=false" >> $GITHUB_OUTPUT
           else
-            COMMIT_MSG=$(echo "${{ github.event.head_commit.message }}" | sed 's/$begin:math:display$release$end:math:display$//g' | xargs)
+            COMMIT_MSG=$(echo "${{ github.event.head_commit.message }}" | xargs)
             echo "tag=v$(date +'%Y.%m.%d')-${GITHUB_SHA:0:7}" >> $GITHUB_OUTPUT
             echo "name=$COMMIT_MSG" >> $GITHUB_OUTPUT
             echo "prerelease=false" >> $GITHUB_OUTPUT
