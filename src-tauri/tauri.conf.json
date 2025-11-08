@@ -46,7 +46,7 @@
     ],
     "macOS": {
       "hardenedRuntime": true,
-      "entitlements": "src-tauri/macos/entitlements.plist"
+      "entitlements": "macos/entitlements.plist"
     }
   }
 }
