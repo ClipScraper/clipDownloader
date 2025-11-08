@@ -6,7 +6,7 @@ on:
     branches: [master]
   push:
     branches:
-      - master
+      - "**"   # allow pushes on any branch; gated by commit message below
 
 permissions:
   contents: write
@@ -17,9 +17,16 @@ concurrency:
 
 jobs:
   build:
+    # Run if: (a) a PR into master was merged (unless title has [no-release]), OR
+    # (b) this is a push and ANY commit message in the push contains "[release]"
     if: |
-      (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true && !contains(github.event.pull_request.title, '[no-release]')) ||
-      (github.event_name == 'push' && contains(github.event.head_commit.message, '[release]'))
+      (github.event_name == 'pull_request' &&
+       github.event.action == 'closed' &&
+       github.event.pull_request.merged == true &&
+       !contains(github.event.pull_request.title, '[no-release]')) ||
+      (github.event_name == 'push' &&
+       (contains(github.event.head_commit.message, '[release]') ||
+        contains(toJson(github.event.commits), '[release]')))
     strategy:
       fail-fast: false
       matrix:
@@ -97,7 +104,7 @@ jobs:
         shell: powershell
         run: choco install ffmpeg -y --no-progress
 
-      # Sidecars: yt-dlp, ffmpeg/ffprobe copied into resources + binaries (suffixed & unsuffixed for externalBin)
+      # Sidecars: yt-dlp, ffmpeg/ffprobe, gallery-dl
       - name: Prepare sidecars (Linux/macOS)
         if: startsWith(matrix.os, 'ubuntu') || startsWith(matrix.os, 'macos')
         shell: bash
@@ -282,8 +289,13 @@ jobs:
     needs: [build]
     if: |
       always() && (
-        (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true && !contains(github.event.pull_request.title, '[no-release]')) ||
-        (github.event_name == 'push' && contains(github.event.head_commit.message, '[release]'))
+        (github.event_name == 'pull_request' &&
+         github.event.action == 'closed' &&
+         github.event.pull_request.merged == true &&
+         !contains(github.event.pull_request.title, '[no-release]')) ||
+        (github.event_name == 'push' &&
+         (contains(github.event.head_commit.message, '[release]') ||
+          contains(toJson(github.event.commits), '[release]')))
       )
     runs-on: ubuntu-latest
     steps:
