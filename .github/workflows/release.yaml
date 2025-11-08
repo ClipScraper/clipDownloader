@@ -1,14 +1,16 @@
 name: Release on PR merge or [release] commit (Tauri - macOS ARM/Intel, Windows, Linux)
 
 on:
-  # Build/publish when a PR is merged into master (no matter the source branch)
+  # Run when a PR into master is merged (regardless of source branch)
   pull_request:
     types: [closed]
     branches: [master]
 
-  # Also build/publish on *any* branch push when the commit message contains [release]
-  push:
-    branches: ['**']
+  # Run on ANY push to ANY branch (we'll gate with an `if:` on the job)
+  push: {}
+
+  # Manual trigger (just in case)
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -19,7 +21,7 @@ concurrency:
 
 jobs:
   build:
-    # Gate: run on merged PRs into master, or on pushes that have [release] in the commit message
+    # Gate: merged PR to master OR push whose HEAD commit contains [release]
     if: |
       (github.event_name == 'pull_request' &&
        github.event.action == 'closed' &&
@@ -87,7 +89,6 @@ jobs:
           if (-not (Get-Command wasm-bindgen -ErrorAction SilentlyContinue)) { cargo install --locked wasm-bindgen-cli }
           if (-not (Get-Command cargo-tauri -ErrorAction SilentlyContinue)) { cargo install --locked tauri-cli --version "^2.0.0-beta" }
 
-      # Platform deps
       - name: macOS ffmpeg
         if: startsWith(matrix.os, 'macos')
         run: brew install ffmpeg || true
@@ -97,7 +98,7 @@ jobs:
         shell: powershell
         run: choco install ffmpeg -y --no-progress
 
-      # Sidecars
+      # -------- Sidecars (Linux/macOS) --------
       - name: Prepare sidecars (Linux/macOS)
         if: startsWith(matrix.os, 'ubuntu') || startsWith(matrix.os, 'macos')
         shell: bash
@@ -149,6 +150,7 @@ jobs:
           cp "$BIN_DIR/ffprobe-${{ matrix.triple }}" "$BIN_DIR/ffprobe"
           cp "$BIN_DIR/gallery-dl-${{ matrix.triple }}" "$BIN_DIR/gallery-dl"
 
+      # -------- Sidecars (Windows) --------
       - name: Prepare sidecars (Windows)
         if: startsWith(matrix.os, 'windows')
         shell: powershell
@@ -185,7 +187,7 @@ jobs:
       - name: Build frontend (Trunk)
         run: trunk build --release
 
-      # --- macOS certificate import (so codesign has non-interactive access) ---
+      # --- macOS certificate import ---
       - name: Import Apple Developer certificate (macOS)
         if: startsWith(matrix.os, 'macos')
         shell: bash
@@ -204,11 +206,9 @@ jobs:
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security set-keychain-settings -t 3600 -u "$KEYCHAIN_PATH"
 
-          # Import .p12; allow common tools
           security import certificate.p12 -k "$KEYCHAIN_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" \
             -T /usr/bin/codesign -T /usr/bin/security -T /usr/bin/productbuild -T /usr/bin/xcrun
 
-          # Partition list to avoid GUI prompts
           security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH" || true
 
           echo "== code signing identities =="
@@ -235,13 +235,10 @@ jobs:
       - name: Build Tauri app (signed; no built-in wait)
         timeout-minutes: 40
         env:
-          # Provide identity; Tauri will sign. We won't rely on its notarize/wait path.
           APPLE_SIGNING_IDENTITY: ${{ env.APPLE_SIGNING_IDENTITY }}
-          # Leave API vars empty here to avoid Tauri invoking --wait implicitly.
           APPLE_API_ISSUER: ''
           APPLE_API_KEY: ''
           APPLE_API_KEY_PATH: ''
-          # Fallback creds (unused if empty)
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
@@ -250,7 +247,6 @@ jobs:
           echo "---- Bundles ----"
           ls -R "$BUNDLE_DIR" || true
 
-      # --- Manual notarization with timeout and clear logs (macOS only) ---
       - name: Notarize DMG via API key (macOS)
         if: startsWith(matrix.os, 'macos') && secrets.APPLE_API_KEY_P8 != ''
         shell: bash
@@ -262,22 +258,16 @@ jobs:
           set -euxo pipefail
           DMG_PATH=$(ls "$BUNDLE_DIR/macos/"*.dmg | head -n1)
           echo "DMG_PATH=$DMG_PATH"
-
-          # sanity show size
           ls -lh "$DMG_PATH"
 
-          # authenticate (idempotent with API key path)
           xcrun notarytool history --key ./AuthKey.p8 --key-id "$APPLE_API_KEY" --issuer "$APPLE_API_ISSUER" --output-format json > /dev/null || true
 
-          # submit & wait
           xcrun notarytool submit "$DMG_PATH" \
             --key ./AuthKey.p8 \
             --key-id "$APPLE_API_KEY" \
             --issuer "$APPLE_API_ISSUER" \
             --wait \
             --output-format json | tee notary-result.json
-
-          echo "Notary result saved to notary-result.json"
 
       - name: Staple notarization ticket (macOS)
         if: startsWith(matrix.os, 'macos') && secrets.APPLE_API_KEY_P8 != ''
@@ -383,4 +373,3 @@ jobs:
             dist/**/*-setup.exe
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
