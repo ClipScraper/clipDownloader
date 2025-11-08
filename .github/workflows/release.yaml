@@ -241,25 +241,38 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
-          for f in \
-            "$BIN_DIR/yt-dlp-${{ matrix.triple }}" \
-            "$BIN_DIR/ffmpeg-${{ matrix.triple }}" \
-            "$BIN_DIR/ffprobe-${{ matrix.triple }}" \
-            "$BIN_DIR/gallery-dl-${{ matrix.triple }}"; do
-            [ -f "$f" ] || continue
-            # clear quarantine/xattrs and any existing signature to prevent "replacing…" stalls
-            xattr -cr "$f" || true
-            /usr/bin/codesign --remove-signature "$f" || true
+      
+          sign_in_place() {
+            local p="$1"
+            [ -f "$p" ] || return 0
+            # Clear attributes, ensure writable, remove any prior sig, re-sign, then verify
+            xattr -cr "$p" || true
+            chmod u+w "$p" || true
+            chflags nouchg "$p" 2>/dev/null || true
+            /usr/bin/codesign --remove-signature "$p" 2>/dev/null || true
             /usr/bin/codesign --force --options runtime --timestamp \
-              --keychain "$KEYCHAIN_PATH" -s "$APPLE_SIGNING_IDENTITY" "$f"
-            /usr/bin/codesign --verify --strict --verbose=4 "$f"
+              --keychain "$KEYCHAIN_PATH" -s "$APPLE_SIGNING_IDENTITY" "$p"
+            /usr/bin/codesign --verify --strict --verbose=4 "$p"
+          }
+      
+          # 1) Sign suffixed binaries first (the arch-specific ones)
+          for f in yt-dlp ffmpeg ffprobe gallery-dl; do
+            sign_in_place "$BIN_DIR/${f}-${{ matrix.triple }}"
           done
-
-          # Keep the unsuffixed copies in sync (signed as well)
-          cp "$BIN_DIR/yt-dlp-${{ matrix.triple }}" "$BIN_DIR/yt-dlp"
-          cp "$BIN_DIR/ffmpeg-${{ matrix.triple }}" "$BIN_DIR/ffmpeg"
-          cp "$BIN_DIR/ffprobe-${{ matrix.triple }}" "$BIN_DIR/ffprobe"
-          cp "$BIN_DIR/gallery-dl-${{ matrix.triple }}" "$BIN_DIR/gallery-dl"
+      
+          # 2) Ensure unsuffixed exist; if missing, create them from suffixed
+          for f in yt-dlp ffmpeg ffprobe gallery-dl; do
+            if [ ! -f "$BIN_DIR/$f" ] && [ -f "$BIN_DIR/${f}-${{ matrix.triple }}" ]; then
+              cp "$BIN_DIR/${f}-${{ matrix.triple }}" "$BIN_DIR/$f"
+              chmod 755 "$BIN_DIR/$f" || true
+            fi
+            sign_in_place "$BIN_DIR/$f"
+          done
+      
+          # 3) (Best-effort) also sign the copies in resources if present
+          for f in ffmpeg ffprobe; do
+            sign_in_place "$RES_DIR/$f"
+          done
 
       - name: Build frontend (Trunk)
         run: trunk build --release
@@ -380,4 +393,3 @@ jobs:
             dist/**/*-setup.exe
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          
