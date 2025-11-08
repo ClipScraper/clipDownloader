@@ -29,4 +29,3 @@ fix color buttons on windows
 
 - Add "moved" to library section for files that were "done" but whose path changed
 --
-
