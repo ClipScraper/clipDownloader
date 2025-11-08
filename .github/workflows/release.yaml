@@ -1,16 +1,15 @@
 name: Release on PR merge or [release] commit (Tauri - macOS ARM/Intel, Windows, Linux)
 
 on:
-  # Run when a PR into master is merged (regardless of source branch)
+  # 1) Run when a PR into master is merged (any branch → master)
   pull_request:
     types: [closed]
     branches: [master]
-
-  # Run on ANY push to ANY branch (we'll gate with an `if:` on the job)
-  push: {}
-
-  # Manual trigger (just in case)
-  workflow_dispatch:
+  # 2) Run on every push to any branch (so PR branch commits fire),
+  #    but jobs below will only run if the commit message contains "[release]"
+  push:
+    branches:
+      - "**"
 
 permissions:
   contents: write
@@ -21,16 +20,14 @@ concurrency:
 
 jobs:
   build:
-    # Gate: merged PR to master OR push whose HEAD commit contains [release]
+    # PR merge → master OR push commit contains "[release]"
     if: |
       (github.event_name == 'pull_request' &&
        github.event.action == 'closed' &&
        github.event.pull_request.merged == true &&
-       !contains(github.event.pull_request.title, '[no-release]'))
-      ||
+       !contains(github.event.pull_request.title, '[no-release]')) ||
       (github.event_name == 'push' &&
        contains(github.event.head_commit.message, '[release]'))
-
     strategy:
       fail-fast: false
       matrix:
@@ -74,7 +71,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-${{ runner.arch }}-cargo-binaries-v1-
 
-      - name: Install cargo tools (if not cached) (Unix)
+      - name: Install cargo tools (if not cached)
         if: runner.os != 'Windows'
         run: |
           if ! command -v trunk &> /dev/null; then cargo install --locked trunk; fi
@@ -89,6 +86,16 @@ jobs:
           if (-not (Get-Command wasm-bindgen -ErrorAction SilentlyContinue)) { cargo install --locked wasm-bindgen-cli }
           if (-not (Get-Command cargo-tauri -ErrorAction SilentlyContinue)) { cargo install --locked tauri-cli --version "^2.0.0-beta" }
 
+      # Platform deps
+      # - name: Linux dependencies
+      #   if: startsWith(matrix.os, 'ubuntu')
+      #   run: |
+      #     sudo apt-get update
+      #     sudo apt-get install -y \
+      #       libgtk-3-dev libwebkit2gtk-4.0-dev \
+      #       libayatana-appindicator3-dev librsvg2-dev \
+      #       ffmpeg
+
       - name: macOS ffmpeg
         if: startsWith(matrix.os, 'macos')
         run: brew install ffmpeg || true
@@ -98,7 +105,7 @@ jobs:
         shell: powershell
         run: choco install ffmpeg -y --no-progress
 
-      # -------- Sidecars (Linux/macOS) --------
+      # Sidecars: yt-dlp, ffmpeg/ffprobe copied into resources + binaries (suffixed & unsuffixed for externalBin)
       - name: Prepare sidecars (Linux/macOS)
         if: startsWith(matrix.os, 'ubuntu') || startsWith(matrix.os, 'macos')
         shell: bash
@@ -106,7 +113,7 @@ jobs:
           set -euo pipefail
           mkdir -p "$BIN_DIR" "$RES_DIR"
 
-          # yt-dlp
+          # yt-dlp (arch-specific filename)
           if [[ "${{ matrix.label }}" == macos-* ]]; then
             curl -L "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos" -o "$BIN_DIR/yt-dlp-${{ matrix.triple }}"
             chmod +x "$BIN_DIR/yt-dlp-${{ matrix.triple }}"
@@ -144,13 +151,12 @@ jobs:
             xattr -c "$BIN_DIR/gallery-dl-${{ matrix.triple }}"
           fi
 
-          # Unsuffixed copies for externalBin
+          # ===== Unsuffixed copies to satisfy tauri.conf.json externalBin =====
           cp "$BIN_DIR/yt-dlp-${{ matrix.triple }}" "$BIN_DIR/yt-dlp"
           cp "$BIN_DIR/ffmpeg-${{ matrix.triple }}" "$BIN_DIR/ffmpeg"
           cp "$BIN_DIR/ffprobe-${{ matrix.triple }}" "$BIN_DIR/ffprobe"
           cp "$BIN_DIR/gallery-dl-${{ matrix.triple }}" "$BIN_DIR/gallery-dl"
 
-      # -------- Sidecars (Windows) --------
       - name: Prepare sidecars (Windows)
         if: startsWith(matrix.os, 'windows')
         shell: powershell
@@ -158,13 +164,16 @@ jobs:
           $ErrorActionPreference = "Stop"
           New-Item -ItemType Directory -Force -Path $env:BIN_DIR, $env:RES_DIR | Out-Null
 
+          # yt-dlp.exe
           Invoke-WebRequest "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe" -OutFile "$env:BIN_DIR\yt-dlp-${{ matrix.triple }}.exe"
 
+          # ffmpeg/ffprobe → resources (unsuffixed) AND binaries/ (suffixed + unsuffixed)
           Copy-Item (Get-Command ffmpeg).Source "$env:RES_DIR\ffmpeg.exe"
           Copy-Item (Get-Command ffmpeg).Source "$env:BIN_DIR\ffmpeg-${{ matrix.triple }}.exe"
           Copy-Item (Join-Path (Split-Path (Get-Command ffmpeg).Source) "ffprobe.exe") "$env:RES_DIR\ffprobe.exe"
           Copy-Item (Join-Path (Split-Path (Get-Command ffmpeg).Source) "ffprobe.exe") "$env:BIN_DIR\ffprobe-${{ matrix.triple }}.exe"
 
+          # gallery-dl onefile (PyInstaller)
           py -m venv .venv
           .\.venv\Scripts\Activate.ps1
           py -m pip install --upgrade pip wheel setuptools pyinstaller gallery-dl
@@ -179,6 +188,7 @@ jobs:
             --collect-data gallery_dl
           Move-Item ".\dist\gallery-dl-${{ matrix.triple }}.exe" "$env:BIN_DIR\"
 
+          # ===== Unsuffixed copies to satisfy tauri.conf.json externalBin =====
           Copy-Item "$env:BIN_DIR\yt-dlp-${{ matrix.triple }}.exe" "$env:BIN_DIR\yt-dlp.exe"
           Copy-Item "$env:BIN_DIR\ffmpeg-${{ matrix.triple }}.exe" "$env:BIN_DIR\ffmpeg.exe"
           Copy-Item "$env:BIN_DIR\ffprobe-${{ matrix.triple }}.exe" "$env:BIN_DIR\ffprobe.exe"
@@ -187,7 +197,7 @@ jobs:
       - name: Build frontend (Trunk)
         run: trunk build --release
 
-      # --- macOS certificate import ---
+      # === macOS: import Developer ID Application cert into a dedicated keychain and validate ===
       - name: Import Apple Developer certificate (macOS)
         if: startsWith(matrix.os, 'macos')
         shell: bash
@@ -197,6 +207,7 @@ jobs:
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
           set -euxo pipefail
+
           echo "$APPLE_CERTIFICATE" | base64 --decode > certificate.p12
 
           KEYCHAIN_PATH="$HOME/Library/Keychains/build.keychain-db"
@@ -206,21 +217,32 @@ jobs:
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security set-keychain-settings -t 3600 -u "$KEYCHAIN_PATH"
 
+          # Import the .p12 and explicitly allow common tools (do not hard-code /usr/bin/notarytool)
           security import certificate.p12 -k "$KEYCHAIN_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" \
             -T /usr/bin/codesign -T /usr/bin/security -T /usr/bin/productbuild -T /usr/bin/xcrun
 
+          # Best effort: set partition list (can be flaky on CI). Do not fail the build here.
           security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH" || true
 
-          echo "== code signing identities =="
+          echo "== Available code signing identities =="
           security find-identity -v -p codesigning "$KEYCHAIN_PATH" || true
 
+          # Require a Developer ID Application identity
           CERT_ID=$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" | grep 'Developer ID Application' | head -n1 | awk -F\" '{print $2}' || true)
           if [[ -z "$CERT_ID" ]]; then
-            echo "::error::Developer ID Application identity not found in the imported .p12"
+            echo "ERROR: A 'Developer ID Application' identity was not found in the imported .p12."
+            echo "Tip: Export 'Developer ID Application: <Your Name> (TEAMID)' as .p12 (with private key) and update APPLE_CERTIFICATE."
             exit 1
           fi
           echo "APPLE_SIGNING_IDENTITY=$CERT_ID" >> $GITHUB_ENV
 
+      - name: Validate entitlements (macOS)
+        if: startsWith(matrix.os, 'macos')
+        run: |
+          test -f src-tauri/macos/entitlements.plist || { echo "src-tauri/macos/entitlements.plist missing"; exit 1; }
+          plutil -lint src-tauri/macos/entitlements.plist
+
+      # === macOS: (optional) write App Store Connect API key to AuthKey.p8 if provided ===
       - name: Write API key file (macOS)
         if: startsWith(matrix.os, 'macos')
         shell: bash
@@ -232,64 +254,30 @@ jobs:
             printf "%s" "$APPLE_API_KEY_P8" > AuthKey.p8
           fi
 
-      - name: Build Tauri app (signed; no built-in wait)
-        timeout-minutes: 40
+      # Build the Tauri app (signed + notarized on macOS when creds are present)
+      - name: Build Tauri app
         env:
-          APPLE_SIGNING_IDENTITY: ${{ env.APPLE_SIGNING_IDENTITY }}
-          APPLE_API_ISSUER: ''
-          APPLE_API_KEY: ''
-          APPLE_API_KEY_PATH: ''
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # App Store Connect API key auth (preferred for CI)
+          APPLE_API_ISSUER:   ${{ secrets.APPLE_API_KEY_P8 != '' && secrets.APPLE_API_ISSUER || '' }}
+          APPLE_API_KEY:      ${{ secrets.APPLE_API_KEY_P8 != '' && secrets.APPLE_API_KEY    || '' }}
+          APPLE_API_KEY_PATH: ${{ secrets.APPLE_API_KEY_P8 != '' && './AuthKey.p8' || '' }}
+          # Apple ID fallback (supported by Tauri; leave empty if unused)
+          APPLE_ID:           ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD:     ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID:      ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          cargo tauri build --ci --verbose
+          cargo tauri build --ci
           echo "---- Bundles ----"
           ls -R "$BUNDLE_DIR" || true
 
-      - name: Notarize DMG via API key (macOS)
-        if: startsWith(matrix.os, 'macos') && secrets.APPLE_API_KEY_P8 != ''
-        shell: bash
-        timeout-minutes: 30
-        env:
-          APPLE_API_KEY:      ${{ secrets.APPLE_API_KEY }}
-          APPLE_API_ISSUER:   ${{ secrets.APPLE_API_ISSUER }}
-        run: |
-          set -euxo pipefail
-          DMG_PATH=$(ls "$BUNDLE_DIR/macos/"*.dmg | head -n1)
-          echo "DMG_PATH=$DMG_PATH"
-          ls -lh "$DMG_PATH"
-
-          xcrun notarytool history --key ./AuthKey.p8 --key-id "$APPLE_API_KEY" --issuer "$APPLE_API_ISSUER" --output-format json > /dev/null || true
-
-          xcrun notarytool submit "$DMG_PATH" \
-            --key ./AuthKey.p8 \
-            --key-id "$APPLE_API_KEY" \
-            --issuer "$APPLE_API_ISSUER" \
-            --wait \
-            --output-format json | tee notary-result.json
-
+      # Best-effort staple (if Tauri notarized successfully)
       - name: Staple notarization ticket (macOS)
-        if: startsWith(matrix.os, 'macos') && secrets.APPLE_API_KEY_P8 != ''
-        shell: bash
-        run: |
-          set -euxo pipefail
-          DMG_PATH=$(ls "$BUNDLE_DIR/macos/"*.dmg | head -n1)
-          APP_PATH=$(ls -d "$BUNDLE_DIR/macos/"*.app | head -n1 || true)
-
-          xcrun stapler staple -v "$DMG_PATH" || true
-          if [[ -n "${APP_PATH:-}" ]]; then
-            xcrun stapler staple -v "$APP_PATH" || true
-          fi
-
-      - name: Verify code signatures (macOS)
         if: startsWith(matrix.os, 'macos')
         shell: bash
         run: |
           set -euxo pipefail
-          APP_PATH=$(ls -d "$BUNDLE_DIR/macos/"*.app | head -n1)
-          codesign --verify --deep --strict --verbose=4 "$APP_PATH"
-          spctl --assess --type execute --verbose=4 "$APP_PATH" || true
+          find "$BUNDLE_DIR" -name "*.app" -type d -print0 | xargs -0 -I{} sh -c 'xcrun stapler staple -v "{}" || true'
+          find "$BUNDLE_DIR" -name "*.dmg" -type f -print0 | xargs -0 -I{} sh -c 'xcrun stapler staple -v "{}" || true'
 
       - name: Cleanup keychain (macOS)
         if: startsWith(matrix.os, 'macos')
@@ -311,8 +299,7 @@ jobs:
         (github.event_name == 'pull_request' &&
          github.event.action == 'closed' &&
          github.event.pull_request.merged == true &&
-         !contains(github.event.pull_request.title, '[no-release]'))
-        ||
+         !contains(github.event.pull_request.title, '[no-release]')) ||
         (github.event_name == 'push' &&
          contains(github.event.head_commit.message, '[release]'))
       )
@@ -341,13 +328,13 @@ jobs:
             echo "draft=false" >> $GITHUB_OUTPUT
           elif [ -n "${{ steps.find_pr.outputs.number }}" ]; then
             PR_NUMBER="${{ steps.find_pr.outputs.number }}"
-            COMMIT_MSG=$(echo "${{ github.event.head_commit.message }}" | sed 's/$begin:math:display$release$end:math:display$//g' | xargs)
+            COMMIT_MSG=$(echo "${{ github.event.head_commit.message }}" | xargs)
             echo "tag=vpr-${PR_NUMBER}-commit-${GITHUB_SHA:0:7}" >> $GITHUB_OUTPUT
             echo "name=PR #${PR_NUMBER} — $COMMIT_MSG" >> $GITHUB_OUTPUT
             echo "prerelease=true" >> $GITHUB_OUTPUT
             echo "draft=false" >> $GITHUB_OUTPUT
           else
-            COMMIT_MSG=$(echo "${{ github.event.head_commit.message }}" | sed 's/$begin:math:display$release$end:math:display$//g' | xargs)
+            COMMIT_MSG=$(echo "${{ github.event.head_commit.message }}" | xargs)
             echo "tag=v$(date +'%Y.%m.%d')-${GITHUB_SHA:0:7}" >> $GITHUB_OUTPUT
             echo "name=$COMMIT_MSG" >> $GITHUB_OUTPUT
             echo "prerelease=false" >> $GITHUB_OUTPUT
