@@ -273,7 +273,7 @@ jobs:
           for f in ffmpeg ffprobe; do
             sign_in_place "$RES_DIR/$f"
           done
-
+      
       - name: Build frontend (Trunk)
         run: trunk build --release
 
