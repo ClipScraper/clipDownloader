@@ -235,17 +235,16 @@ jobs:
           Copy-Item "$env:BIN_DIR\ffprobe-${{ matrix.triple }}.exe" "$env:BIN_DIR\ffprobe.exe"
           Copy-Item "$env:BIN_DIR\gallery-dl-${{ matrix.triple }}.exe" "$env:BIN_DIR\gallery-dl.exe"
 
-      # >>> NEW: Pre-clean & pre-sign macOS sidecars to avoid codesign hanging when Tauri re-signs them
+      # >>> Pre-clean & pre-sign macOS sidecars to avoid codesign hanging when Tauri re-signs them
       - name: Pre-sign sidecars (macOS)
         if: startsWith(matrix.os, 'macos')
         shell: bash
         run: |
           set -euxo pipefail
-      
+
           sign_in_place() {
             local p="$1"
             [ -f "$p" ] || return 0
-            # Clear attributes, ensure writable, remove any prior sig, re-sign, then verify
             xattr -cr "$p" || true
             chmod u+w "$p" || true
             chflags nouchg "$p" 2>/dev/null || true
@@ -254,13 +253,11 @@ jobs:
               --keychain "$KEYCHAIN_PATH" -s "$APPLE_SIGNING_IDENTITY" "$p"
             /usr/bin/codesign --verify --strict --verbose=4 "$p"
           }
-      
-          # 1) Sign suffixed binaries first (the arch-specific ones)
+
           for f in yt-dlp ffmpeg ffprobe gallery-dl; do
             sign_in_place "$BIN_DIR/${f}-${{ matrix.triple }}"
           done
-      
-          # 2) Ensure unsuffixed exist; if missing, create them from suffixed
+
           for f in yt-dlp ffmpeg ffprobe gallery-dl; do
             if [ ! -f "$BIN_DIR/$f" ] && [ -f "$BIN_DIR/${f}-${{ matrix.triple }}" ]; then
               cp "$BIN_DIR/${f}-${{ matrix.triple }}" "$BIN_DIR/$f"
@@ -268,19 +265,22 @@ jobs:
             fi
             sign_in_place "$BIN_DIR/$f"
           done
-      
-          # 3) (Best-effort) also sign the copies in resources if present
+
           for f in ffmpeg ffprobe; do
             sign_in_place "$RES_DIR/$f"
           done
-      
+
       - name: Build frontend (Trunk)
         run: trunk build --release
 
       # Build the Tauri app (signed + notarized on macOS when creds are present)
-      - name: Build Tauri app
+      - name: Build Tauri app (macOS/Linux)
+        if: startsWith(matrix.os, 'macos') || startsWith(matrix.os, 'ubuntu')
+        shell: bash
         env:
-          # Help Tauri pick the right identity & keychain
+          # Extra verbosity makes it easier to spot where sign hangs
+          RUST_LOG: tauri_bundler=debug
+          # Help Tauri pick the right identity & keychain (macOS only; harmless on Linux)
           APPLE_SIGNING_IDENTITY: ${{ env.APPLE_SIGNING_IDENTITY }}
           KEYCHAIN_PATH: ${{ env.KEYCHAIN_PATH }}
           CODESIGN_ALLOCATE: ${{ env.CODESIGN_ALLOCATE }}
@@ -293,11 +293,23 @@ jobs:
           APPLE_PASSWORD:     ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID:      ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          # Extra verbosity makes it easier to spot where sign hangs
-          export RUST_LOG=tauri_bundler=debug
+          set -euxo pipefail
           cargo tauri build --ci
           echo "---- Bundles ----"
           ls -R "$BUNDLE_DIR" || true
+
+      - name: Build Tauri app (Windows)
+        if: startsWith(matrix.os, 'windows')
+        shell: powershell
+        env:
+          RUST_LOG: tauri_bundler=debug
+        run: |
+          $ErrorActionPreference = "Stop"
+          cargo tauri build --ci
+          Write-Host "---- Bundles ----"
+          if (Test-Path "$env:BUNDLE_DIR") {
+            Get-ChildItem -Recurse "$env:BUNDLE_DIR" | ForEach-Object { $_.FullName }
+          }
 
       # Verify whole app and (best-effort) staple
       - name: Verify & Staple (macOS)
