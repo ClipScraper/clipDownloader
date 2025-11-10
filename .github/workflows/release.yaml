@@ -1,9 +1,12 @@
 name: Release on PR merge or [release] commit (Tauri - macOS ARM/Intel, Windows, Linux)
 
 on:
+  # 1) Run when a PR into master is merged (any branch → master)
   pull_request:
     types: [closed]
     branches: [master]
+  # 2) Run on every push to any branch (so PR branch commits fire),
+  #    but jobs below will only run if the commit message contains "[release]"
   push:
     branches:
       - "**"
@@ -17,9 +20,14 @@ concurrency:
 
 jobs:
   build:
+    # PR merge → master OR push commit contains "[release]"
     if: |
-      (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true && !contains(github.event.pull_request.title, '[no-release]')) ||
-      (github.event_name == 'push' && contains(github.event.head_commit.message, '[release]'))
+      (github.event_name == 'pull_request' &&
+       github.event.action == 'closed' &&
+       github.event.pull_request.merged == true &&
+       !contains(github.event.pull_request.title, '[no-release]')) ||
+      (github.event_name == 'push' &&
+       contains(github.event.head_commit.message, '[release]'))
     strategy:
       fail-fast: false
       matrix:
@@ -27,7 +35,7 @@ jobs:
           - os: macos-14
             label: macos-arm64
             triple: aarch64-apple-darwin
-          - os: macos-12
+          - os: macos-13
             label: macos-x86_64
             triple: x86_64-apple-darwin
           - os: windows-latest
@@ -97,6 +105,47 @@ jobs:
         shell: powershell
         run: choco install ffmpeg -y --no-progress
 
+      # ---------- macOS signing prerequisites ----------
+      - name: Import Apple Developer certificate (macOS)
+        if: startsWith(matrix.os, 'macos')
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}             # base64 of .p12
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          set -euxo pipefail
+
+          echo "$APPLE_CERTIFICATE" | base64 --decode > certificate.p12
+
+          # Create & select a temporary keychain (explicit path helps downstream tools)
+          KEYCHAIN_PATH="$RUNNER_TEMP/build.keychain-db"
+          echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH"
+          security default-keychain -s "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -t 3600 -u "$KEYCHAIN_PATH"
+
+          # Import certificate and allow codesign/xcrun without interactive prompts
+          security import certificate.p12 -k "$KEYCHAIN_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign -T /usr/bin/security -T /usr/bin/productbuild -T /usr/bin/xcrun
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          echo "== Identities (codesigning) =="
+          security find-identity -v -p codesigning "$KEYCHAIN_PATH" || true
+
+          CERT_ID=$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" | \
+            awk -F\" '/Developer ID Application|Mac Developer ID Application/ {print $2; exit}')
+          if [[ -z "$CERT_ID" ]]; then
+            echo "::error::Developer ID Application identity not found in the imported .p12."
+            exit 1
+          fi
+          echo "APPLE_SIGNING_IDENTITY=$CERT_ID" >> "$GITHUB_ENV"
+
+          # Help codesign find its allocator on CI (avoids some rare hangs)
+          echo "CODESIGN_ALLOCATE=$(xcrun -f codesign_allocate)" >> "$GITHUB_ENV"
+
       # Sidecars: yt-dlp, ffmpeg/ffprobe copied into resources + binaries (suffixed & unsuffixed for externalBin)
       - name: Prepare sidecars (Linux/macOS)
         if: startsWith(matrix.os, 'ubuntu') || startsWith(matrix.os, 'macos')
@@ -109,7 +158,7 @@ jobs:
           if [[ "${{ matrix.label }}" == macos-* ]]; then
             curl -L "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos" -o "$BIN_DIR/yt-dlp-${{ matrix.triple }}"
             chmod +x "$BIN_DIR/yt-dlp-${{ matrix.triple }}"
-            xattr -c "$BIN_DIR/yt-dlp-${{ matrix.triple }}"
+            xattr -c "$BIN_DIR/yt-dlp-${{ matrix.triple }}" || true
           else
             curl -L "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp" -o "$BIN_DIR/yt-dlp-${{ matrix.triple }}"
             chmod +x "$BIN_DIR/yt-dlp-${{ matrix.triple }}"
@@ -140,7 +189,7 @@ jobs:
             --collect-data gallery_dl
           mv "dist/gallery-dl-${{ matrix.triple }}" "$BIN_DIR/"
           if [[ "${{ matrix.label }}" == macos-* ]]; then
-            xattr -c "$BIN_DIR/gallery-dl-${{ matrix.triple }}"
+            xattr -c "$BIN_DIR/gallery-dl-${{ matrix.triple }}" || true
           fi
 
           # ===== Unsuffixed copies to satisfy tauri.conf.json externalBin =====
@@ -186,78 +235,99 @@ jobs:
           Copy-Item "$env:BIN_DIR\ffprobe-${{ matrix.triple }}.exe" "$env:BIN_DIR\ffprobe.exe"
           Copy-Item "$env:BIN_DIR\gallery-dl-${{ matrix.triple }}.exe" "$env:BIN_DIR\gallery-dl.exe"
 
-      # Build frontend (Trunk)
-      - name: Build frontend
-        run: trunk build --release
-
-      # === macOS: import Developer ID Application cert into a dedicated keychain and validate ===
-      - name: Import Apple Developer certificate (macOS)
+      # >>> Pre-clean & pre-sign macOS sidecars to avoid codesign hanging when Tauri re-signs them
+      - name: Pre-sign sidecars (macOS)
         if: startsWith(matrix.os, 'macos')
         shell: bash
-        env:
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}             # base64 of .p12
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
           set -euxo pipefail
 
-          echo "$APPLE_CERTIFICATE" | base64 --decode > certificate.p12
+          sign_in_place() {
+            local p="$1"
+            [ -f "$p" ] || return 0
+            xattr -cr "$p" || true
+            chmod u+w "$p" || true
+            chflags nouchg "$p" 2>/dev/null || true
+            /usr/bin/codesign --remove-signature "$p" 2>/dev/null || true
+            /usr/bin/codesign --force --options runtime --timestamp \
+              --keychain "$KEYCHAIN_PATH" -s "$APPLE_SIGNING_IDENTITY" "$p"
+            /usr/bin/codesign --verify --strict --verbose=4 "$p"
+          }
 
-          KEYCHAIN_PATH="$HOME/Library/Keychains/build.keychain-db"
-          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security list-keychains -d user -s "$KEYCHAIN_PATH"
-          security default-keychain -s "$KEYCHAIN_PATH"
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security set-keychain-settings -t 3600 -u "$KEYCHAIN_PATH"
+          for f in yt-dlp ffmpeg ffprobe gallery-dl; do
+            sign_in_place "$BIN_DIR/${f}-${{ matrix.triple }}"
+          done
 
-          # Import the .p12 and explicitly allow common tools
-          security import certificate.p12 -k "$KEYCHAIN_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" \
-            -T /usr/bin/codesign -T /usr/bin/security -T /usr/bin/productbuild -T /usr/bin/xcrun -T /usr/bin/notarytool
+          for f in yt-dlp ffmpeg ffprobe gallery-dl; do
+            if [ ! -f "$BIN_DIR/$f" ] && [ -f "$BIN_DIR/${f}-${{ matrix.triple }}" ]; then
+              cp "$BIN_DIR/${f}-${{ matrix.triple }}" "$BIN_DIR/$f"
+              chmod 755 "$BIN_DIR/$f" || true
+            fi
+            sign_in_place "$BIN_DIR/$f"
+          done
 
-          # Best effort: set partition list (can be flaky on CI). Do not fail the build here.
-          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH" || true
+          for f in ffmpeg ffprobe; do
+            sign_in_place "$RES_DIR/$f"
+          done
 
-          echo "== Available code signing identities =="
-          security find-identity -v -p codesigning "$KEYCHAIN_PATH" || true
+      - name: Build frontend (Trunk)
+        run: trunk build --release
 
-          # Require a Developer ID Application identity (not 'Mac Installer Submission', not 'Apple Development')
-          CERT_ID=$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" | grep 'Developer ID Application' | head -n1 | awk -F\" '{print $2}' || true)
-          if [[ -z "$CERT_ID" ]]; then
-            echo "ERROR: A 'Developer ID Application' identity was not found in the imported .p12."
-            echo "Tip: In Keychain Access → My Certificates, export 'Developer ID Application: <Your Name> (TEAMID)' as .p12 (with private key) and update APPLE_CERTIFICATE."
-            exit 1
-          fi
-          echo "APPLE_SIGNING_IDENTITY=$CERT_ID" >> $GITHUB_ENV
-
-      # === macOS: (optional) write App Store Connect API key to AuthKey.p8 if provided ===
-      - name: Write API key file (macOS)
-        if: startsWith(matrix.os, 'macos')
+      # Build the Tauri app (signed + notarized on macOS when creds are present)
+      - name: Build Tauri app (macOS/Linux)
+        if: startsWith(matrix.os, 'macos') || startsWith(matrix.os, 'ubuntu')
         shell: bash
         env:
-          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
-        run: |
-          set -euo pipefail
-          if [[ -n "${APPLE_API_KEY_P8:-}" ]]; then
-            printf "%s" "$APPLE_API_KEY_P8" > AuthKey.p8
-          fi
-
-      # Build the Tauri app (signed + notarized on macOS via API key if present)
-      - name: Build Tauri app
-        env:
+          # Extra verbosity makes it easier to spot where sign hangs
+          RUST_LOG: tauri_bundler=debug
+          # Help Tauri pick the right identity & keychain (macOS only; harmless on Linux)
+          APPLE_SIGNING_IDENTITY: ${{ env.APPLE_SIGNING_IDENTITY }}
+          KEYCHAIN_PATH: ${{ env.KEYCHAIN_PATH }}
+          CODESIGN_ALLOCATE: ${{ env.CODESIGN_ALLOCATE }}
           # App Store Connect API key auth (preferred for CI)
-          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
-          APPLE_API_KEY_PATH: ./AuthKey.p8
-          # APPLE_SIGNING_IDENTITY is set above on macOS
+          APPLE_API_ISSUER:   ${{ secrets.APPLE_API_KEY_P8 != '' && secrets.APPLE_API_ISSUER || '' }}
+          APPLE_API_KEY:      ${{ secrets.APPLE_API_KEY_P8 != '' && secrets.APPLE_API_KEY    || '' }}
+          APPLE_API_KEY_PATH: ${{ secrets.APPLE_API_KEY_P8 != '' && './AuthKey.p8' || '' }}
+          # Apple ID fallback (supported by Tauri; leave empty if unused)
+          APPLE_ID:           ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD:     ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID:      ${{ secrets.APPLE_TEAM_ID }}
         run: |
+          set -euxo pipefail
           cargo tauri build --ci
           echo "---- Bundles ----"
           ls -R "$BUNDLE_DIR" || true
 
+      - name: Build Tauri app (Windows)
+        if: startsWith(matrix.os, 'windows')
+        shell: powershell
+        env:
+          RUST_LOG: tauri_bundler=debug
+        run: |
+          $ErrorActionPreference = "Stop"
+          cargo tauri build --ci
+          Write-Host "---- Bundles ----"
+          if (Test-Path "$env:BUNDLE_DIR") {
+            Get-ChildItem -Recurse "$env:BUNDLE_DIR" | ForEach-Object { $_.FullName }
+          }
+
+      # Verify whole app and (best-effort) staple
+      - name: Verify & Staple (macOS)
+        if: startsWith(matrix.os, 'macos')
+        shell: bash
+        run: |
+          set -euxo pipefail
+          APP_PATH=$(find "$BUNDLE_DIR" -name "*.app" -type d | head -n1 || true)
+          if [[ -n "$APP_PATH" ]]; then
+            /usr/bin/codesign --verify --deep --strict --verbose=4 "$APP_PATH"
+            xcrun stapler staple -v "$APP_PATH" || true
+            find "$BUNDLE_DIR" -name "*.dmg" -type f -print0 | xargs -0 -I{} sh -c 'xcrun stapler staple -v "{}" || true'
+          fi
+
       - name: Cleanup keychain (macOS)
         if: startsWith(matrix.os, 'macos')
         run: |
-          security delete-keychain "$HOME/Library/Keychains/build.keychain-db" || true
+          security delete-keychain "$KEYCHAIN_PATH" || true
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -271,8 +341,12 @@ jobs:
     needs: [build]
     if: |
       always() && (
-        (github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true && !contains(github.event.pull_request.title, '[no-release]')) ||
-        (github.event_name == 'push' && contains(github.event.head_commit.message, '[release]'))
+        (github.event_name == 'pull_request' &&
+         github.event.action == 'closed' &&
+         github.event.pull_request.merged == true &&
+         !contains(github.event.pull_request.title, '[no-release]')) ||
+        (github.event_name == 'push' &&
+         contains(github.event.head_commit.message, '[release]'))
       )
     runs-on: ubuntu-latest
     steps:
@@ -299,13 +373,13 @@ jobs:
             echo "draft=false" >> $GITHUB_OUTPUT
           elif [ -n "${{ steps.find_pr.outputs.number }}" ]; then
             PR_NUMBER="${{ steps.find_pr.outputs.number }}"
-            COMMIT_MSG=$(echo "${{ github.event.head_commit.message }}" | sed 's/$begin:math:display$release$end:math:display$//g' | xargs)
+            COMMIT_MSG=$(echo "${{ github.event.head_commit.message }}" | xargs)
             echo "tag=vpr-${PR_NUMBER}-commit-${GITHUB_SHA:0:7}" >> $GITHUB_OUTPUT
             echo "name=PR #${PR_NUMBER} — $COMMIT_MSG" >> $GITHUB_OUTPUT
             echo "prerelease=true" >> $GITHUB_OUTPUT
             echo "draft=false" >> $GITHUB_OUTPUT
           else
-            COMMIT_MSG=$(echo "${{ github.event.head_commit.message }}" | sed 's/$begin:math:display$release$end:math:display$//g' | xargs)
+            COMMIT_MSG=$(echo "${{ github.event.head_commit.message }}" | xargs)
             echo "tag=v$(date +'%Y.%m.%d')-${GITHUB_SHA:0:7}" >> $GITHUB_OUTPUT
             echo "name=$COMMIT_MSG" >> $GITHUB_OUTPUT
             echo "prerelease=false" >> $GITHUB_OUTPUT
