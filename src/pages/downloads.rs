@@ -338,6 +338,8 @@ pub fn downloads_page(props: &Props) -> Html {
                                                                         "bookmarks"         => ContentType::Bookmarks,
                                                                         "playlist"          => ContentType::Playlist,
                                                                         "recommendation"    => ContentType::Recommendation,
+                                                                        "manual"            => ContentType::Manual,
+                                                                        "pinboard"          => ContentType::Pinboard,
                                                                         _                   => ContentType::Other,
                                                                     }
                                                                 ));
@@ -370,6 +372,8 @@ pub fn downloads_page(props: &Props) -> Html {
                                                                         "bookmarks"         => ContentType::Bookmarks,
                                                                         "playlist"          => ContentType::Playlist,
                                                                         "recommendation"    => ContentType::Recommendation,
+                                                                        "manual"            => ContentType::Manual,
+                                                                        "pinboard"          => ContentType::Pinboard,
                                                                         _                   => ContentType::Other,
                                                                     }
                                                                 ));

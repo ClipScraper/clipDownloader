@@ -28,4 +28,4 @@ PRIORITY:
 fix color buttons on windows
 
 - Add "moved" to library section for files that were "done" but whose path changed
---
+- Add option to save pictures/carousels in separate folders

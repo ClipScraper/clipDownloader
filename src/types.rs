@@ -18,6 +18,8 @@ pub enum ContentType {
     Bookmarks,
     Playlist,
     Recommendation,
+    Manual,
+    Pinboard,
     #[serde(other)]
     Other,
 }
@@ -67,6 +69,8 @@ pub fn content_type_str(t: &ContentType) -> &'static str {
         ContentType::Bookmarks => "bookmarks",
         ContentType::Playlist => "playlist",
         ContentType::Recommendation => "recommendation",
+        ContentType::Manual => "manual",
+        ContentType::Pinboard => "pinboard",
         ContentType::Other => "other",
     }
 }
