@@ -169,14 +169,19 @@ pub fn app() -> Html {
     }
 
     {
+        let is_paused = is_paused.clone();
+        use_effect_with(settings.download_automatically, move |auto| {
+            is_paused.set(!*auto);
+            || ()
+        });
+    }
+
+    {
         let backlog_rows = backlog_rows.clone();
         let queue_rows = queue_rows.clone();
-        let is_paused = is_paused.clone();
-        let settings = settings.clone();
 
-        use_effect_with((*page, settings.download_automatically), move |(p, auto)| {
+        use_effect_with(*page, move |p| {
             if *p == Page::Downloads {
-                is_paused.set(!*auto);
                 spawn_local(async move {
                     if let Ok(js) = invoke("list_backlog", JsValue::NULL).await {
                         if let Ok(rows) = serde_wasm_bindgen::from_value::<Vec<ClipRow>>(js) {
@@ -343,66 +348,96 @@ pub fn app() -> Html {
             match item {
                 MoveItem::Platform(plat) => {
                     let plat_str = crate::types::platform_str(&plat).to_string();
+                    let plat_clone = plat.clone();
+                    let backlog_rows = backlog_rows.clone();
+                    let queue_rows = queue_rows.clone();
                     spawn_local(async move {
                         let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "platform": plat_str })).unwrap();
-                        let _ = invoke("move_platform_to_queue", args).await;
+                        match invoke("move_platform_to_queue", args).await {
+                            Ok(_) => {
+                                // Only update UI state after successful DB operation
+                                let mut moved = Vec::new();
+                                let mut kept  = Vec::new();
+                                for r in (*backlog_rows).clone() {
+                                    if r.platform == plat_clone { moved.push(r); } else { kept.push(r); }
+                                }
+                                if !moved.is_empty() {
+                                    let mut q = (*queue_rows).clone();
+                                    q.extend(moved);
+                                    queue_rows.set(q);
+                                }
+                                backlog_rows.set(kept);
+                            }
+                            Err(e) => {
+                                log_invoke_err("move_platform_to_queue", e);
+                            }
+                        }
                     });
-                    let mut moved = Vec::new();
-                    let mut kept  = Vec::new();
-                    for r in (*backlog_rows).clone() {
-                        if r.platform == plat { moved.push(r); } else { kept.push(r); }
-                    }
-                    if !moved.is_empty() {
-                        let mut q = (*queue_rows).clone();
-                        q.extend(moved);
-                        queue_rows.set(q);
-                    }
-                    backlog_rows.set(kept);
                 }
                 MoveItem::Collection(plat, handle, ctype) => {
                     let p = crate::types::platform_str(&plat).to_string();
                     let t = crate::types::content_type_str(&ctype).to_string();
                     let h = handle.clone();
+                    let plat_clone = plat.clone();
+                    let handle_clone = handle.clone();
+                    let ctype_clone = ctype.clone();
+                    let backlog_rows = backlog_rows.clone();
+                    let queue_rows = queue_rows.clone();
                     spawn_local(async move {
-                        let args = serde_wasm_bindgen::to_value(&serde_json::json!({"platform": p, "handle": h, "content_type": t})).unwrap();
-                        let _ = invoke("move_collection_to_queue", args).await;
+                        let args = serde_wasm_bindgen::to_value(&serde_json::json!({"platform": p, "handle": h, "contentType": t})).unwrap();
+                        match invoke("move_collection_to_queue", args).await {
+                            Ok(_) => {
+                                // Only update UI state after successful DB operation
+                                let mut moved = Vec::new();
+                                let mut kept  = Vec::new();
+                                for r in (*backlog_rows).clone() {
+                                    if r.platform == plat_clone && r.handle == handle_clone && r.content_type == ctype_clone { moved.push(r); } else { kept.push(r); }
+                                }
+                                if !moved.is_empty() {
+                                    let mut q = (*queue_rows).clone();
+                                    q.extend(moved);
+                                    queue_rows.set(q);
+                                }
+                                backlog_rows.set(kept);
+                            }
+                            Err(e) => {
+                                log_invoke_err("move_collection_to_queue", e);
+                            }
+                        }
                     });
-
-                    let mut moved = Vec::new();
-                    let mut kept  = Vec::new();
-                    for r in (*backlog_rows).clone() {
-                        if r.platform == plat && r.handle == handle && r.content_type == ctype { moved.push(r); } else { kept.push(r); }
-                    }
-                    if !moved.is_empty() {
-                        let mut q = (*queue_rows).clone();
-                        q.extend(moved);
-                        queue_rows.set(q);
-                    }
-                    backlog_rows.set(kept);
                 }
                 MoveItem::Row(link) => {
                     let link_for_backend = link.clone();
+                    let link_clone = link.clone();
+                    let backlog_rows = backlog_rows.clone();
+                    let queue_rows = queue_rows.clone();
                     spawn_local(async move {
                         let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "link": link_for_backend })).unwrap();
-                        let _ = invoke("move_link_to_queue", args).await;
-                    });
+                        match invoke("move_link_to_queue", args).await {
+                            Ok(_) => {
+                                // Only update UI state after successful DB operation
+                                let mut moved_one: Option<ClipRow> = None;
+                                let kept: Vec<ClipRow> = (*backlog_rows).clone().into_iter().filter(|r| {
+                                    if r.link == link_clone && moved_one.is_none() {
+                                        moved_one = Some(r.clone());
+                                        false
+                                    } else {
+                                        true
+                                    }
+                                }).collect();
 
-                    let mut moved_one: Option<ClipRow> = None;
-                    let kept: Vec<ClipRow> = (*backlog_rows).clone().into_iter().filter(|r| {
-                        if r.link == link && moved_one.is_none() {
-                            moved_one = Some(r.clone());
-                            false
-                        } else {
-                            true
+                                if let Some(row) = moved_one {
+                                    let mut q = (*queue_rows).clone();
+                                    q.push(row);
+                                    queue_rows.set(q);
+                                }
+                                backlog_rows.set(kept);
+                            }
+                            Err(e) => {
+                                log_invoke_err("move_link_to_queue", e);
+                            }
                         }
-                    }).collect();
-
-                    if let Some(row) = moved_one {
-                        let mut q = (*queue_rows).clone();
-                        q.push(row);
-                        queue_rows.set(q);
-                    }
-                    backlog_rows.set(kept);
+                    });
                 }
             }
         })
@@ -415,67 +450,96 @@ pub fn app() -> Html {
             match item {
                 MoveBackItem::Platform(plat) => {
                     let plat_str = crate::types::platform_str(&plat).to_string();
+                    let plat_clone = plat.clone();
+                    let backlog_rows = backlog_rows.clone();
+                    let queue_rows = queue_rows.clone();
                     spawn_local(async move {
                         let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "platform": plat_str })).unwrap();
-                        let _ = invoke("move_platform_to_backlog", args).await;
+                        match invoke("move_platform_to_backlog", args).await {
+                            Ok(_) => {
+                                // Only update UI state after successful DB operation
+                                let mut moved = Vec::new();
+                                let mut kept  = Vec::new();
+                                for r in (*queue_rows).clone() {
+                                    if r.platform == plat_clone { moved.push(r); } else { kept.push(r); }
+                                }
+                                if !moved.is_empty() {
+                                    let mut b = (*backlog_rows).clone();
+                                    b.extend(moved);
+                                    backlog_rows.set(b);
+                                }
+                                queue_rows.set(kept);
+                            }
+                            Err(e) => {
+                                log_invoke_err("move_platform_to_backlog", e);
+                            }
+                        }
                     });
-
-                    let mut moved = Vec::new();
-                    let mut kept  = Vec::new();
-                    for r in (*queue_rows).clone() {
-                        if r.platform == plat { moved.push(r); } else { kept.push(r); }
-                    }
-                    if !moved.is_empty() {
-                        let mut b = (*backlog_rows).clone();
-                        b.extend(moved);
-                        backlog_rows.set(b);
-                    }
-                    queue_rows.set(kept);
                 }
                 MoveBackItem::Collection(plat, handle, ctype) => {
                     let p = crate::types::platform_str(&plat).to_string();
                     let t = crate::types::content_type_str(&ctype).to_string();
                     let h = handle.clone();
+                    let plat_clone = plat.clone();
+                    let handle_clone = handle.clone();
+                    let ctype_clone = ctype.clone();
+                    let backlog_rows = backlog_rows.clone();
+                    let queue_rows = queue_rows.clone();
                     spawn_local(async move {
-                        let args = serde_wasm_bindgen::to_value(&serde_json::json!({"platform": p, "handle": h, "content_type": t})).unwrap();
-                        let _ = invoke("move_collection_to_backlog", args).await;
+                        let args = serde_wasm_bindgen::to_value(&serde_json::json!({"platform": p, "handle": h, "contentType": t})).unwrap();
+                        match invoke("move_collection_to_backlog", args).await {
+                            Ok(_) => {
+                                // Only update UI state after successful DB operation
+                                let mut moved = Vec::new();
+                                let mut kept  = Vec::new();
+                                for r in (*queue_rows).clone() {
+                                    if r.platform == plat_clone && r.handle == handle_clone && r.content_type == ctype_clone { moved.push(r); } else { kept.push(r); }
+                                }
+                                if !moved.is_empty() {
+                                    let mut b = (*backlog_rows).clone();
+                                    b.extend(moved);
+                                    backlog_rows.set(b);
+                                }
+                                queue_rows.set(kept);
+                            }
+                            Err(e) => {
+                                log_invoke_err("move_collection_to_backlog", e);
+                            }
+                        }
                     });
-
-                    let mut moved = Vec::new();
-                    let mut kept  = Vec::new();
-                    for r in (*queue_rows).clone() {
-                        if r.platform == plat && r.handle == handle && r.content_type == ctype { moved.push(r); } else { kept.push(r); }
-                    }
-                    if !moved.is_empty() {
-                        let mut b = (*backlog_rows).clone();
-                        b.extend(moved);
-                        backlog_rows.set(b);
-                    }
-                    queue_rows.set(kept);
                 }
                 MoveBackItem::Row(link) => {
                     let link_for_backend = link.clone();
+                    let link_clone = link.clone();
+                    let backlog_rows = backlog_rows.clone();
+                    let queue_rows = queue_rows.clone();
                     spawn_local(async move {
                         let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "link": link_for_backend })).unwrap();
-                        let _ = invoke("move_link_to_backlog", args).await;
-                    });
+                        match invoke("move_link_to_backlog", args).await {
+                            Ok(_) => {
+                                // Only update UI state after successful DB operation
+                                let mut moved_one: Option<ClipRow> = None;
+                                let kept: Vec<ClipRow> = (*queue_rows).clone().into_iter().filter(|r| {
+                                    if r.link == link_clone && moved_one.is_none() {
+                                        moved_one = Some(r.clone());
+                                        false
+                                    } else {
+                                        true
+                                    }
+                                }).collect();
 
-                    let mut moved_one: Option<ClipRow> = None;
-                    let kept: Vec<ClipRow> = (*queue_rows).clone().into_iter().filter(|r| {
-                        if r.link == link && moved_one.is_none() {
-                            moved_one = Some(r.clone());
-                            false
-                        } else {
-                            true
+                                if let Some(row) = moved_one {
+                                    let mut b = (*backlog_rows).clone();
+                                    b.push(row);
+                                    backlog_rows.set(b);
+                                }
+                                queue_rows.set(kept);
+                            }
+                            Err(e) => {
+                                log_invoke_err("move_link_to_backlog", e);
+                            }
                         }
-                    }).collect();
-
-                    if let Some(row) = moved_one {
-                        let mut b = (*backlog_rows).clone();
-                        b.push(row);
-                        backlog_rows.set(b);
-                    }
-                    queue_rows.set(kept);
+                    });
                 }
             }
         })

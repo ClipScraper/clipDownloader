@@ -442,8 +442,12 @@ impl Database {
         let now = Utc::now().to_rfc3339();
         let norm = normalize_link(link.to_string());
 
-        // find oldest queued row whose normalized link matches
-        let mut stmt = self.conn.prepare("SELECT id, link FROM downloads WHERE status='queue' ORDER BY id")?;
+        // find oldest queued row (or backlog) whose normalized link matches
+        let mut stmt = self.conn.prepare(
+            "SELECT id, link FROM downloads 
+              WHERE status IN ('queue', 'backlog') 
+              ORDER BY CASE status WHEN 'queue' THEN 0 ELSE 1 END, id"
+        )?;
         let mut rows = stmt.query([])?;
         let mut target_id: Option<i64> = None;
         while let Some(row) = rows.next()? {
@@ -461,11 +465,19 @@ impl Database {
                 params![path_value, now, id],
             )?
         } else {
-            // fallback: strict equality (in case there is an exact match)
-            self.conn.execute(
+            // fallback: strict equality
+            let n = self.conn.execute(
                 "UPDATE downloads SET status='done', path=?2, date_downloaded=?3 WHERE link=?1 AND status='queue' LIMIT 1",
                 [&link.to_string(), &path_value, &now],
-            )?
+            )?;
+            if n == 0 {
+                self.conn.execute(
+                    "UPDATE downloads SET status='done', path=?2, date_downloaded=?3 WHERE link=?1 AND status='backlog' LIMIT 1",
+                    [&link.to_string(), &path_value, &now],
+                )?
+            } else {
+                n
+            }
         };
 
         Ok(n)
@@ -635,9 +647,9 @@ impl Database {
         let n = self.conn.execute(
             "UPDATE downloads
                SET status='queue'
-             WHERE platform    = ?1
-               AND user_handle = ?2
-               AND origin      = ?3
+             WHERE platform    = ?1 COLLATE NOCASE
+               AND (user_handle = ?2 COLLATE NOCASE OR (?2 = 'Unknown' AND (user_handle = '' OR user_handle IS NULL)))
+               AND origin      = ?3 COLLATE NOCASE
                AND status      = 'backlog'",
             [platform, handle, origin],
         )?;
@@ -649,7 +661,7 @@ impl Database {
         let n = self.conn.execute(
             "UPDATE downloads
                SET status='queue'
-             WHERE platform = ?1
+             WHERE platform = ?1 COLLATE NOCASE
                AND status   = 'backlog'",
             [platform],
         )?;
@@ -669,9 +681,9 @@ impl Database {
         let n = self.conn.execute(
             "UPDATE downloads
                SET status='backlog'
-             WHERE platform    = ?1
-               AND user_handle = ?2
-               AND origin      = ?3
+             WHERE platform    = ?1 COLLATE NOCASE
+               AND (user_handle = ?2 COLLATE NOCASE OR (?2 = 'Unknown' AND (user_handle = '' OR user_handle IS NULL)))
+               AND origin      = ?3 COLLATE NOCASE
                AND status      = 'queue'",
             [platform, handle, origin],
         )?;
@@ -683,7 +695,7 @@ impl Database {
         let n = self.conn.execute(
             "UPDATE downloads
                SET status='backlog'
-             WHERE platform = ?1
+             WHERE platform = ?1 COLLATE NOCASE
                AND status   = 'queue'",
             [platform],
         )?;
