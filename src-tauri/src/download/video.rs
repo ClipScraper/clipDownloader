@@ -299,6 +299,9 @@ pub async fn run_yt_dlp_with_progress(
     let mut ok = false;
 
     loop {
+        // Yield to allow other tasks (like event emission) to run
+        tokio::task::yield_now().await;
+
         let event = match timeout(Duration::from_secs(180), rx.recv()).await {
             Ok(Some(e)) => e,
             Ok(None) => break,

@@ -647,9 +647,9 @@ impl Database {
         let n = self.conn.execute(
             "UPDATE downloads
                SET status='queue'
-             WHERE platform    = ?1
-               AND user_handle = ?2
-               AND origin      = ?3
+             WHERE platform    = ?1 COLLATE NOCASE
+               AND (user_handle = ?2 COLLATE NOCASE OR (?2 = 'Unknown' AND (user_handle = '' OR user_handle IS NULL)))
+               AND origin      = ?3 COLLATE NOCASE
                AND status      = 'backlog'",
             [platform, handle, origin],
         )?;
@@ -661,7 +661,7 @@ impl Database {
         let n = self.conn.execute(
             "UPDATE downloads
                SET status='queue'
-             WHERE platform = ?1
+             WHERE platform = ?1 COLLATE NOCASE
                AND status   = 'backlog'",
             [platform],
         )?;
@@ -681,9 +681,9 @@ impl Database {
         let n = self.conn.execute(
             "UPDATE downloads
                SET status='backlog'
-             WHERE platform    = ?1
-               AND user_handle = ?2
-               AND origin      = ?3
+             WHERE platform    = ?1 COLLATE NOCASE
+               AND (user_handle = ?2 COLLATE NOCASE OR (?2 = 'Unknown' AND (user_handle = '' OR user_handle IS NULL)))
+               AND origin      = ?3 COLLATE NOCASE
                AND status      = 'queue'",
             [platform, handle, origin],
         )?;
@@ -695,7 +695,7 @@ impl Database {
         let n = self.conn.execute(
             "UPDATE downloads
                SET status='backlog'
-             WHERE platform = ?1
+             WHERE platform = ?1 COLLATE NOCASE
                AND status   = 'queue'",
             [platform],
         )?;

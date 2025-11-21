@@ -187,11 +187,14 @@ pub async fn download_url(
                                             ).unwrap_or((false, vec![]));
                                             let _ = fs::remove_dir_all(&tmp_dir);
                                             if moved_any {
+                                                // Emit status BEFORE DB operations to update UI instantly
+                                                emit_status(&window, &cleaned_url, true, "Saved images".to_string());
+                                                
                                                 if let Ok(db) = crate::database::Database::new() {
                                                     let first = finals.get(0).cloned().unwrap_or_default();
                                                     let _ = db.mark_link_done(&original_url_arg, &first);
                                                 }
-                                                emit_status(&window, &cleaned_url, true, "Saved images".to_string());
+                                                
                                                 state_clone.0.lock().unwrap().remove(&original_url_arg);
                                                 return;
                                             } else {
@@ -221,11 +224,14 @@ pub async fn download_url(
                                 ).unwrap_or((false, vec![]));
                                 let _ = fs::remove_dir_all(&tmp_dir);
                                 if moved_any {
+                                    // Emit status BEFORE DB operations to update UI instantly
+                                    emit_status(&window, &cleaned_url, true, "Saved images".to_string());
+
                                     if let Ok(db) = crate::database::Database::new() {
                                         let first = finals.get(0).cloned().unwrap_or_default();
                                         let _ = db.mark_link_done(&cleaned_url, &first);
                                     }
-                                    emit_status(&window, &cleaned_url, true, "Saved images".to_string());
+                                    
                                     state_clone.0.lock().unwrap().remove(&original_url_arg);
                                     return;
                                 } else {
