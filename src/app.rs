@@ -169,14 +169,19 @@ pub fn app() -> Html {
     }
 
     {
+        let is_paused = is_paused.clone();
+        use_effect_with(settings.download_automatically, move |auto| {
+            is_paused.set(!*auto);
+            || ()
+        });
+    }
+
+    {
         let backlog_rows = backlog_rows.clone();
         let queue_rows = queue_rows.clone();
-        let is_paused = is_paused.clone();
-        let settings = settings.clone();
 
-        use_effect_with((*page, settings.download_automatically), move |(p, auto)| {
+        use_effect_with(*page, move |p| {
             if *p == Page::Downloads {
-                is_paused.set(!*auto);
                 spawn_local(async move {
                     if let Ok(js) = invoke("list_backlog", JsValue::NULL).await {
                         if let Ok(rows) = serde_wasm_bindgen::from_value::<Vec<ClipRow>>(js) {

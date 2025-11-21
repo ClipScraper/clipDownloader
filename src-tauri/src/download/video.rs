@@ -1,12 +1,22 @@
 use std::io;
 use std::path::Path;
+use tokio::time::{timeout, Duration};
 
 use crate::commands::event::emit_status;
 use crate::commands::parse::{last_segment, tiktok_id_from_url, youtube_id_from_url};
 use crate::database::OnDuplicate;
 
 use tauri::Manager;
-use tauri_plugin_shell::{process::CommandEvent, ShellExt};
+use tauri_plugin_shell::{process::{CommandEvent, CommandChild}, ShellExt};
+
+struct KillGuard(Option<CommandChild>);
+impl Drop for KillGuard {
+    fn drop(&mut self) {
+        if let Some(c) = self.0.take() {
+            let _ = c.kill();
+        }
+    }
+}
 
 #[cfg(target_family = "windows")]
 fn path_sep() -> &'static str { ";" }
@@ -180,7 +190,7 @@ async fn choose_output_template(
     let ext = if audio_only { "mp3" } else { "mp4" };
 
     let mut chosen_stem = base_stem.clone();
-    let mut chosen_path = out_dir.join(format!("{chosen_stem}.{ext}"));
+    let chosen_path = out_dir.join(format!("{chosen_stem}.{ext}"));
 
     match on_duplicate {
         OnDuplicate::CreateNew => {
@@ -190,7 +200,6 @@ async fn choose_output_template(
                     let cand = out_dir.join(format!("{base_stem}({n}).{ext}"));
                     if !cand.exists() {
                         chosen_stem = format!("{base_stem}({n})");
-                        chosen_path = cand;
                         break;
                     }
                     n += 1;
@@ -277,17 +286,28 @@ pub async fn run_yt_dlp_with_progress(
         std::env::var("PATH").unwrap_or_default()
     );
 
-    let (mut rx, _child) = cmd.args(args)
+    let (mut rx, child) = cmd.args(args)
         .env("PATH", new_path)
         .spawn()
         .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("spawn yt-dlp failed: {e}")))?;
+
+    let _guard = KillGuard(Some(child));
 
     let mut all_output = String::new();
     let mut already_downloaded = false;
     let mut file_skipped = false;
     let mut ok = false;
 
-    while let Some(event) = rx.recv().await {
+    loop {
+        let event = match timeout(Duration::from_secs(180), rx.recv()).await {
+            Ok(Some(e)) => e,
+            Ok(None) => break,
+            Err(_) => {
+                eprintln!("[tauri] yt-dlp timed out (no output for 180s)");
+                return Err(io::Error::new(io::ErrorKind::TimedOut, "yt-dlp timed out"));
+            }
+        };
+
         match event {
             CommandEvent::Stdout(bytes) => {
                 let s = String::from_utf8_lossy(&bytes);

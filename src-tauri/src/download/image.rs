@@ -2,7 +2,17 @@ use std::io;
 use std::path::PathBuf;
 use tempfile::tempdir;
 use tauri::Manager;
-use tauri_plugin_shell::{process::CommandEvent, ShellExt};
+use tauri_plugin_shell::{process::{CommandEvent, CommandChild}, ShellExt};
+use tokio::time::{timeout, Duration};
+
+struct KillGuard(Option<CommandChild>);
+impl Drop for KillGuard {
+    fn drop(&mut self) {
+        if let Some(c) = self.0.take() {
+            let _ = c.kill();
+        }
+    }
+}
 
 #[cfg(target_family = "windows")]
 fn path_sep() -> &'static str { ";" }
@@ -12,6 +22,7 @@ fn path_sep() -> &'static str { ":" }
 /// Run gallery-dl (sidecar) into a temp dir; return (ok, output, tmp_path).
 pub async fn run_gallery_dl_to_temp(app: &tauri::AppHandle, _base_download_dir: &std::path::Path, url: &str, cookie_arg: &str, window: &tauri::WebviewWindow) -> io::Result<(bool, String, PathBuf)> {
     let tmp = tempdir()?;
+    #[allow(deprecated)]
     let tmp_path = tmp.into_path(); // keep the directory; caller cleans up
 
     let res_dir = app.path().resource_dir()
@@ -28,15 +39,26 @@ pub async fn run_gallery_dl_to_temp(app: &tauri::AppHandle, _base_download_dir: 
     let cmd = app.shell().sidecar("gallery-dl")
         .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("sidecar(gallery-dl) error: {e}")))?;
 
-    let (mut rx, _child) = cmd.args(args)
+    let (mut rx, child) = cmd.args(args)
         .env("PATH", new_path)
         .spawn()
         .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("spawn gallery-dl failed: {e}")))?;
 
+    let _guard = KillGuard(Some(child));
+
     let mut all_output = String::new();
     let mut ok = false;
 
-    while let Some(ev) = rx.recv().await {
+    loop {
+        let ev = match timeout(Duration::from_secs(180), rx.recv()).await {
+            Ok(Some(e)) => e,
+            Ok(None) => break,
+            Err(_) => {
+                eprintln!("[tauri] gallery-dl timed out (no output for 180s)");
+                return Err(io::Error::new(io::ErrorKind::TimedOut, "gallery-dl timed out"));
+            }
+        };
+
         match ev {
             CommandEvent::Stdout(bytes) => {
                 let s = String::from_utf8_lossy(&bytes);
