@@ -5,6 +5,8 @@ mod logging;
 mod settings;
 mod utils;
 
+use std::sync::Arc;
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let s = crate::settings::load_settings();
@@ -13,6 +15,8 @@ pub fn run() {
 
     let (cmd_tx, cmd_rx) = tokio::sync::mpsc::channel(100);
     let download_manager = crate::download::manager::DownloadManager::new(cmd_tx.clone());
+    let raw_conn = crate::database::open_connection().expect("failed to open downloads.db");
+    let shared_conn = Arc::new(tokio::sync::Mutex::new(raw_conn));
 
     tauri::Builder::default()
         .manage(download_manager)
@@ -20,15 +24,20 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_clipboard::init())
-        .setup(move |app| {
-            let app_handle = app.handle();
-            let tx_clone = cmd_tx.clone();
-            tauri::async_runtime::spawn(crate::download::manager::run_download_manager(
-                app_handle.clone(),
-                cmd_rx,
-                tx_clone,
-            ));
-            Ok(())
+        .setup({
+            let shared_conn = shared_conn.clone();
+            move |app| {
+                let app_handle = app.handle();
+                let tx_clone = cmd_tx.clone();
+                let db_clone = shared_conn.clone();
+                tauri::async_runtime::spawn(crate::download::manager::run_download_manager(
+                    app_handle.clone(),
+                    db_clone,
+                    cmd_rx,
+                    tx_clone,
+                ));
+                Ok(())
+            }
         })
         .invoke_handler(tauri::generate_handler![
             // SETTINGS

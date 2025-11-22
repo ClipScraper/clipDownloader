@@ -7,6 +7,106 @@ pub struct Database {
     conn: Connection,
 }
 
+fn init_schema(conn: &Connection) -> Result<()> {
+    conn.execute("PRAGMA foreign_keys = ON", [])?;
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS downloads (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                platform TEXT NOT NULL,
+                name TEXT NOT NULL,
+                media TEXT NOT NULL,
+                user_handle TEXT NOT NULL,
+                origin TEXT NOT NULL,
+                link TEXT NOT NULL,
+                output_format TEXT NOT NULL DEFAULT 'default' CHECK (output_format IN ('default','audio','video')),
+                status TEXT NOT NULL,
+                path TEXT NOT NULL,
+                image_set_id TEXT,
+                date_added TEXT NOT NULL,
+                date_downloaded TEXT
+            )",
+        [],
+    )?;
+
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS settings (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                download_directory TEXT NOT NULL,
+                on_duplicate TEXT NOT NULL
+            )",
+        [],
+    )?;
+    conn.execute(
+        "INSERT OR IGNORE INTO settings (id, download_directory, on_duplicate)
+             VALUES (1, ?, ?)",
+        [
+            &dirs::download_dir()
+                .unwrap_or_else(|| dirs::home_dir().unwrap_or_default())
+                .to_string_lossy()
+                .to_string(),
+            "create_new",
+        ],
+    )?;
+    Ok(())
+}
+
+pub fn open_connection() -> Result<Connection> {
+    let db_path = Database::get_db_path()?;
+    let conn = Connection::open(&db_path)?;
+    init_schema(&conn)?;
+    Ok(conn)
+}
+
+pub fn find_download_by_id_conn(conn: &Connection, id: i64) -> Result<Option<DbDownloadRow>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, platform, media, user_handle, origin, link, output_format, status, path, name
+           FROM downloads
+          WHERE id=?1
+          LIMIT 1",
+    )?;
+    let mut rows = stmt.query([id])?;
+    if let Some(row) = rows.next()? {
+        let status_raw: String = row.get(7)?;
+        Ok(Some(DbDownloadRow {
+            id: row.get(0)?,
+            platform: row.get(1)?,
+            media: row.get(2)?,
+            user_handle: row.get(3)?,
+            origin: row.get(4)?,
+            link: row.get(5)?,
+            output_format: row.get(6)?,
+            status: DownloadStatus::from_db(status_raw),
+            path: row.get(8)?,
+            name: row.get(9)?,
+        }))
+    } else {
+        Ok(None)
+    }
+}
+
+pub fn set_status_by_id_conn(conn: &Connection, id: i64, status: DownloadStatus) -> Result<usize> {
+    let token = status.as_str();
+    let updated = conn.execute(
+        "UPDATE downloads SET status=?1, date_downloaded=CASE WHEN ?1='done' THEN CURRENT_TIMESTAMP ELSE date_downloaded END WHERE id=?2",
+        [token, &id.to_string()],
+    )?;
+    Ok(updated)
+}
+
+pub fn mark_id_done_conn(conn: &Connection, id: i64, path: &str) -> Result<usize> {
+    let path_value = if path.is_empty() {
+        "unknown_path".to_string()
+    } else {
+        path.to_string()
+    };
+    let now = Utc::now().to_rfc3339();
+    let updated = conn.execute(
+        "UPDATE downloads SET status='done', path=?1, date_downloaded=?2 WHERE id=?3",
+        params![path_value, now, id],
+    )?;
+    Ok(updated)
+}
+
 /* ----------------------------- enums & models ----------------------------- */
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum Platform {
@@ -295,12 +395,8 @@ fn normalize_link(mut s: String) -> String {
 /* -------------------------------- database -------------------------------- */
 impl Database {
     pub fn new() -> Result<Self> {
-        let db_path = Self::get_db_path()?;
-        let conn = Connection::open(&db_path)?;
-        conn.execute("PRAGMA foreign_keys = ON", [])?;
-        let db = Database { conn };
-        db.create_tables()?;
-        Ok(db)
+        let conn = open_connection()?;
+        Ok(Database { conn })
     }
 
     pub fn find_done_row_by_link(&self, link: &str) -> Result<Option<(i64, String)>> {
@@ -451,46 +547,7 @@ impl Database {
     }
 
     fn create_tables(&self) -> Result<()> {
-        self.conn.execute(
-            "CREATE TABLE IF NOT EXISTS downloads (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                platform TEXT NOT NULL,
-                name TEXT NOT NULL,
-                media TEXT NOT NULL,
-                user_handle TEXT NOT NULL,
-                origin TEXT NOT NULL,
-                link TEXT NOT NULL,
-                output_format TEXT NOT NULL DEFAULT 'default' CHECK (output_format IN ('default','audio','video')),
-                status TEXT NOT NULL,
-                path TEXT NOT NULL,
-                image_set_id TEXT,
-                date_added TEXT NOT NULL,
-                date_downloaded TEXT
-            )",
-            [],
-        )?;
-
-        // Settings
-        self.conn.execute(
-            "CREATE TABLE IF NOT EXISTS settings (
-                id INTEGER PRIMARY KEY CHECK (id = 1),
-                download_directory TEXT NOT NULL,
-                on_duplicate TEXT NOT NULL
-            )",
-            [],
-        )?;
-        self.conn.execute(
-            "INSERT OR IGNORE INTO settings (id, download_directory, on_duplicate)
-             VALUES (1, ?, ?)",
-            [
-                &dirs::download_dir()
-                    .unwrap_or_else(|| dirs::home_dir().unwrap_or_default())
-                    .to_string_lossy()
-                    .to_string(),
-                "create_new",
-            ],
-        )?;
-        Ok(())
+        init_schema(&self.conn)
     }
 
     /* ----------------------------- write helpers ----------------------------- */
@@ -576,17 +633,7 @@ impl Database {
     }
 
     pub fn mark_id_done(&self, id: i64, path: &str) -> Result<usize> {
-        let path_value = if path.is_empty() {
-            "unknown_path".to_string()
-        } else {
-            path.to_string()
-        };
-        let now = Utc::now().to_rfc3339();
-        let updated = self.conn.execute(
-            "UPDATE downloads SET status='done', path=?1, date_downloaded=?2 WHERE id=?3",
-            params![path_value, now, id],
-        )?;
-        Ok(updated)
+        mark_id_done_conn(&self.conn, id, path)
     }
 
     pub fn find_id_by_link(&self, link: &str) -> Result<Option<i64>> {
@@ -649,39 +696,11 @@ impl Database {
     }
 
     pub fn find_download_by_id(&self, id: i64) -> Result<Option<DbDownloadRow>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, platform, media, user_handle, origin, link, output_format, status, path, name
-               FROM downloads
-              WHERE id=?1
-              LIMIT 1"
-        )?;
-        let mut rows = stmt.query([id])?;
-        if let Some(row) = rows.next()? {
-            let status_raw: String = row.get(7)?;
-            Ok(Some(DbDownloadRow {
-                id: row.get(0)?,
-                platform: row.get(1)?,
-                media: row.get(2)?,
-                user_handle: row.get(3)?,
-                origin: row.get(4)?,
-                link: row.get(5)?,
-                output_format: row.get(6)?,
-                status: DownloadStatus::from_db(status_raw),
-                path: row.get(8)?,
-                name: row.get(9)?,
-            }))
-        } else {
-            Ok(None)
-        }
+        find_download_by_id_conn(&self.conn, id)
     }
 
     pub fn set_status_by_id(&self, id: i64, status: DownloadStatus) -> Result<usize> {
-        let token = status.as_str();
-        let updated = self.conn.execute(
-            "UPDATE downloads SET status=?1, date_downloaded=CASE WHEN ?1='done' THEN CURRENT_TIMESTAMP ELSE date_downloaded END WHERE id=?2",
-            [token, &id.to_string()]
-        )?;
-        Ok(updated)
+        set_status_by_id_conn(&self.conn, id, status)
     }
 
     /* -------------------------- UI-normalized listings -------------------------- */
