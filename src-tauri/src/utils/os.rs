@@ -10,10 +10,14 @@ pub fn home() -> PathBuf {
 fn cookie_db_path(browser: &str) -> Option<PathBuf> {
     let h = home();
     match browser {
-        "brave" => Some(h.join("Library/Application Support/BraveSoftware/Brave-Browser/Default/Cookies")),
+        "brave" => {
+            Some(h.join("Library/Application Support/BraveSoftware/Brave-Browser/Default/Cookies"))
+        }
         "chrome" => Some(h.join("Library/Application Support/Google/Chrome/Default/Cookies")),
         "firefox" => Some(h.join("Library/Application Support/Firefox/Profiles")),
-        "safari" => Some(h.join("Library/Containers/com.apple.Safari/Data/Library/Cookies/Cookies.binarycookies")),
+        "safari" => Some(h.join(
+            "Library/Containers/com.apple.Safari/Data/Library/Cookies/Cookies.binarycookies",
+        )),
         _ => None,
     }
 }

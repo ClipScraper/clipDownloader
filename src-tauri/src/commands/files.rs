@@ -14,7 +14,9 @@ pub async fn pick_csv_and_read(app: tauri::AppHandle) -> Result<String, String> 
         .add_filter("CSV", &["csv"])
         .blocking_pick_file();
 
-    let Some(file_path) = picked else { return Err("No file selected".into()) };
+    let Some(file_path) = picked else {
+        return Err("No file selected".into());
+    };
 
     match file_path {
         FilePath::Path(path_buf) => {
@@ -36,12 +38,18 @@ pub async fn pick_csv_and_read(app: tauri::AppHandle) -> Result<String, String> 
 
 #[tauri::command]
 pub async fn read_csv_from_path(path: String) -> Result<String, String> {
-    println!("[BACKEND] [commands/files.rs] [read_csv_from_path] {}", path);
+    println!(
+        "[BACKEND] [commands/files.rs] [read_csv_from_path] {}",
+        path
+    );
 
     let csv_text = std_fs::read_to_string(&path).map_err(|e| e.to_string())?;
 
     match super::import::import_csv_text(csv_text.clone()).await {
-        Ok(n) => println!("[BACKEND] [files] imported {n} rows (drag-drop) from {}", path),
+        Ok(n) => println!(
+            "[BACKEND] [files] imported {n} rows (drag-drop) from {}",
+            path
+        ),
         Err(e) => {
             eprintln!("[BACKEND] [files] import failed for {path}: {e}");
             return Err(e);

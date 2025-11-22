@@ -1,5 +1,5 @@
-use yew::prelude::*;
 use wasm_bindgen::prelude::*;
+use yew::prelude::*;
 
 #[wasm_bindgen]
 extern "C" {

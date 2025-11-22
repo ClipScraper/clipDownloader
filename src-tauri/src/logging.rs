@@ -5,13 +5,7 @@ use tracing_appender::{
     non_blocking::{self, WorkerGuard},
     rolling::RollingFileAppender,
 };
-use tracing_subscriber::{
-    fmt,
-    reload,
-    util::SubscriberInitExt,
-    EnvFilter,
-    prelude::*,
-};
+use tracing_subscriber::{fmt, prelude::*, reload, util::SubscriberInitExt, EnvFilter};
 
 static FILE_FILTER_HANDLE: OnceCell<reload::Handle<EnvFilter, tracing_subscriber::Registry>> =
     OnceCell::new();
@@ -91,7 +85,9 @@ fn prune_old_logs() {
     use std::fs;
 
     let dir = log_dir();
-    let Ok(entries) = fs::read_dir(&dir) else { return; };
+    let Ok(entries) = fs::read_dir(&dir) else {
+        return;
+    };
 
     let mut files: Vec<_> = entries
         .flatten()

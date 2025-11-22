@@ -34,6 +34,8 @@ pub enum MediaKind {
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ClipRow {
+    #[serde(default)]
+    pub id: i64,
     #[serde(rename = "Platform")]
     pub platform: Platform,
     #[serde(rename = "Type")]
@@ -50,6 +52,19 @@ pub struct ClipRow {
     /// Optional per-row preferred output; "audio" or "video" (or omitted/default)
     #[serde(default)]
     pub output_format: Option<String>,
+    #[serde(default)]
+    pub status: DownloadStatus,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DownloadStatus {
+    Backlog,
+    Queued,
+    Downloading,
+    Done,
+    Error,
+    Canceled,
 }
 
 pub fn platform_str(p: &Platform) -> &'static str {

@@ -1,7 +1,11 @@
 use serde_json::Value;
 
 #[tauri::command]
-pub async fn frontend_log(level: String, message: String, context: Option<Value>) -> Result<(), String> {
+pub async fn frontend_log(
+    level: String,
+    message: String,
+    context: Option<Value>,
+) -> Result<(), String> {
     let ctx_str = context
         .as_ref()
         .and_then(|v| serde_json::to_string(v).ok())

@@ -64,9 +64,7 @@ fn path_exists_ok(path: &str) -> bool {
 #[tauri::command]
 pub async fn open_file_for_link(link: String) -> Result<(), String> {
     let db = crate::database::Database::new().map_err(|e| e.to_string())?;
-    let some = db
-        .find_done_row_by_link(&link)
-        .map_err(|e| e.to_string())?;
+    let some = db.find_done_row_by_link(&link).map_err(|e| e.to_string())?;
 
     let (_id, path) = some.ok_or_else(|| "no library item found for link".to_string())?;
     if !path_exists_ok(&path) {
@@ -78,9 +76,7 @@ pub async fn open_file_for_link(link: String) -> Result<(), String> {
 #[tauri::command]
 pub async fn open_folder_for_link(link: String) -> Result<(), String> {
     let db = crate::database::Database::new().map_err(|e| e.to_string())?;
-    let some = db
-        .find_done_row_by_link(&link)
-        .map_err(|e| e.to_string())?;
+    let some = db.find_done_row_by_link(&link).map_err(|e| e.to_string())?;
 
     let (_id, path) = some.ok_or_else(|| "no library item found for link".to_string())?;
     if !PathBuf::from(&path).exists() {
@@ -101,7 +97,11 @@ pub async fn open_platform_folder(platform: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn open_collection_folder(platform: String, handle: String, content_type: String) -> Result<(), String> {
+pub async fn open_collection_folder(
+    platform: String,
+    handle: String,
+    content_type: String,
+) -> Result<(), String> {
     let s = crate::settings::load_settings();
     let base = std::path::PathBuf::from(s.download_directory);
     let label = crate::database::Database::collection_folder_label(&content_type, &handle);
@@ -117,9 +117,7 @@ pub async fn delete_library_item(link: String) -> Result<(), String> {
     use std::fs;
 
     let db = crate::database::Database::new().map_err(|e| e.to_string())?;
-    let some = db
-        .find_done_row_by_link(&link)
-        .map_err(|e| e.to_string())?;
+    let some = db.find_done_row_by_link(&link).map_err(|e| e.to_string())?;
 
     let (id, path) = some.ok_or_else(|| "no library item found for link".to_string())?;
 
