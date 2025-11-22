@@ -20,7 +20,7 @@ extern "C" {
     fn getCurrentWebview() -> JsValue;
 }
 
-fn log_invoke_err(cmd: &str, e: JsValue) {
+pub fn log_invoke_err(cmd: &str, e: JsValue) {
     web_sys::console::error_2(&format!("invoke({cmd}) failed").into(), &e);
 }
 
@@ -182,8 +182,17 @@ pub fn app() -> Html {
         use_effect_with((), move |_| {
             spawn_local(async move {
                 if let Ok(loaded) = invoke("load_settings", JsValue::NULL).await {
-                    if let Ok(s) = serde_wasm_bindgen::from_value(loaded) {
-                        settings.set(s);
+                    if let Ok(s) = serde_wasm_bindgen::from_value::<Settings>(loaded) {
+                        // Update local state
+                        settings.set(s.clone());
+                        // Ensure backend DownloadManager pause state matches settings on boot
+                        let paused = !s.download_automatically;
+                        let args =
+                            serde_wasm_bindgen::to_value(&serde_json::json!({ "paused": paused }))
+                                .unwrap();
+                        let _ = invoke("set_download_paused", args).await;
+                        // Also refresh runtime parameters (e.g., parallel downloads)
+                        let _ = invoke("refresh_download_settings", JsValue::NULL).await;
                     }
                 }
             });
@@ -208,6 +217,14 @@ pub fn app() -> Html {
                         if let Ok(rows) = serde_wasm_bindgen::from_value::<Vec<ClipRow>>(js) {
                             let mut map = HashMap::new();
                             for row in rows {
+                                // Only keep items relevant to the Downloads page
+                                // Drop rows that are already finished (or otherwise not actionable here).
+                                if matches!(
+                                    row.status,
+                                    DownloadStatus::Done | DownloadStatus::Error | DownloadStatus::Canceled
+                                ) {
+                                    continue;
+                                }
                                 map.insert(
                                     row.id,
                                     DownloadEntry {
@@ -258,13 +275,23 @@ pub fn app() -> Html {
                             let mut map = (*downloads).clone();
                             match evt {
                                 DownloadEventPayload::StatusChanged { id, status } => {
-                                    if let Some(entry) = map.get_mut(&id) {
-                                        entry.row.status = status;
+                                    // When a download reaches a terminal state, remove it from the Downloads page.
+                                    if matches!(
+                                        status,
+                                        DownloadStatus::Done
+                                            | DownloadStatus::Error
+                                            | DownloadStatus::Canceled
+                                    ) {
+                                        map.remove(&id);
                                     } else {
-                                        log::info(
-                                            "download_event_unknown",
-                                            serde_json::json!({ "id": id, "status": format!("{:?}", status) }),
-                                        );
+                                        if let Some(entry) = map.get_mut(&id) {
+                                            entry.row.status = status;
+                                        } else {
+                                            log::info(
+                                                "download_event_unknown",
+                                                serde_json::json!({ "id": id, "status": format!("{:?}", status) }),
+                                            );
+                                        }
                                     }
                                 }
                                 DownloadEventPayload::Progress {

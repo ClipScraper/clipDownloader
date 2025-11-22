@@ -9,6 +9,8 @@ use yew::prelude::*;
 use yew_hooks::prelude::*;
 use yew_icons::{Icon, IconId};
 
+use crate::app::log_invoke_err;
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 struct DownloadResult {
     success: bool,
@@ -23,8 +25,8 @@ struct LoadedSettings {
 
 #[wasm_bindgen]
 extern "C" {
-    #[wasm_bindgen(js_namespace = ["window", "__TAURI__", "core"])]
-    async fn invoke(cmd: &str, args: JsValue) -> JsValue;
+    #[wasm_bindgen(catch, js_namespace = ["window", "__TAURI__", "core"])]
+    async fn invoke(cmd: &str, args: JsValue) -> Result<JsValue, JsValue>;
 
     #[wasm_bindgen(js_namespace = ["window", "__TAURI__", "event"])]
     async fn listen(event: &str, f: &Closure<dyn FnMut(JsValue)>) -> JsValue;
@@ -143,14 +145,19 @@ pub fn home_page(props: &Props) -> Html {
         use_effect_once(move || {
             spawn_local(async move {
                 let val = invoke("load_settings", JsValue::NULL).await;
-                if let Ok(s) = serde_wasm_bindgen::from_value::<LoadedSettings>(val) {
-                    if s.default_output
-                        .as_deref()
-                        .map(|v| v.eq_ignore_ascii_case("audio"))
-                        .unwrap_or(false)
-                    {
-                        output_icon_is_music.set(true);
+                if let Ok(js) = val {
+                    if let Ok(s) = serde_wasm_bindgen::from_value::<LoadedSettings>(js) {
+                        if s
+                            .default_output
+                            .as_deref()
+                            .map(|v| v.eq_ignore_ascii_case("audio"))
+                            .unwrap_or(false)
+                        {
+                            output_icon_is_music.set(true);
+                        }
                     }
+                } else if let Err(e) = val {
+                    log_invoke_err("load_settings", e);
                 }
             });
             || {}

@@ -67,6 +67,12 @@ pub enum DownloadStatus {
     Canceled,
 }
 
+impl Default for DownloadStatus {
+    fn default() -> Self {
+        DownloadStatus::Backlog
+    }
+}
+
 pub fn platform_str(p: &Platform) -> &'static str {
     match p {
         Platform::Tiktok => "tiktok",
