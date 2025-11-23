@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Ensure we are running with bash even if invoked as `sh run.sh`
+if [ -z "${BASH_VERSION:-}" ]; then
+  exec bash "$0" "$@"
+fi
+
 # Resolve project root (same dir as this script)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
@@ -26,6 +31,14 @@ safe_link_or_copy() {
 # ----------------------------
 # Sidecars bootstrap for DEV
 # ----------------------------
+ensure_resources_placeholder() {
+  local res_dir="src-tauri/resources"
+  mkdir -p "$res_dir"
+  if [ -z "$(find "$res_dir" -type f -maxdepth 1 2>/dev/null)" ]; then
+    echo "keep" > "$res_dir/KEEP.txt"
+  fi
+}
+
 init_sidecars() {
   local os="$(uname -s || echo Unknown)"
   local triple="$(rustc -vV | sed -n 's/^host: //p')"
@@ -203,6 +216,23 @@ unset NO_COLOR CARGO_TERM_COLOR || true
 export CARGO_TARGET_DIR="$SCRIPT_DIR/target"
 
 init_platform_config
-init_sidecars
 
-exec cargo tauri dev "$@"
+# Parse args: --install-dependencies toggles sidecar bootstrap
+INSTALL_DEPS=0
+FORWARD_ARGS=()
+for a in "$@"; do
+  if [[ "$a" == "--install-dependencies" ]]; then
+    INSTALL_DEPS=1
+  else
+    FORWARD_ARGS+=("$a")
+  fi
+done
+
+if [[ "$INSTALL_DEPS" -eq 1 ]]; then
+  init_sidecars
+else
+  echo "➡️  Skipping dependency/sidecar installation (pass --install-dependencies to fetch)."
+  ensure_resources_placeholder
+fi
+
+exec cargo tauri dev "${FORWARD_ARGS[@]}"
