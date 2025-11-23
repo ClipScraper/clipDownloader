@@ -7,7 +7,8 @@ use tokio::sync::mpsc;
 use tauri::{AppHandle, Emitter};
 
 use crate::database::{
-    find_download_by_id_conn, mark_id_done_conn, set_status_by_id_conn, DownloadStatus,
+    find_download_by_id_conn, mark_id_done_conn, reset_stale_downloading_to_queued_conn,
+    set_status_by_id_conn, DownloadStatus,
 };
 use crate::download::pipeline;
 use crate::settings;
@@ -101,6 +102,21 @@ pub async fn run_download_manager(
     let mut paused = !initial_settings.download_automatically;
     let mut max_parallel = initial_settings.parallel_downloads.max(1) as usize;
 
+    // On startup, recover any rows stuck in 'downloading' from a previous run
+    {
+        let db_clone = db.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            let conn = db_clone.blocking_lock();
+            if let Ok(n) = reset_stale_downloading_to_queued_conn(&*conn) {
+                if n > 0 {
+                    tracing::info!("Recovered {n} rows from 'downloading' → 'queued' on startup");
+                }
+            }
+        })
+        .await
+        .ok();
+    }
+
     while let Some(cmd) = cmd_rx.recv().await {
         let mut force_start = false;
         match cmd {
@@ -154,6 +170,7 @@ pub async fn run_download_manager(
             }
             DownloadCommand::RefreshSettings => {
                 max_parallel = settings::load_settings().parallel_downloads.max(1) as usize;
+                tracing::info!("Updated max_parallel to {}", max_parallel);
             }
             DownloadCommand::SetPaused(next) => {
                 paused = next;
@@ -193,7 +210,9 @@ async fn enqueue_ids(
         if queue.contains(id) {
             continue;
         }
-        if let Err(err) = set_status(db.clone(), *id, status).await {
+        let changed = match set_status(db.clone(), *id, status).await {
+            Ok(c) => c,
+            Err(err) => {
             emit_event(
                 app,
                 DownloadEvent::Message {
@@ -201,9 +220,12 @@ async fn enqueue_ids(
                     message: format!("Failed to set status: {err}"),
                 },
             );
-            continue;
+                continue;
+            }
+        };
+        if changed {
+            emit_event(app, DownloadEvent::StatusChanged { id: *id, status });
         }
-        emit_event(app, DownloadEvent::StatusChanged { id: *id, status });
         queue.push_back(*id);
     }
 }
@@ -222,7 +244,9 @@ async fn move_to_backlog(
             task.handle.abort();
         }
         overrides.remove(id);
-        if let Err(err) = set_status(db.clone(), *id, DownloadStatus::Backlog).await {
+        let changed = match set_status(db.clone(), *id, DownloadStatus::Backlog).await {
+            Ok(c) => c,
+            Err(err) => {
             emit_event(
                 app,
                 DownloadEvent::Message {
@@ -230,15 +254,18 @@ async fn move_to_backlog(
                     message: format!("Failed to move to backlog: {err}"),
                 },
             );
-            continue;
+                continue;
+            }
+        };
+        if changed {
+            emit_event(
+                app,
+                DownloadEvent::StatusChanged {
+                    id: *id,
+                    status: DownloadStatus::Backlog,
+                },
+            );
         }
-        emit_event(
-            app,
-            DownloadEvent::StatusChanged {
-                id: *id,
-                status: DownloadStatus::Backlog,
-            },
-        );
     }
 }
 
@@ -255,7 +282,9 @@ async fn cancel_active(
     if let Some(task) = active.remove(&id) {
         task.handle.abort();
     }
-    if let Err(err) = set_status(db.clone(), id, DownloadStatus::Canceled).await {
+    let changed = match set_status(db.clone(), id, DownloadStatus::Canceled).await {
+        Ok(c) => c,
+        Err(err) => {
         emit_event(
             app,
             DownloadEvent::Message {
@@ -263,15 +292,19 @@ async fn cancel_active(
                 message: format!("Failed to cancel: {err}"),
             },
         );
-        return;
+            return;
+        }
+    };
+    // If status actually changed, emit it
+    if changed {
+        emit_event(
+            app,
+            DownloadEvent::StatusChanged {
+                id,
+                status: DownloadStatus::Canceled,
+            },
+        );
     }
-    emit_event(
-        app,
-        DownloadEvent::StatusChanged {
-            id,
-            status: DownloadStatus::Canceled,
-        },
-    );
 }
 
 async fn maybe_start_next(
@@ -296,7 +329,9 @@ async fn maybe_start_next(
             continue;
         }
 
-        if let Err(err) = set_status(db.clone(), id, DownloadStatus::Downloading).await {
+        let changed = match set_status(db.clone(), id, DownloadStatus::Downloading).await {
+            Ok(c) => c,
+            Err(err) => {
             emit_event(
                 app,
                 DownloadEvent::Message {
@@ -304,15 +339,18 @@ async fn maybe_start_next(
                     message: format!("Failed to mark downloading: {err}"),
                 },
             );
-            continue;
+                continue;
+            }
+        };
+        if changed {
+            emit_event(
+                app,
+                DownloadEvent::StatusChanged {
+                    id,
+                    status: DownloadStatus::Downloading,
+                },
+            );
         }
-        emit_event(
-            app,
-            DownloadEvent::StatusChanged {
-                id,
-                status: DownloadStatus::Downloading,
-            },
-        );
 
         let app_clone = app.clone();
         let tx_clone = cmd_tx.clone();
@@ -361,16 +399,15 @@ async fn set_status(
     db: Arc<tokio::sync::Mutex<Connection>>,
     id: i64,
     status: DownloadStatus,
-) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || {
+) -> Result<bool, String> {
+    let changed = tauri::async_runtime::spawn_blocking(move || {
         let conn = db.blocking_lock();
         set_status_by_id_conn(&*conn, id, status)
-            .map(|_| ())
             .map_err(|e| e.to_string())
     })
     .await
     .map_err(|e| format!("Join error: {e}"))??;
-    Ok(())
+    Ok(changed > 0)
 }
 
 fn emit_event(app: &AppHandle, event: DownloadEvent) {

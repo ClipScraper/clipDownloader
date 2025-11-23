@@ -87,9 +87,20 @@ pub fn find_download_by_id_conn(conn: &Connection, id: i64) -> Result<Option<DbD
 pub fn set_status_by_id_conn(conn: &Connection, id: i64, status: DownloadStatus) -> Result<usize> {
     let token = status.as_str();
     let updated = conn.execute(
-        "UPDATE downloads SET status=?1, date_downloaded=CASE WHEN ?1='done' THEN CURRENT_TIMESTAMP ELSE date_downloaded END WHERE id=?2",
-        [token, &id.to_string()],
+        "UPDATE downloads
+            SET status=?1,
+                date_downloaded=CASE WHEN ?1='done' THEN CURRENT_TIMESTAMP ELSE date_downloaded END
+          WHERE id=?2 AND status<>?1",
+        [token, &id.to_string()], // unchanged rows (same status) will not be updated
     )?;
+    Ok(updated)
+}
+
+/// Reset any rows that were left in 'downloading' (e.g. after a crash) back to 'queued'.
+/// Returns the number of rows updated.
+pub fn reset_stale_downloading_to_queued_conn(conn: &Connection) -> Result<usize> {
+    let updated =
+        conn.execute("UPDATE downloads SET status='queued' WHERE status='downloading'", [])?;
     Ok(updated)
 }
 
