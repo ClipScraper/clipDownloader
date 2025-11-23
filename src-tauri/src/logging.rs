@@ -6,11 +6,7 @@ use tracing_appender::{
     rolling::RollingFileAppender,
 };
 use tracing_subscriber::{
-    fmt,
-    reload,
-    util::SubscriberInitExt,
-    EnvFilter,
-    prelude::*,
+    filter::LevelFilter, fmt, prelude::*, reload, util::SubscriberInitExt, EnvFilter,
 };
 
 static FILE_FILTER_HANDLE: OnceCell<reload::Handle<EnvFilter, tracing_subscriber::Registry>> =
@@ -67,7 +63,7 @@ pub fn init(file_enabled: bool) {
     // then add the console layer. This avoids the trait bound error.
     tracing_subscriber::registry()
         .with(file_layer.with_filter(reloadable_filter)) // file on/off via settings
-        .with(console) // console always on (can still be controlled by RUST_LOG)
+        .with(console.with_filter(LevelFilter::INFO)) // keep console at info+ to suppress noisy traces
         .init();
 
     prune_old_logs(); // optional small housekeeping
@@ -91,7 +87,9 @@ fn prune_old_logs() {
     use std::fs;
 
     let dir = log_dir();
-    let Ok(entries) = fs::read_dir(&dir) else { return; };
+    let Ok(entries) = fs::read_dir(&dir) else {
+        return;
+    };
 
     let mut files: Vec<_> = entries
         .flatten()

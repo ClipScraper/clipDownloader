@@ -1,8 +1,8 @@
+use crate::types::{content_type_str, platform_str, ClipRow, MediaKind};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
 use yew::prelude::*;
 use yew_icons::{Icon, IconId};
-use crate::types::{ClipRow, MediaKind, platform_str, content_type_str};
 
 #[wasm_bindgen]
 extern "C" {
@@ -25,7 +25,7 @@ fn last_two_path_segments(url: &str) -> String {
     match parts.len() {
         0 => tail,
         1 => parts[0].to_string(),
-        _ => format!("{}/{}", parts[parts.len()-2], parts[parts.len()-1]),
+        _ => format!("{}/{}", parts[parts.len() - 2], parts[parts.len() - 1]),
     }
 }
 fn item_label_for_row(row: &ClipRow) -> String {
@@ -35,13 +35,17 @@ fn platform_icon_src(p: &str) -> &'static str {
     match p {
         "instagram" => "public/instagram.webp",
         "pinterest" => "public/pinterest.png",
-        "tiktok"    => "public/tiktok.webp",
-        "youtube"   => "public/youtube.webp",
-        _           => "",
+        "tiktok" => "public/tiktok.webp",
+        "youtube" => "public/youtube.webp",
+        _ => "",
     }
 }
 fn collection_title(row: &ClipRow) -> String {
-    let handle = if row.handle.trim().is_empty() { "Unknown" } else { &row.handle };
+    let handle = if row.handle.trim().is_empty() {
+        "Unknown"
+    } else {
+        &row.handle
+    };
     let typ = content_type_str(&row.content_type);
     format!("{handle} | {typ}")
 }
@@ -76,12 +80,22 @@ pub fn library_page() -> Html {
     let mut seen = HashSet::<String>::new();
 
     for mut r in (*done_rows).clone() {
-        if r.handle.trim().is_empty() { r.handle = "Unknown".into(); }
+        if r.handle.trim().is_empty() {
+            r.handle = "Unknown".into();
+        }
         let plat = platform_str(&r.platform).to_string();
-        let typ  = content_type_str(&r.content_type).to_string();
+        let typ = content_type_str(&r.content_type).to_string();
 
-        let key = format!("{}|{}|{}|{}", plat, r.handle.to_lowercase().trim(), typ, r.link.trim());
-        if !seen.insert(key) { continue; }
+        let key = format!(
+            "{}|{}|{}|{}",
+            plat,
+            r.handle.to_lowercase().trim(),
+            typ,
+            r.link.trim()
+        );
+        if !seen.insert(key) {
+            continue;
+        }
 
         map.entry(plat)
             .or_default()

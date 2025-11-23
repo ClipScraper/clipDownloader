@@ -24,7 +24,11 @@ pub async fn move_link_to_queue(link: String) -> Result<u64, String> {
 }
 
 #[command]
-pub async fn move_collection_to_queue(platform: String, handle: String, content_type: String) -> Result<u64, String> {
+pub async fn move_collection_to_queue(
+    platform: String,
+    handle: String,
+    content_type: String,
+) -> Result<u64, String> {
     let db = crate::database::Database::new().map_err(|e| e.to_string())?;
     // DB stores origin in lowercase already; UI provides lowercase tokens too.
     let n = db
@@ -51,7 +55,11 @@ pub async fn move_link_to_backlog(link: String) -> Result<u64, String> {
 }
 
 #[command]
-pub async fn move_collection_to_backlog(platform: String, handle: String, content_type: String) -> Result<u64, String> {
+pub async fn move_collection_to_backlog(
+    platform: String,
+    handle: String,
+    content_type: String,
+) -> Result<u64, String> {
     let db = crate::database::Database::new().map_err(|e| e.to_string())?;
     let n = db
         .move_collection_to_backlog(&platform, &handle, &content_type)
@@ -71,7 +79,8 @@ pub async fn move_platform_to_backlog(platform: String) -> Result<u64, String> {
 #[tauri::command]
 pub async fn toggle_output_format(link: String) -> Result<(), String> {
     let db = crate::database::Database::new().map_err(|e| e.to_string())?;
-    db.toggle_output_format_for_link(&link).map_err(|e| e.to_string())?;
+    db.toggle_output_format_for_link(&link)
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -83,7 +92,8 @@ pub async fn set_output_format(link: String, format: String) -> Result<(), Strin
         _ => crate::database::OutputFormat::Default,
     };
     let db = crate::database::Database::new().map_err(|e| e.to_string())?;
-    db.set_output_format_for_link(&link, fmt).map_err(|e| e.to_string())?;
+    db.set_output_format_for_link(&link, fmt)
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -91,6 +101,12 @@ pub async fn set_output_format(link: String, format: String) -> Result<(), Strin
 pub async fn list_done() -> Result<Vec<crate::database::UiBacklogRow>, String> {
     let db = crate::database::Database::new().map_err(|e| e.to_string())?;
     db.list_done_ui().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn list_downloads() -> Result<Vec<crate::database::UiBacklogRow>, String> {
+    let db = crate::database::Database::new().map_err(|e| e.to_string())?;
+    db.list_all_ui().map_err(|e| e.to_string())
 }
 
 /* ---- deletions: honor delete_mode ---- */
@@ -106,7 +122,9 @@ pub async fn delete_rows_by_platform(platform: String) -> Result<u64, String> {
     let (ids, paths): (Vec<_>, Vec<_>) = pairs.into_iter().unzip();
     if matches!(mode, crate::database::DeleteMode::Hard) {
         for p in paths.into_iter() {
-            if !p.is_empty() && p != "unknown_path" { let _ = fs::remove_file(p); }
+            if !p.is_empty() && p != "unknown_path" {
+                let _ = fs::remove_file(p);
+            }
         }
     }
     let mut deleted: u64 = 0;
@@ -117,7 +135,11 @@ pub async fn delete_rows_by_platform(platform: String) -> Result<u64, String> {
 }
 
 #[tauri::command]
-pub async fn delete_rows_by_collection(platform: String, handle: String, origin: String) -> Result<u64, String> {
+pub async fn delete_rows_by_collection(
+    platform: String,
+    handle: String,
+    origin: String,
+) -> Result<u64, String> {
     use std::fs;
     let db = crate::database::Database::new().map_err(|e| e.to_string())?;
     let mode = crate::settings::load_settings().delete_mode;
@@ -127,7 +149,9 @@ pub async fn delete_rows_by_collection(platform: String, handle: String, origin:
     let (ids, paths): (Vec<_>, Vec<_>) = pairs.into_iter().unzip();
     if matches!(mode, crate::database::DeleteMode::Hard) {
         for p in paths.into_iter() {
-            if !p.is_empty() && p != "unknown_path" { let _ = fs::remove_file(p); }
+            if !p.is_empty() && p != "unknown_path" {
+                let _ = fs::remove_file(p);
+            }
         }
     }
     let mut deleted: u64 = 0;
@@ -148,7 +172,9 @@ pub async fn delete_rows_by_link(link: String) -> Result<u64, String> {
     let mut deleted: u64 = 0;
     for (id, path) in pairs.into_iter() {
         if matches!(mode, crate::database::DeleteMode::Hard) {
-            if !path.is_empty() && path != "unknown_path" { let _ = fs::remove_file(&path); }
+            if !path.is_empty() && path != "unknown_path" {
+                let _ = fs::remove_file(&path);
+            }
         }
         deleted += db.delete_row_by_id(id).map_err(|e| e.to_string())? as u64;
     }

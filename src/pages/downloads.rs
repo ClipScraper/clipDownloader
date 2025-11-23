@@ -1,8 +1,8 @@
+use crate::app::{DeleteItem, MoveItem};
+use crate::types::{content_type_str, platform_str, ClipRow, ContentType, MediaKind, Platform};
 use wasm_bindgen::prelude::*;
 use yew::prelude::*;
 use yew_icons::{Icon, IconId};
-use crate::types::{ClipRow, MediaKind, platform_str, content_type_str, Platform, ContentType};
-use crate::app::{DeleteItem, MoveItem};
 
 #[wasm_bindgen]
 extern "C" {
@@ -21,7 +21,6 @@ fn toggle_icon_for_row(row: &ClipRow) -> IconId {
     }
     icon_for_row(row)
 }
-
 
 #[derive(Properties, PartialEq, Clone)]
 pub struct Props {
@@ -57,13 +56,17 @@ fn last_two_path_segments(url: &str) -> String {
     match parts.len() {
         0 => tail,
         1 => parts[0].to_string(),
-        _ => format!("{}/{}", parts[parts.len()-2], parts[parts.len()-1]),
+        _ => format!("{}/{}", parts[parts.len() - 2], parts[parts.len() - 1]),
     }
 }
 
 /// Collection display name: "{handle} | {type}"
 fn collection_title(row: &ClipRow) -> String {
-    let handle = if row.handle.trim().is_empty() { "Unknown" } else { &row.handle };
+    let handle = if row.handle.trim().is_empty() {
+        "Unknown"
+    } else {
+        &row.handle
+    };
     let typ = content_type_str(&row.content_type);
     format!("{handle} | {typ}")
 }
@@ -77,12 +80,20 @@ fn item_label_for_row(row: &ClipRow) -> String {
         let _maybe_user = parts.next().unwrap_or_default();
         let b = parts.next().unwrap_or_default(); // "p" or "reel"
         let c = parts.next().unwrap_or_default(); // id
-        if (b == "p" || b == "reel") && !c.is_empty() { format!("{b}/{c}") } else { last_two_path_segments(link) }
+        if (b == "p" || b == "reel") && !c.is_empty() {
+            format!("{b}/{c}")
+        } else {
+            last_two_path_segments(link)
+        }
     } else if platform == "tiktok" {
         let tail = url_after_domain(link);
         let pieces: Vec<&str> = tail.split('/').filter(|s| !s.is_empty()).collect();
         if let Some(pos) = pieces.iter().position(|p| *p == "photo" || *p == "video") {
-            if pos + 1 < pieces.len() { format!("{}/{}", pieces[pos], pieces[pos + 1]) } else { last_two_path_segments(link) }
+            if pos + 1 < pieces.len() {
+                format!("{}/{}", pieces[pos], pieces[pos + 1])
+            } else {
+                last_two_path_segments(link)
+            }
         } else {
             last_two_path_segments(link)
         }
@@ -114,23 +125,25 @@ fn icon_for_row(row: &ClipRow) -> IconId {
     if plat == "pinterest" {
         return IconId::LucideImage;
     }
-    if (plat == "instagram" && is_instagram_photo(link)) || (plat == "tiktok" && is_tiktok_photo(link)) {
+    if (plat == "instagram" && is_instagram_photo(link))
+        || (plat == "tiktok" && is_tiktok_photo(link))
+    {
         IconId::LucideImage
     } else {
         match row.media {
             MediaKind::Pictures => IconId::LucideImage,
-            MediaKind::Video    => IconId::LucideVideo,
+            MediaKind::Video => IconId::LucideVideo,
         }
     }
 }
 
 fn platform_icon_src(p: &str) -> &'static str {
     match p {
-        "instagram"         => "public/instagram.webp",
-        "pinterest"         => "public/pinterest.png",
-        "tiktok"            => "public/tiktok.webp",
-        "youtube"           => "public/youtube.webp",
-        _                   => "",
+        "instagram" => "public/instagram.webp",
+        "pinterest" => "public/pinterest.png",
+        "tiktok" => "public/tiktok.webp",
+        "youtube" => "public/youtube.webp",
+        _ => "",
     }
 }
 
@@ -165,18 +178,31 @@ pub fn downloads_page(props: &Props) -> Html {
             let section_id = title.to_lowercase(); // "backlog" or "queue"
 
             // platform -> (handle, type, Platform, ContentType) -> rows
-            let mut map: BTreeMap<String, BTreeMap<(String, String, Platform, ContentType), Vec<ClipRow>>> = BTreeMap::new();
+            let mut map: BTreeMap<
+                String,
+                BTreeMap<(String, String, Platform, ContentType), Vec<ClipRow>>,
+            > = BTreeMap::new();
 
             // De-dupe by (platform, handle, type, link) within this section
             let mut seen = HashSet::<String>::new();
 
             for mut r in rows_in {
-                if r.handle.trim().is_empty() { r.handle = "Unknown".into(); }
+                if r.handle.trim().is_empty() {
+                    r.handle = "Unknown".into();
+                }
                 let plat = platform_str(&r.platform).to_string();
                 let typ = content_type_str(&r.content_type).to_string();
 
-                let dedup_key = format!("{}|{}|{}|{}", plat, r.handle.to_lowercase().trim(), typ, r.link.trim());
-                if !seen.insert(dedup_key) { continue; }
+                let dedup_key = format!(
+                    "{}|{}|{}|{}",
+                    plat,
+                    r.handle.to_lowercase().trim(),
+                    typ,
+                    r.link.trim()
+                );
+                if !seen.insert(dedup_key) {
+                    continue;
+                }
 
                 map.entry(plat)
                     .or_default()
@@ -401,7 +427,7 @@ pub fn downloads_page(props: &Props) -> Html {
                                                                                 </button>
                                                                             }
                                                                         } else {
-                                                                            html!{} 
+                                                                            html!{}
                                                                         }
                                                                     }
                                                                 </div>
@@ -492,7 +518,7 @@ pub fn downloads_page(props: &Props) -> Html {
                                                                                                                 </button>
                                                                                                             }
                                                                                                         } else {
-                                                                                                            html!{} 
+                                                                                                            html!{}
                                                                                                         }
                                                                                                     }
                                                                                                 </div>
@@ -591,16 +617,16 @@ pub fn downloads_page(props: &Props) -> Html {
                 } else { html!{} }
             }
 
-            { 
-                if !props.queue.is_empty() { 
-                    html!{ 
+            {
+                if !props.queue.is_empty() {
+                    html!{
                         {
                             render_section(props.queue.clone(), "Queue", false)
                         }
-                    } 
+                    }
                 } else {
                     html!{}
-                } 
+                }
             }
 
             { render_section(props.backlog.clone(), "Backlog", true) }

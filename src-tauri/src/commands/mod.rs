@@ -1,9 +1,8 @@
-pub mod event;
-pub mod parse;
 pub mod downloader;
 pub mod files;
-pub mod settings_cmd;
 pub mod import;
+pub mod library;
 pub mod list;
 pub mod log;
-pub mod library;
+pub mod parse;
+pub mod settings_cmd;

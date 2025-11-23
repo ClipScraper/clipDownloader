@@ -1,7 +1,7 @@
-use yew::prelude::*;
-use yew_icons::{Icon, IconId};
 use crate::app::Page;
 use crate::log;
+use yew::prelude::*;
+use yew_icons::{Icon, IconId};
 
 #[derive(Properties, PartialEq)]
 pub struct SidebarProps {
@@ -12,13 +12,14 @@ pub struct SidebarProps {
 pub fn sidebar(props: &SidebarProps) -> Html {
     let set_page = |p: Page, page_handle: UseStateHandle<Page>| {
         let label = match p {
-            Page::Home          => "Home",
-            Page::Downloads     => "Downloads",
-            Page::Library       => "Library",
-            Page::Settings      => "Settings",
-            Page::Extension     => "Extension",
-            Page::Sponsor       => "Sponsor",
-        }.to_string();
+            Page::Home => "Home",
+            Page::Downloads => "Downloads",
+            Page::Library => "Library",
+            Page::Settings => "Settings",
+            Page::Extension => "Extension",
+            Page::Sponsor => "Sponsor",
+        }
+        .to_string();
 
         Callback::from(move |_| {
             log::info("navigate", serde_json::json!({ "to": label }));

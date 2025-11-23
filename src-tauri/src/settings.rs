@@ -1,5 +1,8 @@
-use crate::database::{OnDuplicate, Settings, DeleteMode, DefaultOutput};
-use std::{fs, path::{Path, PathBuf}};
+use crate::database::{DefaultOutput, DeleteMode, OnDuplicate, Settings};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 use uuid::Uuid;
 
 /// Where we store settings.json on macOS:
@@ -106,7 +109,10 @@ pub fn load_settings() -> Settings {
     }
 
     // Persist the clean copy (also migrates any old/invalid file)
-    let _ = fs::write(&path, serde_json::to_string_pretty(&settings).unwrap_or_else(|_| "{}".into()));
+    let _ = fs::write(
+        &path,
+        serde_json::to_string_pretty(&settings).unwrap_or_else(|_| "{}".into()),
+    );
 
     settings
 }

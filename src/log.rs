@@ -23,7 +23,15 @@ fn send(level: &str, message: &str, context: Value) {
     });
 }
 
-pub fn info(message: &str, context: Value)  { send("info",  message, context); }
-pub fn warn(message: &str, context: Value)  { send("warn",  message, context); }
-pub fn error(message: &str, context: Value) { send("error", message, context); }
-pub fn debug(message: &str, context: Value) { send("debug", message, context); }
+pub fn info(message: &str, context: Value) {
+    send("info", message, context);
+}
+pub fn warn(message: &str, context: Value) {
+    send("warn", message, context);
+}
+pub fn error(message: &str, context: Value) {
+    send("error", message, context);
+}
+pub fn debug(message: &str, context: Value) {
+    send("debug", message, context);
+}

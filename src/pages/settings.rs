@@ -27,17 +27,29 @@ pub struct Settings {
     pub parallel_downloads: u8,
 }
 
-fn default_true() -> bool { true }
-fn default_parallel_downloads() -> u8 { 3 }
+fn default_true() -> bool {
+    true
+}
+fn default_parallel_downloads() -> u8 {
+    3
+}
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq)]
-pub enum DeleteMode { Soft, Hard }
+pub enum DeleteMode {
+    Soft,
+    Hard,
+}
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq)]
-pub enum DefaultOutput { Audio, Video }
+pub enum DefaultOutput {
+    Audio,
+    Video,
+}
 
 impl Default for DefaultOutput {
-    fn default() -> Self { DefaultOutput::Video }
+    fn default() -> Self {
+        DefaultOutput::Video
+    }
 }
 
 #[wasm_bindgen]
@@ -95,7 +107,9 @@ pub fn settings_page() -> Html {
     let on_duplicate_change = {
         let settings = settings.clone();
         Callback::from(move |e: Event| {
-            let value = e.target_unchecked_into::<web_sys::HtmlSelectElement>().value();
+            let value = e
+                .target_unchecked_into::<web_sys::HtmlSelectElement>()
+                .value();
             let mut s = (*settings).clone();
             s.on_duplicate = match value.as_str() {
                 "overwrite" => OnDuplicate::Overwrite,
@@ -109,7 +123,9 @@ pub fn settings_page() -> Html {
     let on_debug_logs_change = {
         let settings = settings.clone();
         Callback::from(move |e: Event| {
-            let checked = e.target_unchecked_into::<web_sys::HtmlInputElement>().checked();
+            let checked = e
+                .target_unchecked_into::<web_sys::HtmlInputElement>()
+                .checked();
             let mut s = (*settings).clone();
             s.debug_logs = checked;
             settings.set(s);
@@ -119,7 +135,9 @@ pub fn settings_page() -> Html {
     let on_download_automatically_change = {
         let settings = settings.clone();
         Callback::from(move |e: Event| {
-            let checked = e.target_unchecked_into::<web_sys::HtmlInputElement>().checked();
+            let checked = e
+                .target_unchecked_into::<web_sys::HtmlInputElement>()
+                .checked();
             let mut s = (*settings).clone();
             s.download_automatically = checked;
             settings.set(s);
@@ -129,7 +147,9 @@ pub fn settings_page() -> Html {
     let on_keep_downloading_change = {
         let settings = settings.clone();
         Callback::from(move |e: Event| {
-            let checked = e.target_unchecked_into::<web_sys::HtmlInputElement>().checked();
+            let checked = e
+                .target_unchecked_into::<web_sys::HtmlInputElement>()
+                .checked();
             let mut s = (*settings).clone();
             s.keep_downloading_on_other_pages = checked;
             settings.set(s);
@@ -139,7 +159,9 @@ pub fn settings_page() -> Html {
     let on_parallel_downloads_change = {
         let settings = settings.clone();
         Callback::from(move |e: Event| {
-            let value = e.target_unchecked_into::<web_sys::HtmlInputElement>().value_as_number() as u8;
+            let value = e
+                .target_unchecked_into::<web_sys::HtmlInputElement>()
+                .value_as_number() as u8;
             let mut s = (*settings).clone();
             s.parallel_downloads = value.max(1);
             settings.set(s);
@@ -149,9 +171,15 @@ pub fn settings_page() -> Html {
     let on_delete_mode_change = {
         let settings = settings.clone();
         Callback::from(move |e: Event| {
-            let value = e.target_unchecked_into::<web_sys::HtmlSelectElement>().value();
+            let value = e
+                .target_unchecked_into::<web_sys::HtmlSelectElement>()
+                .value();
             let mut s = (*settings).clone();
-            s.delete_mode = if value == "hard" { DeleteMode::Hard } else { DeleteMode::Soft };
+            s.delete_mode = if value == "hard" {
+                DeleteMode::Hard
+            } else {
+                DeleteMode::Soft
+            };
             settings.set(s);
         })
     };
@@ -179,9 +207,15 @@ pub fn settings_page() -> Html {
     let on_default_output_change = {
         let settings = settings.clone();
         Callback::from(move |e: Event| {
-            let value = e.target_unchecked_into::<web_sys::HtmlInputElement>().value();
+            let value = e
+                .target_unchecked_into::<web_sys::HtmlInputElement>()
+                .value();
             let mut s = (*settings).clone();
-            s.default_output = if value == "audio" { DefaultOutput::Audio } else { DefaultOutput::Video };
+            s.default_output = if value == "audio" {
+                DefaultOutput::Audio
+            } else {
+                DefaultOutput::Video
+            };
             settings.set(s);
         })
     };
@@ -279,4 +313,3 @@ impl Default for Settings {
         }
     }
 }
-
