@@ -3,6 +3,13 @@ use wasm_bindgen_futures::spawn_local;
 use yew::prelude::*;
 use yew_icons::{Icon, IconId};
 
+#[derive(serde::Deserialize, Clone, Debug, PartialEq)]
+struct SidecarCheck {
+    yt_dlp: bool,
+    gallery_dl: bool,
+    ffmpeg: bool,
+}
+
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq)]
 pub enum OnDuplicate {
     Overwrite,
@@ -61,6 +68,7 @@ extern "C" {
 #[function_component(SettingsPage)]
 pub fn settings_page() -> Html {
     let settings = use_state(Settings::default);
+    let libs = use_state(|| None::<SidecarCheck>);
     let settings_clone = settings.clone();
     use_effect_with((), move |_| {
         spawn_local(async move {
@@ -220,6 +228,20 @@ pub fn settings_page() -> Html {
         })
     };
 
+    let on_check_tools = {
+        let libs = libs.clone();
+        Callback::from(move |_| {
+            // Clone outside the async move so the outer callback implements Fn
+            let libs_set = libs.clone();
+            spawn_local(async move {
+                let v = invoke("check_sidecar_tools", JsValue::NULL).await;
+                if let Ok(res) = serde_wasm_bindgen::from_value::<SidecarCheck>(v) {
+                    libs_set.set(Some(res));
+                }
+            });
+        })
+    };
+
     html! {
         <main class="container">
             <h1>{"Settings"}</h1>
@@ -288,6 +310,32 @@ pub fn settings_page() -> Html {
                 <div class="form-group row">
                     <label for="parallel-downloads">{"Parallel downloads"}</label>
                     <input type="number" id="parallel-downloads" min="1" value={settings.parallel_downloads.to_string()} onchange={on_parallel_downloads_change} />
+                </div>
+
+                <div class="form-group row">
+                    <label>{"Check for local libraries"}</label>
+                    <div style="display:flex; gap: 12px; align-items:center;">
+                        <button onclick={on_check_tools}>{"Check"}</button>
+                        {
+                            if let Some(stats) = (*libs).clone() {
+                                let ok_color = "#22c55e";
+                                let bad_color = "#ef4444";
+                                html!{
+                                    <div style="display:flex; gap: 16px; align-items:center; font-weight: 600;">
+                                        <span style={format!("display:inline-flex; gap:6px; align-items:center; color:{};", if stats.yt_dlp { ok_color } else { bad_color })}>
+                                            { if stats.yt_dlp { "✓" } else { "✗" } }{" yt-dlp"}
+                                        </span>
+                                        <span style={format!("display:inline-flex; gap:6px; align-items:center; color:{};", if stats.gallery_dl { ok_color } else { bad_color })}>
+                                            { if stats.gallery_dl { "✓" } else { "✗" } }{" gallery-dl"}
+                                        </span>
+                                        <span style={format!("display:inline-flex; gap:6px; align-items:center; color:{};", if stats.ffmpeg { ok_color } else { bad_color })}>
+                                            { if stats.ffmpeg { "✓" } else { "✗" } }{" ffmpeg"}
+                                        </span>
+                                    </div>
+                                }
+                            } else { html!{} }
+                        }
+                    </div>
                 </div>
 
                 <div class="form-group center">

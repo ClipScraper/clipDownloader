@@ -50,6 +50,8 @@ pub fn run() {
             commands::downloader::move_downloads_to_backlog,
             commands::downloader::set_download_paused,
             commands::downloader::refresh_download_settings,
+            // TOOLS / SYSTEM
+            commands::tools::check_sidecar_tools,
             // FILES / IMPORT
             commands::files::pick_csv_and_read,
             commands::files::read_csv_from_path,

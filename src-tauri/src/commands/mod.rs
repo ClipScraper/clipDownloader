@@ -6,3 +6,4 @@ pub mod list;
 pub mod log;
 pub mod parse;
 pub mod settings_cmd;
+pub mod tools;
