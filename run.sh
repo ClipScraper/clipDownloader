@@ -235,4 +235,13 @@ else
   ensure_resources_placeholder
 fi
 
-exec cargo tauri dev "${FORWARD_ARGS[@]}"
+# Rebuild positional parameters without the special flag and exec cargo
+if [ -n "${FORWARD_ARGS:-}" ]; then
+  # shellcheck disable=SC2086
+  set -- $FORWARD_ARGS
+else
+  # no extra args; ensure $@ is defined even with `set -u`
+  set --
+fi
+
+exec cargo tauri dev "$@"
