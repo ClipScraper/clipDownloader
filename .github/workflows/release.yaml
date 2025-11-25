@@ -67,7 +67,8 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cargo/bin
-          key: ${{ runner.os }}-${{ runner.arch }}-cargo-binaries-v1-${{ hashFiles('.github/workflows/release.yaml') }}
+          # Use dependency graph (Cargo.lock) for cache key; avoids path issues hashing the workflow file itself
+          key: ${{ runner.os }}-${{ runner.arch }}-cargo-binaries-v1-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-${{ runner.arch }}-cargo-binaries-v1-
 
