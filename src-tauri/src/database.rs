@@ -366,6 +366,9 @@ pub struct Settings {
     pub keep_downloading_on_other_pages: bool,
     #[serde(default = "default_parallel_downloads")]
     pub parallel_downloads: u8,
+    /// Prefer system-installed tools (yt-dlp / ffmpeg / gallery-dl) over bundled sidecars
+    #[serde(default)]
+    pub use_system_binaries: bool,
 }
 
 fn default_true() -> bool {

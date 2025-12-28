@@ -32,6 +32,8 @@ pub struct Settings {
     pub keep_downloading_on_other_pages: bool,
     #[serde(default = "default_parallel_downloads")]
     pub parallel_downloads: u8,
+    #[serde(default)]
+    pub use_system_binaries: bool,
 }
 
 fn default_true() -> bool {
@@ -172,6 +174,18 @@ pub fn settings_page() -> Html {
                 .value_as_number() as u8;
             let mut s = (*settings).clone();
             s.parallel_downloads = value.max(1);
+            settings.set(s);
+        })
+    };
+
+    let on_use_system_binaries_change = {
+        let settings = settings.clone();
+        Callback::from(move |e: Event| {
+            let checked = e
+                .target_unchecked_into::<web_sys::HtmlInputElement>()
+                .checked();
+            let mut s = (*settings).clone();
+            s.use_system_binaries = checked;
             settings.set(s);
         })
     };
@@ -338,6 +352,24 @@ pub fn settings_page() -> Html {
                     </div>
                 </div>
 
+                {
+                    if let Some(stats) = (*libs).clone() {
+                        if stats.yt_dlp && stats.gallery_dl && stats.ffmpeg {
+                            html!{
+                                <div class="form-group row">
+                                    <label for="use-system-binaries">{"Use local dependencies instead of sidecar"}</label>
+                                    <input
+                                        type="checkbox"
+                                        id="use-system-binaries"
+                                        checked={settings.use_system_binaries}
+                                        onchange={on_use_system_binaries_change}
+                                    />
+                                </div>
+                            }
+                        } else { html!{} }
+                    } else { html!{} }
+                }
+
                 <div class="form-group center">
                     <button onclick={on_save}>{"Save"}</button>
                 </div>
@@ -358,6 +390,7 @@ impl Default for Settings {
             download_automatically: true,
             keep_downloading_on_other_pages: true,
             parallel_downloads: 3,
+            use_system_binaries: false,
         }
     }
 }

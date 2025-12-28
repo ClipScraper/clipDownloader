@@ -45,12 +45,17 @@ pub async fn run_gallery_dl_to_temp(
     let res_dir = app.path().resource_dir().unwrap_or_else(|_| {
         std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
     });
-    let new_path = format!(
-        "{}{}{}",
-        res_dir.to_string_lossy(),
-        path_sep(),
+    let settings = crate::settings::load_settings();
+    let new_path = if settings.use_system_binaries {
         std::env::var("PATH").unwrap_or_default()
-    );
+    } else {
+        format!(
+            "{}{}{}",
+            res_dir.to_string_lossy(),
+            path_sep(),
+            std::env::var("PATH").unwrap_or_default()
+        )
+    };
 
     let args = vec![
         "--verbose".into(),
@@ -61,12 +66,16 @@ pub async fn run_gallery_dl_to_temp(
         url.into(),
     ];
 
-    let cmd = app.shell().sidecar("gallery-dl").map_err(|e| {
-        io::Error::new(
-            io::ErrorKind::Other,
-            format!("sidecar(gallery-dl) error: {e}"),
-        )
-    })?;
+    let cmd = if settings.use_system_binaries {
+        app.shell().command("gallery-dl")
+    } else {
+        app.shell().sidecar("gallery-dl").map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::Other,
+                format!("sidecar(gallery-dl) error: {e}"),
+            )
+        })?
+    };
 
     let (mut rx, child) = cmd.args(args).env("PATH", new_path).spawn().map_err(|e| {
         io::Error::new(
