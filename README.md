@@ -82,6 +82,34 @@ cargo tauri build --target x86_64-unknown-linux-gnu
 
 The output for cross-platform builds will also be in the `src-tauri/target/release/bundle/` directory, under the respective target's folder.
 
+## Microsoft Store Publishing
+
+This app is configured for Microsoft Store submission. The MSI installer created by Tauri may show installation UI during setup, which violates Store Policy 10.2.9. To comply, you need to convert the MSI to MSIX format.
+
+### Automated Build (Recommended)
+
+Use the GitHub Actions workflow to automatically build and convert to MSIX:
+
+1. Push to `main` branch or trigger manually via GitHub Actions
+2. The workflow will build the MSI and attempt automatic MSIX conversion
+3. Download the MSIX artifact from the Actions run
+
+### Manual Conversion
+
+If automated conversion fails:
+
+1. Run the build workflow to get the MSI artifact
+2. Download and install [Microsoft MSIX Packaging Tool](https://learn.microsoft.com/en-us/windows/msix/packaging-tool/tool-overview)
+3. Open MSIX Packaging Tool and select "Package existing application"
+4. Choose the downloaded MSI file
+5. Follow the wizard to create the MSIX package
+6. Sign the MSIX with a code signing certificate if required
+
+### CI/CD Workflows
+
+- `build-msix.yml`: Automated MSI build and MSIX conversion
+- `build-release.yml`: Multi-platform build with MSI artifact upload
+
 ## Roadmap
 
 For a detailed list of planned features, ongoing tasks, and future ideas, please see the project's roadmap.
