@@ -145,8 +145,14 @@ async fn probe_uploader(
         processed_url.into(),
     ]);
 
-    let Ok(cmd) = app.shell().sidecar("yt-dlp") else {
-        return None;
+    let settings = crate::settings::load_settings();
+    let cmd = if settings.use_system_binaries {
+        app.shell().command("yt-dlp")
+    } else {
+        match app.shell().sidecar("yt-dlp") {
+            Ok(c) => c,
+            Err(_) => return None,
+        }
     };
 
     // Ensure PATH contains the resources dir so ffmpeg is discoverable if needed
@@ -155,12 +161,16 @@ async fn probe_uploader(
         .path()
         .resolve("", BaseDirectory::Resource)
         .unwrap_or_else(|_| std::env::current_dir().unwrap_or_else(|_| ".".into()));
-    let new_path = format!(
-        "{}{}{}",
-        res_dir.to_string_lossy(),
-        path_sep(),
+    let new_path = if settings.use_system_binaries {
         std::env::var("PATH").unwrap_or_default()
-    );
+    } else {
+        format!(
+            "{}{}{}",
+            res_dir.to_string_lossy(),
+            path_sep(),
+            std::env::var("PATH").unwrap_or_default()
+        )
+    };
 
     let Ok((mut rx, _child)) = cmd.args(args).env("PATH", new_path).spawn() else {
         return None;
@@ -273,14 +283,20 @@ pub async fn run_yt_dlp_with_progress(
     args.push("-P".into());
     args.push(out_dir.to_string_lossy().to_string());
 
-    // Force ffmpeg discovery to our bundled resources
+    // Load settings to determine whether to use system binaries
+    let settings = crate::settings::load_settings();
+
+    // Determine resource dir for bundled ffmpeg (when not using system binaries)
     use tauri::path::BaseDirectory;
     let res_dir = app
         .path()
         .resolve("", BaseDirectory::Resource)
         .unwrap_or_else(|_| std::env::current_dir().unwrap_or_else(|_| ".".into()));
-    args.push("--ffmpeg-location".into());
-    args.push(res_dir.to_string_lossy().to_string());
+    // Only force ffmpeg location when using bundled sidecar tools
+    if !settings.use_system_binaries {
+        args.push("--ffmpeg-location".into());
+        args.push(res_dir.to_string_lossy().to_string());
+    }
 
     // Output template with uniqueness policy
     let output_template = choose_output_template(
@@ -309,17 +325,26 @@ pub async fn run_yt_dlp_with_progress(
         planned_path.display()
     );
 
-    let cmd = app
-        .shell()
-        .sidecar("yt-dlp")
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("sidecar(yt-dlp) error: {e}")))?;
+    let cmd = if settings.use_system_binaries {
+        app.shell().command("yt-dlp")
+    } else {
+        app.shell()
+            .sidecar("yt-dlp")
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("sidecar(yt-dlp) error: {e}")))?
+    };
 
-    let new_path = format!(
-        "{}{}{}",
-        res_dir.to_string_lossy(),
-        path_sep(),
+    let new_path = if settings.use_system_binaries {
+        // Use system PATH as-is to locate system-installed tools
         std::env::var("PATH").unwrap_or_default()
-    );
+    } else {
+        // Prepend bundled resources so yt-dlp can find ffmpeg from the app
+        format!(
+            "{}{}{}",
+            res_dir.to_string_lossy(),
+            path_sep(),
+            std::env::var("PATH").unwrap_or_default()
+        )
+    };
 
     let (mut rx, child) =
         cmd.args(args).env("PATH", new_path).spawn().map_err(|e| {
