@@ -32,12 +32,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-14
+          - os: macos-latest
             label: macos-arm64
             triple: aarch64-apple-darwin
-          - os: macos-13
+            args: ''
+          - os: macos-15
             label: macos-x86_64
             triple: x86_64-apple-darwin
+            args: '--target x86_64-apple-darwin'
           - os: windows-latest
             label: windows-x86_64
             triple: x86_64-pc-windows-msvc
@@ -48,7 +50,7 @@ jobs:
 
     env:
       CARGO_TERM_COLOR: always
-      BUNDLE_DIR: target/release/bundle
+      BUNDLE_DIR: ${{ matrix.args != '' && format('target/{0}/release/bundle', matrix.triple) || 'target/release/bundle' }}
       BIN_DIR: src-tauri/binaries
       RES_DIR: src-tauri/resources
 
@@ -60,7 +62,7 @@ jobs:
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: wasm32-unknown-unknown
+          targets: aarch64-apple-darwin,x86_64-apple-darwin,wasm32-unknown-unknown
 
       - name: Cache cargo binaries
         id: cache-cargo-binaries
@@ -157,12 +159,19 @@ jobs:
 
           # yt-dlp (arch-specific filename)
           if [[ "${{ matrix.label }}" == macos-* ]]; then
+            echo "Downloading yt-dlp for macOS..."
             curl -L "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos" -o "$BIN_DIR/yt-dlp-${{ matrix.triple }}"
+            if [[ ! -f "$BIN_DIR/yt-dlp-${{ matrix.triple }}" ]]; then
+              echo "Failed to download yt-dlp_macos, trying alternative URL..."
+              curl -L "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp" -o "$BIN_DIR/yt-dlp-${{ matrix.triple }}"
+            fi
             chmod +x "$BIN_DIR/yt-dlp-${{ matrix.triple }}"
             xattr -c "$BIN_DIR/yt-dlp-${{ matrix.triple }}" || true
+            ls -la "$BIN_DIR/yt-dlp-${{ matrix.triple }}"
           else
             curl -L "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp" -o "$BIN_DIR/yt-dlp-${{ matrix.triple }}"
             chmod +x "$BIN_DIR/yt-dlp-${{ matrix.triple }}"
+            ls -la "$BIN_DIR/yt-dlp-${{ matrix.triple }}"
           fi
 
           # ffmpeg/ffprobe → resources (unsuffixed) AND binaries/ (suffixed + unsuffixed)
@@ -295,9 +304,13 @@ jobs:
           APPLE_TEAM_ID:      ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -euxo pipefail
-          cargo tauri build --ci
+          echo "Building with args: ${{ matrix.args }}"
+          cargo tauri build --ci ${{ matrix.args }}
+          echo "---- Build output ----"
+          find target -name "*.app" -o -name "*.dmg" -o -name "*.msi" -o -name "*.exe" | head -10 || true
           echo "---- Bundles ----"
-          ls -R "$BUNDLE_DIR" || true
+          ls -la "$BUNDLE_DIR" || true
+          ls -R "$BUNDLE_DIR" 2>/dev/null | head -20 || echo "No bundle directory found"
 
       - name: Build Tauri app (Windows)
         if: startsWith(matrix.os, 'windows')
