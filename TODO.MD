@@ -3,7 +3,6 @@ PRIORITY:
 - button options mp4/mp3 for bulk download
 - sync dl/library (lag in bulk dl)
 ---------
->>>>>>>>>>>>> have a version using local dependencies instead of sidecar to be faster
 - implement use of local libraries instead
 
 - handle errors
@@ -29,3 +28,8 @@ fix color buttons on windows
 
 - Add "moved" to library section for files that were "done" but whose path changed
 - Add option to save pictures/carousels in separate folders
+
+- Add option to save pictures/carousels in separate folders
+
+
+- when using local dependencies instead of sidecar, download page blinks/refreshes?

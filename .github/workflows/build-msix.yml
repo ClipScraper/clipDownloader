@@ -1,0 +1,148 @@
+name: Build MSIX for Microsoft Store
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build-msix:
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+
+    - name: Setup Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: x86_64-pc-windows-msvc
+
+    - name: Rust cache
+      uses: swatinem/rust-cache@v2
+      with:
+        workspaces: "./src-tauri -> target"
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Install Python for sidecars
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+
+    - name: Prepare sidecars
+      run: |
+        # Run the PowerShell script to prepare sidecars
+        .\run.ps1
+      shell: pwsh
+
+    - name: Build Tauri app (MSI)
+      run: |
+        # Build the app for Windows, focusing on MSI output
+        cargo tauri build --target x86_64-pc-windows-msvc
+
+    - name: Find MSI file
+      id: find-msi
+      run: |
+        $msiPath = Get-ChildItem -Path "src-tauri\target\x86_64-pc-windows-msvc\release\bundle\msi\*.msi" | Select-Object -First 1 -ExpandProperty FullName
+        if ($msiPath) {
+          echo "msi_path=$msiPath" >> $env:GITHUB_OUTPUT
+          $msiName = [System.IO.Path]::GetFileName($msiPath)
+          echo "msi_name=$msiName" >> $env:GITHUB_OUTPUT
+        } else {
+          Write-Error "MSI file not found"
+          exit 1
+        }
+      shell: pwsh
+
+    - name: Download and install MSIX Packaging Tool
+      run: |
+        # Download MSIX Packaging Tool
+        $msixToolUrl = "https://download.microsoft.com/download/7/3/0/73036e0d-89c4-4c1c-9fc4-7b3c0f2c0f8a/MSIX-PackagingTool.1.2023.1008.0.x64.exe"
+        Invoke-WebRequest -Uri $msixToolUrl -OutFile "msix-packaging-tool.exe"
+
+        # Install MSIX Packaging Tool silently
+        Start-Process -FilePath "msix-packaging-tool.exe" -ArgumentList "/quiet /norestart" -Wait
+
+        # Find the installed tool path
+        $toolPath = Get-ChildItem -Path "C:\Program Files*\Microsoft\Microsoft MSIX Packaging Tool*\MSIXPackagingTool.exe" -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
+        if (-not $toolPath) {
+          $toolPath = Get-ChildItem -Path "C:\Program Files*\WindowsApps\Microsoft.MSIXPackagingTool_*\MSIXPackagingTool.exe" -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
+        }
+        if ($toolPath) {
+          echo "MSIX_TOOL_PATH=$toolPath" >> $env:GITHUB_ENV
+          Write-Host "MSIX Packaging Tool found at: $toolPath"
+        } else {
+          Write-Error "MSIX Packaging Tool not found after installation"
+          exit 1
+        }
+
+    - name: Convert MSI to MSIX
+      run: |
+        $msiPath = "${{ steps.find-msi.outputs.msi_path }}"
+        $msiName = "${{ steps.find-msi.outputs.msi_name }}"
+        $msixName = $msiName -replace '\.msi$', '.msix'
+        $toolPath = $env:MSIX_TOOL_PATH
+
+        Write-Host "Converting $msiPath to $msixName"
+
+        # Create conversion template XML
+        $template = @"
+        <?xml version="1.0" encoding="utf-8"?>
+        <MsixPackagingToolTemplate
+            xmlns="http://schemas.microsoft.com/msix/packagingtool/template/2018">
+          <Installer Path="$msiPath" />
+          <SaveLocation Path="$PWD\$msixName" />
+          <PackageInformation>
+            <PackageName>com.hjoncour.clip-downloader</PackageName>
+            <PackageDisplayName>ClipDownloader</PackageDisplayName>
+            <PublisherName>CN=hjoncour</PublisherName>
+            <PublisherDisplayName>hjoncour</PublisherDisplayName>
+            <Version>0.1.0.0</Version>
+            <Description>App to download content from YouTube, TikTok, Instagram, Pinterest</Description>
+          </PackageInformation>
+          <Capabilities>
+            <Capability Name="internetClient" />
+            <Capability Name="documentsLibrary" />
+          </Capabilities>
+        </MsixPackagingToolTemplate>
+        "@
+
+        $template | Out-File -FilePath "conversion-template.xml" -Encoding UTF8
+        Write-Host "Created conversion template"
+
+        # Run MSIX Packaging Tool in command line mode
+        Write-Host "Running MSIX Packaging Tool..."
+        & $toolPath /ct conversion-template.xml /v
+
+        # Check if MSIX was created
+        if (Test-Path $msixName) {
+          Write-Host "MSIX created successfully: $msixName"
+          Get-Item $msixName
+        } else {
+          Write-Error "MSIX creation failed"
+          Get-ChildItem -Path "." -Filter "*.log" | ForEach-Object { Get-Content $_.FullName }
+          exit 1
+        }
+
+    - name: Upload MSIX artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: clip-downloader-msix
+        path: |
+          *.msix
+          conversion.log
+        retention-days: 30
+
+    - name: Upload MSI artifact (backup)
+      uses: actions/upload-artifact@v4
+      with:
+        name: clip-downloader-msi
+        path: src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi
+        retention-days: 30
