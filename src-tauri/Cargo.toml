@@ -2,7 +2,7 @@
 name = "clip-downloader"
 version = "0.1.0"
 description = "A Tauri App"
-authors = ["you"]
+authors = ["ClipScraper"]
 license = ""
 repository = ""
 edition = "2021"

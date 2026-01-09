@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Fragment>
+    <!-- Properties to suppress Add/Remove Programs options -->
+    <Property Id="ARPNOMODIFY" Value="1" />
+    <Property Id="ARPNOREPAIR" Value="1" />
+
+    <!-- Set UI level to silent (2 = Silent, 3 = Basic UI, 5 = Full UI) -->
+    <Property Id="UILevel" Value="2" />
+  </Fragment>
+</Wix>

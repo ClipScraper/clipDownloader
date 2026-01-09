@@ -17,7 +17,7 @@ jobs:
   cert_check:
     # Run only on PR branch pushes when the latest commit message contains this flag
     if: ${{ contains(github.event.head_commit.message, '[apple-cert-check]') }}
-    runs-on: macos-14
+    runs-on: macos-15
 
     env:
       KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
