@@ -280,6 +280,20 @@ jobs:
             sign_in_place "$RES_DIR/$f"
           done
 
+      - name: Set WASM_BINDGEN_PATH (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          if command -v wasm-bindgen &> /dev/null; then
+            echo "WASM_BINDGEN_PATH=$(which wasm-bindgen)" >> $GITHUB_ENV
+          fi
+
+      - name: Set WASM_BINDGEN_PATH (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $wb = Get-Command wasm-bindgen -ErrorAction SilentlyContinue
+          if ($wb) { "WASM_BINDGEN_PATH=$($wb.Source)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8 }
+
       - name: Build frontend (Trunk)
         run: trunk build --release
 

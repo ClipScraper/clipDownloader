@@ -73,7 +73,9 @@ pub fn home_page(props: &Props) -> Html {
                     Progress {
                         id: i64,
                         progress: f32,
+                        #[allow(dead_code)]
                         downloaded_bytes: u64,
+                        #[allow(dead_code)]
                         total_bytes: Option<u64>,
                     },
                     Message {

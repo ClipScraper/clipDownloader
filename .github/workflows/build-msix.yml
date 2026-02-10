@@ -134,13 +134,11 @@ jobs:
         }
       shell: pwsh
 
-    # -------------------- NEW: Azure login using GitHub secret --------------------
     - name: Azure Login (uses AZURE_CREDENTIALS secret)
       uses: azure/login@v2
       with:
         creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-    # -------------------- NEW: Sign MSIX using Key Vault certificate --------------------
     - name: Install AzureSignTool
       run: dotnet tool install --global AzureSignTool
 
