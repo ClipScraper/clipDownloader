@@ -41,12 +41,15 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ (matrix.platform == 'macos-latest' || matrix.platform == 'macos-15') && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+          targets: ${{ (matrix.platform == 'macos-latest' || matrix.platform == 'macos-15') && 'aarch64-apple-darwin,x86_64-apple-darwin,wasm32-unknown-unknown' || 'wasm32-unknown-unknown' }}
 
       - name: Rust cache
         uses: swatinem/rust-cache@v2
         with:
           workspaces: './src-tauri -> target'
+
+      - name: Install trunk
+        run: cargo install trunk
 
       - name: Install Python for sidecars (Windows/macOS)
         if: matrix.platform != 'ubuntu-22.04'
@@ -56,12 +59,16 @@ jobs:
 
       - name: Prepare sidecars (Windows)
         if: matrix.platform == 'windows-latest'
-        run: .\run.ps1
+        run: .\run.ps1 -SidecarsOnly
         shell: pwsh
 
       - name: Prepare sidecars (macOS)
         if: matrix.platform == 'macos-latest' || matrix.platform == 'macos-15'
-        run: ./run.sh
+        run: ./run.sh --install-dependencies --sidecars-only
+
+      - name: Prepare sidecars (Linux)
+        if: matrix.platform == 'ubuntu-22.04'
+        run: ./run.sh --install-dependencies --sidecars-only
 
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
