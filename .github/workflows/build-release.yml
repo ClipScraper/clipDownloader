@@ -15,12 +15,16 @@ jobs:
         include:
           - platform: 'macos-latest'
             args: '--target aarch64-apple-darwin'
+            target: 'aarch64-apple-darwin'
           - platform: 'macos-15'
             args: '--target x86_64-apple-darwin'
+            target: 'x86_64-apple-darwin'
           - platform: 'ubuntu-22.04'
             args: ''
+            target: ''
           - platform: 'windows-latest'
             args: '--target x86_64-pc-windows-msvc'
+            target: 'x86_64-pc-windows-msvc'
 
     runs-on: ${{ matrix.platform }}
     steps:
@@ -41,12 +45,15 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ (matrix.platform == 'macos-latest' || matrix.platform == 'macos-15') && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+          targets: ${{ (matrix.platform == 'macos-latest' || matrix.platform == 'macos-15') && 'aarch64-apple-darwin,x86_64-apple-darwin,wasm32-unknown-unknown' || 'wasm32-unknown-unknown' }}
 
       - name: Rust cache
         uses: swatinem/rust-cache@v2
         with:
-          workspaces: './src-tauri -> target'
+          workspaces: '. -> target'
+
+      - name: Install trunk
+        run: cargo install trunk
 
       - name: Install Python for sidecars (Windows/macOS)
         if: matrix.platform != 'ubuntu-22.04'
@@ -56,12 +63,16 @@ jobs:
 
       - name: Prepare sidecars (Windows)
         if: matrix.platform == 'windows-latest'
-        run: .\run.ps1
+        run: .\run.ps1 -SidecarsOnly
         shell: pwsh
 
       - name: Prepare sidecars (macOS)
         if: matrix.platform == 'macos-latest' || matrix.platform == 'macos-15'
-        run: ./run.sh
+        run: ./run.sh --install-dependencies --sidecars-only --target ${{ matrix.target }}
+
+      - name: Prepare sidecars (Linux)
+        if: matrix.platform == 'ubuntu-22.04'
+        run: ./run.sh --install-dependencies --sidecars-only
 
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
@@ -76,5 +87,5 @@ jobs:
         with:
           name: clip-downloader-msi-windows
           path: |
-            src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi
+            target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi
           retention-days: 30

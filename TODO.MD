@@ -3,7 +3,6 @@ PRIORITY:
 - button options mp4/mp3 for bulk download
 - sync dl/library (lag in bulk dl)
 ---------
-- implement use of local libraries instead
 
 - handle errors
 - get collections from extension

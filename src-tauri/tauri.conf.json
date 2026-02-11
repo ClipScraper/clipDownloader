@@ -49,7 +49,7 @@
         "entitlements": "macos/entitlements.plist"
       },
       "windows": {
-        "wix": null
+        "wix": {}
       }
     }
 }

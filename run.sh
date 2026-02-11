@@ -41,7 +41,7 @@ ensure_resources_placeholder() {
 
 init_sidecars() {
   local os="$(uname -s || echo Unknown)"
-  local triple="$(rustc -vV | sed -n 's/^host: //p')"
+  local triple="${TARGET_TRIPLE:-$(rustc -vV | sed -n 's/^host: //p')}"
   local bin_dir="src-tauri/binaries"
   local res_dir="src-tauri/resources"
   mkdir -p "$bin_dir" "$res_dir"
@@ -219,13 +219,17 @@ init_platform_config
 
 # Parse args: --install-dependencies toggles sidecar bootstrap
 INSTALL_DEPS=0
+SIDECARS_ONLY=0
+TARGET_TRIPLE=""
 FORWARD_ARGS=()
-for a in "$@"; do
-  if [[ "$a" == "--install-dependencies" ]]; then
-    INSTALL_DEPS=1
-  else
-    FORWARD_ARGS+=("$a")
-  fi
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --install-dependencies) INSTALL_DEPS=1 ;;
+    --sidecars-only) SIDECARS_ONLY=1 ;;
+    --target) TARGET_TRIPLE="$2"; shift ;;
+    *) FORWARD_ARGS+=("$1") ;;
+  esac
+  shift
 done
 
 if [[ "$INSTALL_DEPS" -eq 1 ]]; then
@@ -233,6 +237,11 @@ if [[ "$INSTALL_DEPS" -eq 1 ]]; then
 else
   echo "➡️  Skipping dependency/sidecar installation (pass --install-dependencies to fetch)."
   ensure_resources_placeholder
+fi
+
+if [[ "$SIDECARS_ONLY" -eq 1 ]]; then
+  echo "Sidecars prepared (CI mode)."
+  exit 0
 fi
 
 # Rebuild positional parameters without the special flag and exec cargo
