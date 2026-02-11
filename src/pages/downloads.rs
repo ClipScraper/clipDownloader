@@ -9,6 +9,7 @@ extern "C" {
     #[wasm_bindgen(js_namespace = ["window", "__TAURI__", "core"])]
     async fn invoke(cmd: &str, args: JsValue) -> JsValue;
 }
+#[allow(dead_code)]
 fn toggle_icon_for_row(row: &ClipRow) -> IconId {
     // If row carries explicit output_format, prefer showing music icon for audio
     if let Some(fmt) = &row.output_format {
@@ -159,7 +160,7 @@ pub fn downloads_page(props: &Props) -> Html {
         let cb = props.on_toggle_pause.clone();
         Callback::from(move |_e: MouseEvent| cb.emit(()))
     };
-    let on_toggle_pause_click_row = {
+    let _on_toggle_pause_click_row = {
         let cb = props.on_toggle_pause.clone();
         Callback::from(move |_e: MouseEvent| cb.emit(()))
     };
