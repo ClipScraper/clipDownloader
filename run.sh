@@ -219,10 +219,13 @@ init_platform_config
 
 # Parse args: --install-dependencies toggles sidecar bootstrap
 INSTALL_DEPS=0
+SIDECARS_ONLY=0
 FORWARD_ARGS=()
 for a in "$@"; do
   if [[ "$a" == "--install-dependencies" ]]; then
     INSTALL_DEPS=1
+  elif [[ "$a" == "--sidecars-only" ]]; then
+    SIDECARS_ONLY=1
   else
     FORWARD_ARGS+=("$a")
   fi
@@ -233,6 +236,11 @@ if [[ "$INSTALL_DEPS" -eq 1 ]]; then
 else
   echo "➡️  Skipping dependency/sidecar installation (pass --install-dependencies to fetch)."
   ensure_resources_placeholder
+fi
+
+if [[ "$SIDECARS_ONLY" -eq 1 ]]; then
+  echo "Sidecars prepared (CI mode)."
+  exit 0
 fi
 
 # Rebuild positional parameters without the special flag and exec cargo

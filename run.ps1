@@ -1,4 +1,7 @@
 #Requires -Version 5
+param(
+  [switch]$SidecarsOnly
+)
 $ErrorActionPreference = "Stop"
 Set-Location -LiteralPath $PSScriptRoot
 
@@ -39,10 +42,11 @@ function Init-Sidecars {
     Write-Host "  • building gallery-dl onefile (requires Python)"
     & py -3 -m pip install --upgrade pip | Out-Null
     & py -3 -m pip install gallery-dl pyinstaller | Out-Null
-    $main = py -3 - <<'PY'
+    $pyCode = @"
 import gallery_dl, os
 print(os.path.join(os.path.dirname(gallery_dl.__file__), "__main__.py"))
-PY
+"@
+    $main = $pyCode | py -3 -
     $main = $main.Trim()
     & py -3 -m PyInstaller -F -n gallery-dl "$main" | Out-Null
     Move-Item "dist\gallery-dl.exe" "$binDir\gallery-dl-$triple.exe" -Force
@@ -72,6 +76,11 @@ function Init-Config {
 
 Init-Config
 Init-Sidecars
+
+if ($SidecarsOnly) {
+  Write-Host "Sidecars prepared (CI mode)."
+  exit 0
+}
 
 # Run tauri dev (trunk serve will be run by beforeDevCommand)
 cargo tauri dev -- $args
