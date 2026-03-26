@@ -99,6 +99,18 @@ pub async fn import_csv_text(csv_text: String) -> Result<u64, String> {
             }
         }
 
+        // Normalize empty handles to "Unknown" so the UI queue callback
+        // (which displays "Unknown") matches the stored value.
+        if handle.trim().is_empty() {
+            handle = "Unknown".into();
+        }
+
+        let platform_token = format!("{:?}", platform).to_lowercase();
+        let origin_token = format!("{:?}", origin).to_lowercase();
+        if db.link_exists_in_collection(&link, &platform_token, &handle, &origin_token).unwrap_or(false) {
+            continue;
+        }
+
         let download = crate::database::Download {
             id: None,
             platform,

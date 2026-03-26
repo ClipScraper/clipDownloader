@@ -32,3 +32,6 @@ fix color buttons on windows
 
 
 - when using local dependencies instead of sidecar, download page blinks/refreshes?
+
+
+number of parallel downloads: I update it to 10, goes back to 3

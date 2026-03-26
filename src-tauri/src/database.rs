@@ -650,6 +650,19 @@ impl Database {
         mark_id_done_conn(&self.conn, id, path)
     }
 
+    pub fn link_exists_in_collection(&self, link: &str, platform: &str, user_handle: &str, origin: &str) -> Result<bool> {
+        let mut stmt = self.conn.prepare(
+            "SELECT 1 FROM downloads
+              WHERE link      = ?1
+                AND platform  = ?2 COLLATE NOCASE
+                AND (user_handle = ?3 COLLATE NOCASE OR (?3 = 'Unknown' AND (user_handle = '' OR user_handle IS NULL)))
+                AND origin    = ?4 COLLATE NOCASE
+              LIMIT 1",
+        )?;
+        let exists = stmt.query([link, platform, user_handle, origin])?.next()?.is_some();
+        Ok(exists)
+    }
+
     pub fn find_id_by_link(&self, link: &str) -> Result<Option<i64>> {
         let mut stmt = self
             .conn

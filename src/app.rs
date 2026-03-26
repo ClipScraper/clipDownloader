@@ -533,6 +533,36 @@ pub fn app() -> Html {
         });
     }
 
+    {
+        let downloads = downloads.clone();
+        use_effect_with((), move |_| {
+            spawn_local(async move {
+                let handler = Closure::<dyn FnMut(JsValue)>::new(move |_event: JsValue| {
+                    web_sys::console::log_1(&"[UI] import_completed event received, refreshing downloads".into());
+                    let downloads_ref = downloads.clone();
+                    spawn_local(async move {
+                        if let Ok(js) = invoke("list_downloads", JsValue::NULL).await {
+                            if let Ok(rows) = serde_wasm_bindgen::from_value::<Vec<ClipRow>>(js) {
+                                use std::collections::HashMap;
+                                let mut fresh: HashMap<i64, DownloadEntry> = HashMap::new();
+                                for row in rows {
+                                    if matches!(row.status, DownloadStatus::Done | DownloadStatus::Error | DownloadStatus::Canceled) {
+                                        continue;
+                                    }
+                                    fresh.insert(row.id, DownloadEntry { row, progress: 0.0, downloaded_bytes: 0, total_bytes: None });
+                                }
+                                downloads_ref.set(fresh);
+                            }
+                        }
+                    });
+                });
+                let _ = listen("import_completed", &handler).await;
+                handler.forget();
+            });
+            || ()
+        });
+    }
+
     let on_toggle_pause = {
         let paused_state = paused.clone();
         Callback::from(move |_| {
