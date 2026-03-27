@@ -298,6 +298,10 @@ pub fn app() -> Html {
     {
         let downloads = downloads.clone();
         use_effect_with((), move |_| {
+            // Track whether a debounced refresh is already scheduled so we
+            // don't fire hundreds of concurrent list_downloads calls.
+            let refresh_pending = std::rc::Rc::new(std::cell::Cell::new(false));
+
             spawn_local(async move {
                 #[derive(serde::Deserialize, Debug)]
                 #[serde(tag = "type")]
@@ -322,171 +326,43 @@ pub fn app() -> Html {
                         .unwrap_or(event.clone());
                     if let Ok(evt) = serde_wasm_bindgen::from_value::<DownloadEventPayload>(payload)
                     {
-                        // Debug: echo raw event to console
-                        web_sys::console::log_1(&format!("[UI] download_event {:?}", evt).into());
                         let mut map = (*downloads).clone();
                         match evt {
                             DownloadEventPayload::StatusChanged { id, status } => {
-                                // Terminal state: drop from local map and hard-refresh from DB for correctness
                                 if matches!(
                                     status,
                                     DownloadStatus::Done
                                         | DownloadStatus::Error
                                         | DownloadStatus::Canceled
                                 ) {
-                                    let had = map.remove(&id).is_some();
-                                    web_sys::console::log_1(
-                                        &format!(
-                                            "[UI] StatusChanged => terminal; removed id={} present_before={} remaining={}",
-                                            id,
-                                            had,
-                                            map.len()
-                                        )
-                                        .into(),
-                                    );
+                                    map.remove(&id);
                                     downloads.set(map);
-                                    // Refresh from DB to ensure UI is fully in sync
-                                    let downloads_ref = downloads.clone();
-                                    wasm_bindgen_futures::spawn_local(async move {
-                                        if let Ok(js) = invoke("list_downloads", JsValue::NULL).await {
-                                            if let Ok(rows) =
-                                                serde_wasm_bindgen::from_value::<Vec<ClipRow>>(js)
-                                            {
-                                                use std::collections::HashMap;
-                                                let mut fresh: HashMap<i64, DownloadEntry> =
-                                                    HashMap::new();
-                                                let mut cnt = 0usize;
-                                                for row in rows {
-                                                    if matches!(
-                                                        row.status,
-                                                        DownloadStatus::Done
-                                                            | DownloadStatus::Error
-                                                            | DownloadStatus::Canceled
-                                                    ) {
-                                                        continue;
-                                                    }
-                                                    cnt += 1;
-                                                    fresh.insert(
-                                                        row.id,
-                                                        DownloadEntry {
-                                                            row,
-                                                            progress: 0.0,
-                                                            downloaded_bytes: 0,
-                                                            total_bytes: None,
-                                                        },
-                                                    );
-                                                }
-                                                web_sys::console::log_1(
-                                                    &format!(
-                                                        "[UI] post-refresh list_downloads active_count={}",
-                                                        cnt
-                                                    )
-                                                    .into(),
-                                                );
-                                                downloads_ref.set(fresh);
-                                            }
-                                        }
-                                    });
+                                } else if let Some(entry) = map.get_mut(&id) {
+                                    entry.row.status = status;
+                                    downloads.set(map);
                                 } else {
-                                    if let Some(entry) = map.get_mut(&id) {
-                                        entry.row.status = status;
-                                        web_sys::console::log_1(
-                                            &format!(
-                                                "[UI] StatusChanged => non-terminal; id={} status={:?}",
-                                                id, status
-                                            )
-                                            .into(),
-                                        );
-                                        downloads.set(map);
-                                        // Also refresh to pick up any other rows that may have transitioned
+                                    // Unknown ID — schedule a single debounced refresh
+                                    if !refresh_pending.get() {
+                                        refresh_pending.set(true);
                                         let downloads_ref = downloads.clone();
+                                        let flag = refresh_pending.clone();
                                         wasm_bindgen_futures::spawn_local(async move {
-                                            if let Ok(js) =
-                                                invoke("list_downloads", JsValue::NULL).await
-                                            {
-                                                if let Ok(rows) =
-                                                    serde_wasm_bindgen::from_value::<Vec<ClipRow>>(
-                                                        js,
-                                                    )
-                                                {
-                                                    use std::collections::HashMap;
-                                                    let mut fresh: HashMap<i64, DownloadEntry> =
-                                                        HashMap::new();
+                                            // Small delay so multiple unknown-id events coalesce
+                                            gloo_timers::future::TimeoutFuture::new(500).await;
+                                            if let Ok(js) = invoke("list_downloads", JsValue::NULL).await {
+                                                if let Ok(rows) = serde_wasm_bindgen::from_value::<Vec<ClipRow>>(js) {
+                                                    let current = (*downloads_ref).clone();
+                                                    let mut merged = current;
                                                     for row in rows {
-                                                        if matches!(
-                                                            row.status,
-                                                            DownloadStatus::Done
-                                                                | DownloadStatus::Error
-                                                                | DownloadStatus::Canceled
-                                                        ) {
+                                                        if matches!(row.status, DownloadStatus::Done | DownloadStatus::Error | DownloadStatus::Canceled) {
                                                             continue;
                                                         }
-                                                        fresh.insert(
-                                                            row.id,
-                                                            DownloadEntry {
-                                                                row,
-                                                                progress: 0.0,
-                                                                downloaded_bytes: 0,
-                                                                total_bytes: None,
-                                                            },
-                                                        );
+                                                        merged.entry(row.id).or_insert_with(|| DownloadEntry { row, progress: 0.0, downloaded_bytes: 0, total_bytes: None });
                                                     }
-                                                    downloads_ref.set(fresh);
+                                                    downloads_ref.set(merged);
                                                 }
                                             }
-                                        });
-                                    } else {
-                                        log::info(
-                                            "download_event_unknown",
-                                            serde_json::json!({ "id": id, "status": format!("{:?}", status) }),
-                                        );
-                                        web_sys::console::log_1(
-                                            &format!(
-                                                "[UI] StatusChanged for unknown id={}, ignoring",
-                                                id
-                                            )
-                                            .into(),
-                                        );
-                                        // Fallback: fetch fresh snapshot so we can include this id
-                                        let downloads_ref = downloads.clone();
-                                        wasm_bindgen_futures::spawn_local(async move {
-                                            if let Ok(js) =
-                                                invoke("list_downloads", JsValue::NULL).await
-                                            {
-                                                if let Ok(rows) =
-                                                    serde_wasm_bindgen::from_value::<Vec<ClipRow>>(
-                                                        js,
-                                                    )
-                                                {
-                                                    use std::collections::HashMap;
-                                                    let mut fresh: HashMap<i64, DownloadEntry> =
-                                                        HashMap::new();
-                                                    for row in rows {
-                                                        if matches!(
-                                                            row.status,
-                                                            DownloadStatus::Done
-                                                                | DownloadStatus::Error
-                                                                | DownloadStatus::Canceled
-                                                        ) {
-                                                            continue;
-                                                        }
-                                                        fresh.insert(
-                                                            row.id,
-                                                            DownloadEntry {
-                                                                row,
-                                                                progress: 0.0,
-                                                                downloaded_bytes: 0,
-                                                                total_bytes: None,
-                                                            },
-                                                        );
-                                                    }
-                                                    web_sys::console::log_1(
-                                                        &"[UI] refreshed map after unknown id"
-                                                            .into(),
-                                                    );
-                                                    downloads_ref.set(fresh);
-                                                }
-                                            }
+                                            flag.set(false);
                                         });
                                     }
                                 }
@@ -501,16 +377,6 @@ pub fn app() -> Html {
                                     entry.progress = progress;
                                     entry.downloaded_bytes = downloaded_bytes;
                                     entry.total_bytes = total_bytes;
-                                    web_sys::console::log_1(
-                                        &format!(
-                                            "[UI] Progress id={} {:.0}% bytes={}/{:?}",
-                                            id,
-                                            progress * 100.0,
-                                            downloaded_bytes,
-                                            total_bytes
-                                        )
-                                        .into(),
-                                    );
                                     downloads.set(map);
                                 }
                             }
@@ -519,9 +385,7 @@ pub fn app() -> Html {
                                     "download_event_message",
                                     serde_json::json!({ "id": id, "message": message.clone() }),
                                 );
-                                web_sys::console::log_1(
-                                    &format!("[UI] Message id={} {}", id, message).into(),
-                                );
+                                let _ = (id, message); // suppress unused warnings
                             }
                         }
                     }
@@ -538,20 +402,19 @@ pub fn app() -> Html {
         use_effect_with((), move |_| {
             spawn_local(async move {
                 let handler = Closure::<dyn FnMut(JsValue)>::new(move |_event: JsValue| {
-                    web_sys::console::log_1(&"[UI] import_completed event received, refreshing downloads".into());
+                    web_sys::console::log_1(&"[UI] import_completed event received, merging new downloads".into());
                     let downloads_ref = downloads.clone();
                     spawn_local(async move {
                         if let Ok(js) = invoke("list_downloads", JsValue::NULL).await {
                             if let Ok(rows) = serde_wasm_bindgen::from_value::<Vec<ClipRow>>(js) {
-                                use std::collections::HashMap;
-                                let mut fresh: HashMap<i64, DownloadEntry> = HashMap::new();
+                                let mut merged = (*downloads_ref).clone();
                                 for row in rows {
                                     if matches!(row.status, DownloadStatus::Done | DownloadStatus::Error | DownloadStatus::Canceled) {
                                         continue;
                                     }
-                                    fresh.insert(row.id, DownloadEntry { row, progress: 0.0, downloaded_bytes: 0, total_bytes: None });
+                                    merged.entry(row.id).or_insert_with(|| DownloadEntry { row, progress: 0.0, downloaded_bytes: 0, total_bytes: None });
                                 }
-                                downloads_ref.set(fresh);
+                                downloads_ref.set(merged);
                             }
                         }
                     });
