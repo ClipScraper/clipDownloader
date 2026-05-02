@@ -47,6 +47,10 @@ fn init_schema(conn: &Connection) -> Result<()> {
             "create_new",
         ],
     )?;
+
+    // Legacy builds persisted queued rows as "queue". Normalize them so
+    // frontend and backend codepaths do not disagree about visibility/mutations.
+    conn.execute("UPDATE downloads SET status='queued' WHERE status='queue'", [])?;
     Ok(())
 }
 
@@ -99,9 +103,26 @@ pub fn set_status_by_id_conn(conn: &Connection, id: i64, status: DownloadStatus)
 /// Reset any rows that were left in 'downloading' (e.g. after a crash) back to 'queued'.
 /// Returns the number of rows updated.
 pub fn reset_stale_downloading_to_queued_conn(conn: &Connection) -> Result<usize> {
-    let updated =
-        conn.execute("UPDATE downloads SET status='queued' WHERE status='downloading'", [])?;
+    let updated = conn.execute(
+        "UPDATE downloads SET status='queued' WHERE status='downloading'",
+        [],
+    )?;
     Ok(updated)
+}
+
+pub fn list_queued_ids_conn(conn: &Connection) -> Result<Vec<i64>> {
+    let mut stmt = conn.prepare(
+        "SELECT id
+           FROM downloads
+          WHERE status IN ('queued', 'queue')
+          ORDER BY id",
+    )?;
+    let rows = stmt.query_map([], |row| row.get(0))?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row?);
+    }
+    Ok(out)
 }
 
 pub fn mark_id_done_conn(conn: &Connection, id: i64, path: &str) -> Result<usize> {
@@ -488,7 +509,7 @@ impl Database {
     /// Read the preferred output format for a link (first matching, priority queue/backlog). Returns "audio" | "video" | "default".
     pub fn output_format_for_link(&self, link: &str) -> Result<String> {
         let mut stmt = self.conn.prepare(
-            "SELECT output_format FROM downloads WHERE link=?1 ORDER BY CASE status WHEN 'queued' THEN 0 WHEN 'backlog' THEN 1 ELSE 2 END, id LIMIT 1"
+            "SELECT output_format FROM downloads WHERE link=?1 ORDER BY CASE status WHEN 'queued' THEN 0 WHEN 'queue' THEN 0 WHEN 'backlog' THEN 1 ELSE 2 END, id LIMIT 1"
         )?;
         let mut rows = stmt.query([link])?;
         if let Some(r) = rows.next()? {
@@ -503,7 +524,7 @@ impl Database {
     pub fn toggle_output_format_for_link(&self, link: &str) -> Result<usize> {
         // Find first matching row (any status); prefer queue/backlog
         let mut stmt = self.conn.prepare(
-            "SELECT id, output_format FROM downloads WHERE link=?1 ORDER BY CASE status WHEN 'queued' THEN 0 WHEN 'backlog' THEN 1 ELSE 2 END, id LIMIT 1"
+            "SELECT id, output_format FROM downloads WHERE link=?1 ORDER BY CASE status WHEN 'queued' THEN 0 WHEN 'queue' THEN 0 WHEN 'backlog' THEN 1 ELSE 2 END, id LIMIT 1"
         )?;
         let mut rows = stmt.query([link])?;
         if let Some(r) = rows.next()? {
@@ -527,7 +548,7 @@ impl Database {
     /// Explicitly set output_format for the row by link (first matching, priority queue/backlog).
     pub fn set_output_format_for_link(&self, link: &str, fmt: OutputFormat) -> Result<usize> {
         let mut stmt = self.conn.prepare(
-            "SELECT id FROM downloads WHERE link=?1 ORDER BY CASE status WHEN 'queued' THEN 0 WHEN 'backlog' THEN 1 ELSE 2 END, id LIMIT 1"
+            "SELECT id FROM downloads WHERE link=?1 ORDER BY CASE status WHEN 'queued' THEN 0 WHEN 'queue' THEN 0 WHEN 'backlog' THEN 1 ELSE 2 END, id LIMIT 1"
         )?;
         let mut rows = stmt.query([link])?;
         if let Some(r) = rows.next()? {
@@ -608,8 +629,8 @@ impl Database {
         // find oldest queued row (or backlog) whose normalized link matches
         let mut stmt = self.conn.prepare(
             "SELECT id, link FROM downloads 
-              WHERE status IN ('queued', 'backlog') 
-              ORDER BY CASE status WHEN 'queued' THEN 0 ELSE 1 END, id",
+              WHERE status IN ('queued', 'queue', 'backlog') 
+              ORDER BY CASE status WHEN 'queued' THEN 0 WHEN 'queue' THEN 0 ELSE 1 END, id",
         )?;
         let mut rows = stmt.query([])?;
         let mut target_id: Option<i64> = None;
@@ -630,7 +651,7 @@ impl Database {
         } else {
             // fallback: strict equality
             let n = self.conn.execute(
-                "UPDATE downloads SET status='done', path=?2, date_downloaded=?3 WHERE link=?1 AND status='queued' LIMIT 1",
+                "UPDATE downloads SET status='done', path=?2, date_downloaded=?3 WHERE link=?1 AND status IN ('queued', 'queue') LIMIT 1",
                 [&link.to_string(), &path_value, &now],
             )?;
             if n == 0 {
@@ -648,6 +669,28 @@ impl Database {
 
     pub fn mark_id_done(&self, id: i64, path: &str) -> Result<usize> {
         mark_id_done_conn(&self.conn, id, path)
+    }
+
+    pub fn link_exists_in_collection(
+        &self,
+        link: &str,
+        platform: &str,
+        user_handle: &str,
+        origin: &str,
+    ) -> Result<bool> {
+        let mut stmt = self.conn.prepare(
+            "SELECT 1 FROM downloads
+              WHERE link      = ?1
+                AND platform  = ?2 COLLATE NOCASE
+                AND (user_handle = ?3 COLLATE NOCASE OR (?3 = 'Unknown' AND (user_handle = '' OR user_handle IS NULL)))
+                AND origin    = ?4 COLLATE NOCASE
+              LIMIT 1",
+        )?;
+        let exists = stmt
+            .query([link, platform, user_handle, origin])?
+            .next()?
+            .is_some();
+        Ok(exists)
     }
 
     pub fn find_id_by_link(&self, link: &str) -> Result<Option<i64>> {
@@ -673,6 +716,7 @@ impl Database {
                FROM downloads
               ORDER BY CASE status
                          WHEN 'queued' THEN 0
+                         WHEN 'queue' THEN 0
                          WHEN 'backlog' THEN 1
                          ELSE 2
                        END,
@@ -774,7 +818,7 @@ impl Database {
         let mut stmt = self.conn.prepare(
             "SELECT id, status, platform, user_handle, origin, media, link, name, output_format
              FROM downloads
-             WHERE status = 'queued'
+             WHERE status IN ('queued', 'queue')
              ORDER BY platform COLLATE NOCASE,
                       user_handle COLLATE NOCASE,
                       origin COLLATE NOCASE,
@@ -884,6 +928,7 @@ impl Database {
               ORDER BY CASE status
                          WHEN 'downloading' THEN 0
                          WHEN 'queued' THEN 1
+                         WHEN 'queue' THEN 1
                          WHEN 'backlog' THEN 2
                          WHEN 'done' THEN 3
                          WHEN 'error' THEN 4
@@ -982,7 +1027,7 @@ impl Database {
     /// Move a single link from queue back to backlog.
     pub fn move_link_to_backlog(&self, link: &str) -> Result<usize> {
         let n = self.conn.execute(
-            "UPDATE downloads SET status='backlog' WHERE link=?1 AND status='queued'",
+            "UPDATE downloads SET status='backlog' WHERE link=?1 AND status IN ('queued', 'queue')",
             [link],
         )?;
         Ok(n)
@@ -1001,7 +1046,7 @@ impl Database {
              WHERE platform    = ?1 COLLATE NOCASE
                AND (user_handle = ?2 COLLATE NOCASE OR (?2 = 'Unknown' AND (user_handle = '' OR user_handle IS NULL)))
                AND origin      = ?3 COLLATE NOCASE
-               AND status      = 'queued'",
+               AND status IN ('queued', 'queue')",
             [platform, handle, origin],
         )?;
         Ok(n)
@@ -1013,7 +1058,7 @@ impl Database {
             "UPDATE downloads
                SET status='backlog'
              WHERE platform = ?1 COLLATE NOCASE
-               AND status   = 'queued'",
+               AND status IN ('queued', 'queue')",
             [platform],
         )?;
         Ok(n)

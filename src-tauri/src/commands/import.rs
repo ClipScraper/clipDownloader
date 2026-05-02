@@ -11,10 +11,7 @@
 /// Returns the number of successfully imported rows.
 
 #[tauri::command]
-pub async fn import_csv_to_db(
-    csv_text: Option<String>,
-    csvText: Option<String>,
-) -> Result<u64, String> {
+pub async fn import_csv_to_db(csv_text: Option<String>, csvText: Option<String>) -> Result<u64, String> {
     // Accept both snake_case and camelCase keys from JS.
     let csv_text = csv_text
         .or(csvText)
@@ -97,6 +94,18 @@ pub async fn import_csv_text(csv_text: String) -> Result<u64, String> {
             if let (Some(h), _) = super::parse::ig_handle_and_id(&link) {
                 handle = h;
             }
+        }
+
+        // Normalize empty handles to "Unknown" so the UI queue callback
+        // (which displays "Unknown") matches the stored value.
+        if handle.trim().is_empty() {
+            handle = "Unknown".into();
+        }
+
+        let platform_token = format!("{:?}", platform).to_lowercase();
+        let origin_token = format!("{:?}", origin).to_lowercase();
+        if db.link_exists_in_collection(&link, &platform_token, &handle, &origin_token).unwrap_or(false) {
+            continue;
         }
 
         let download = crate::database::Download {
