@@ -149,8 +149,7 @@ pub fn home_page(props: &Props) -> Html {
                 let val = invoke("load_settings", JsValue::NULL).await;
                 if let Ok(js) = val {
                     if let Ok(s) = serde_wasm_bindgen::from_value::<LoadedSettings>(js) {
-                        if s
-                            .default_output
+                        if s.default_output
                             .as_deref()
                             .map(|v| v.eq_ignore_ascii_case("audio"))
                             .unwrap_or(false)

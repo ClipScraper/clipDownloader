@@ -11,10 +11,7 @@
 /// Returns the number of successfully imported rows.
 
 #[tauri::command]
-pub async fn import_csv_to_db(
-    csv_text: Option<String>,
-    csvText: Option<String>,
-) -> Result<u64, String> {
+pub async fn import_csv_to_db(csv_text: Option<String>, csvText: Option<String>) -> Result<u64, String> {
     // Accept both snake_case and camelCase keys from JS.
     let csv_text = csv_text
         .or(csvText)

@@ -29,7 +29,34 @@ fn last_two_path_segments(url: &str) -> String {
     }
 }
 fn item_label_for_row(row: &ClipRow) -> String {
-    last_two_path_segments(&row.link)
+    let link = row.link.trim();
+    let platform = platform_str(&row.platform);
+    if platform == "instagram" {
+        let tail = url_after_domain(link);
+        let mut parts = tail.split('/').filter(|s| !s.is_empty());
+        let _maybe_user = parts.next().unwrap_or_default();
+        let b = parts.next().unwrap_or_default();
+        let c = parts.next().unwrap_or_default();
+        if (b == "p" || b == "reel") && !c.is_empty() {
+            format!("{b}/{c}")
+        } else {
+            last_two_path_segments(link)
+        }
+    } else if platform == "tiktok" {
+        let tail = url_after_domain(link);
+        let pieces: Vec<&str> = tail.split('/').filter(|s| !s.is_empty()).collect();
+        if let Some(pos) = pieces.iter().position(|p| *p == "photo" || *p == "video") {
+            if pos + 1 < pieces.len() {
+                format!("{}/{}", pieces[pos], pieces[pos + 1])
+            } else {
+                last_two_path_segments(link)
+            }
+        } else {
+            last_two_path_segments(link)
+        }
+    } else {
+        last_two_path_segments(link)
+    }
 }
 fn platform_icon_src(p: &str) -> &'static str {
     match p {

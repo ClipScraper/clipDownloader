@@ -28,6 +28,7 @@ pub struct Props {
     pub backlog: Vec<ClipRow>,
     pub queue: Vec<ClipRow>,
     pub active: Vec<ActiveDownload>,
+    pub loading: bool,
     pub paused: bool,
     pub on_toggle_pause: Callback<()>,
     pub on_delete: Callback<DeleteItem>,
@@ -151,6 +152,8 @@ fn platform_icon_src(p: &str) -> &'static str {
 /* ───────────────────────── component ───────────────────────── */
 #[function_component(DownloadsPage)]
 pub fn downloads_page(props: &Props) -> Html {
+    let has_any_rows =
+        !props.active.is_empty() || !props.queue.is_empty() || !props.backlog.is_empty();
     let expanded_platforms = use_state(|| std::collections::HashSet::<String>::new());
     let expanded_collections = use_state(|| std::collections::HashSet::<String>::new());
     // Local overrides so icon flips instantly on click (DB persists separately)
@@ -179,10 +182,7 @@ pub fn downloads_page(props: &Props) -> Html {
             let section_id = title.to_lowercase(); // "backlog" or "queue"
 
             // platform -> (handle, type, Platform, ContentType) -> rows
-            let mut map: BTreeMap<
-                String,
-                BTreeMap<(String, String, Platform, ContentType), Vec<ClipRow>>,
-            > = BTreeMap::new();
+            let mut map: BTreeMap<String, BTreeMap<(String, String, Platform, ContentType), Vec<ClipRow>>> = BTreeMap::new();
 
             // De-dupe by (platform, handle, type, link) within this section
             let mut seen = HashSet::<String>::new();
@@ -194,22 +194,12 @@ pub fn downloads_page(props: &Props) -> Html {
                 let plat = platform_str(&r.platform).to_string();
                 let typ = content_type_str(&r.content_type).to_string();
 
-                let dedup_key = format!(
-                    "{}|{}|{}|{}",
-                    plat,
-                    r.handle.to_lowercase().trim(),
-                    typ,
-                    r.link.trim()
-                );
+                let dedup_key = format!("{}|{}|{}|{}", plat, r.handle.to_lowercase().trim(), typ, r.link.trim());
                 if !seen.insert(dedup_key) {
                     continue;
                 }
 
-                map.entry(plat)
-                    .or_default()
-                    .entry((r.handle.clone(), typ, r.platform, r.content_type))
-                    .or_default()
-                    .push(r);
+                map.entry(plat).or_default().entry((r.handle.clone(), typ, r.platform, r.content_type)).or_default().push(r);
             }
 
             html! {
@@ -414,8 +404,8 @@ pub fn downloads_page(props: &Props) -> Html {
                                                                 <div class="item-left">
                                                                     <span class="item-title">{ format!("{} | {}", handle, typ_str) }</span>
                                                                 </div>
-                                                                <div class="item-right">
-                                                                    <span>{ format!("{} bookmarks", rows.len()) }</span>
+                                                                    <div class="item-right">
+                                                                    <span>{ format!("{} items", rows.len()) }</span>
                                                                     <button class="icon-btn" type_="button" title="Delete" onclick={on_delete_collection}>
                                                                         <Icon icon_id={IconId::LucideTrash2} width={"18"} height={"18"} />
                                                                     </button>
@@ -548,7 +538,7 @@ pub fn downloads_page(props: &Props) -> Html {
                                                 <span class="item-title">{ plat_label.clone() }</span>
                                             </div>
                                             <div class="item-right">
-                                                <span>{ format!("{} collections | {} bookmarks", collections_count, bookmarks_count) }</span>
+                                                <span>{ format!("{} collections | {} items", collections_count, bookmarks_count) }</span>
                                                 <button class="icon-btn" type_="button" title="Delete" onclick={on_delete_platform}>
                                                     <Icon icon_id={IconId::LucideTrash2} width={"18"} height={"18"} />
                                                 </button>
@@ -589,6 +579,18 @@ pub fn downloads_page(props: &Props) -> Html {
                     }
                 </button>
             </div>
+
+            {
+                if props.loading && !has_any_rows {
+                    html! {
+                        <div class="summary">
+                            <p style="margin: 0 0 8px 16px; opacity: 0.85;">{"Loading downloads..."}</p>
+                        </div>
+                    }
+                } else {
+                    html! {}
+                }
+            }
 
             {
                 if !props.active.is_empty() {
