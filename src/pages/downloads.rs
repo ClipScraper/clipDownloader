@@ -27,6 +27,7 @@ fn toggle_icon_for_row(row: &ClipRow) -> IconId {
 pub struct Props {
     pub backlog: Vec<ClipRow>,
     pub queue: Vec<ClipRow>,
+    pub issues: Vec<ClipRow>,
     pub active: Vec<ActiveDownload>,
     pub loading: bool,
     pub paused: bool,
@@ -34,12 +35,14 @@ pub struct Props {
     pub on_delete: Callback<DeleteItem>,
     pub on_move_to_queue: Callback<MoveItem>,
     pub on_move_to_backlog: Callback<crate::app::MoveBackItem>,
+    pub on_retry_issue: Callback<i64>,
 }
 
 #[derive(Clone, PartialEq)]
 pub struct ActiveDownload {
     pub row: ClipRow,
-    pub progress: String, // ignored in UI per requirements
+    pub progress: Option<String>,
+    pub stage: String,
 }
 
 /* ───────────────────────── label helpers ───────────────────────── */
@@ -152,8 +155,10 @@ fn platform_icon_src(p: &str) -> &'static str {
 /* ───────────────────────── component ───────────────────────── */
 #[function_component(DownloadsPage)]
 pub fn downloads_page(props: &Props) -> Html {
-    let has_any_rows =
-        !props.active.is_empty() || !props.queue.is_empty() || !props.backlog.is_empty();
+    let has_any_rows = !props.active.is_empty()
+        || !props.queue.is_empty()
+        || !props.backlog.is_empty()
+        || !props.issues.is_empty();
     let expanded_platforms = use_state(|| std::collections::HashSet::<String>::new());
     let expanded_collections = use_state(|| std::collections::HashSet::<String>::new());
     // Local overrides so icon flips instantly on click (DB persists separately)
@@ -182,7 +187,10 @@ pub fn downloads_page(props: &Props) -> Html {
             let section_id = title.to_lowercase(); // "backlog" or "queue"
 
             // platform -> (handle, type, Platform, ContentType) -> rows
-            let mut map: BTreeMap<String, BTreeMap<(String, String, Platform, ContentType), Vec<ClipRow>>> = BTreeMap::new();
+            let mut map: BTreeMap<
+                String,
+                BTreeMap<(String, String, Platform, ContentType), Vec<ClipRow>>,
+            > = BTreeMap::new();
 
             // De-dupe by (platform, handle, type, link) within this section
             let mut seen = HashSet::<String>::new();
@@ -194,12 +202,22 @@ pub fn downloads_page(props: &Props) -> Html {
                 let plat = platform_str(&r.platform).to_string();
                 let typ = content_type_str(&r.content_type).to_string();
 
-                let dedup_key = format!("{}|{}|{}|{}", plat, r.handle.to_lowercase().trim(), typ, r.link.trim());
+                let dedup_key = format!(
+                    "{}|{}|{}|{}",
+                    plat,
+                    r.handle.to_lowercase().trim(),
+                    typ,
+                    r.link.trim()
+                );
                 if !seen.insert(dedup_key) {
                     continue;
                 }
 
-                map.entry(plat).or_default().entry((r.handle.clone(), typ, r.platform, r.content_type)).or_default().push(r);
+                map.entry(plat)
+                    .or_default()
+                    .entry((r.handle.clone(), typ, r.platform, r.content_type))
+                    .or_default()
+                    .push(r);
             }
 
             html! {
@@ -606,8 +624,15 @@ pub fn downloads_page(props: &Props) -> Html {
                                                     <img class="brand-icon" src={platform_icon_src(&plat_label)} />
                                                     <span class="link-text">{ collection_title(&active.row) }</span>
                                                     <span class="link-text" style="opacity:0.9;">{" - "}{ item_label_for_row(&active.row) }</span>
-                                                    <div class="row-actions">
-                                                        <span class="progress-text">{ &active.progress }</span>
+                                                    <div class="row-actions active-status">
+                                                        <span class="stage-text">{ &active.stage }</span>
+                                                        {
+                                                            if let Some(progress) = &active.progress {
+                                                                html! { <span class="progress-text">{ progress }</span> }
+                                                            } else {
+                                                                html! {}
+                                                            }
+                                                        }
                                                     </div>
                                                 </li>
                                             }
@@ -632,7 +657,95 @@ pub fn downloads_page(props: &Props) -> Html {
                 }
             }
 
-            { render_section(props.backlog.clone(), "Backlog", true) }
+            {
+                if !props.backlog.is_empty() {
+                    html! { render_section(props.backlog.clone(), "Backlog", true) }
+                } else {
+                    html! {}
+                }
+            }
+
+            {
+                if !props.issues.is_empty() {
+                    html! {
+                        <>
+                            <h2 style="margin: 24px 0 8px 16px;">{"Issues"}</h2>
+                            <div class="summary">
+                                <div class="rows-card no-indent">
+                                    <ul class="rows">
+                                        {
+                                            for props.issues.iter().map(|row| {
+                                                let plat_label = platform_str(&row.platform).to_string();
+                                                let row_for_delete = row.clone();
+                                                let row_for_backlog = row.clone();
+                                                let issue_id = row.id;
+                                                let on_delete = {
+                                                    let on_delete = props.on_delete.clone();
+                                                    let link = row_for_delete.link.clone();
+                                                    Callback::from(move |e: MouseEvent| {
+                                                        e.prevent_default();
+                                                        e.stop_propagation();
+                                                        let link_for_backend = link.clone();
+                                                        wasm_bindgen_futures::spawn_local(async move {
+                                                            let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "link": link_for_backend })).unwrap();
+                                                            let _ = invoke("delete_rows_by_link", args).await;
+                                                        });
+                                                        on_delete.emit(DeleteItem::Row(link.clone()));
+                                                    })
+                                                };
+                                                let on_backlog = {
+                                                    let on_move_back = props.on_move_to_backlog.clone();
+                                                    let link = row_for_backlog.link.clone();
+                                                    Callback::from(move |e: MouseEvent| {
+                                                        e.prevent_default();
+                                                        e.stop_propagation();
+                                                        on_move_back.emit(crate::app::MoveBackItem::Row(link.clone()));
+                                                    })
+                                                };
+                                                let on_retry = {
+                                                    let on_retry_issue = props.on_retry_issue.clone();
+                                                    Callback::from(move |e: MouseEvent| {
+                                                        e.prevent_default();
+                                                        e.stop_propagation();
+                                                        on_retry_issue.emit(issue_id);
+                                                    })
+                                                };
+                                                html! {
+                                                    <li class="row-line issue-line" key={row.link.clone()}>
+                                                        <div class="issue-copy">
+                                                            <div class="issue-title">
+                                                                <img class="brand-icon" src={platform_icon_src(&plat_label)} />
+                                                                <span class="link-text">{ collection_title(row) }</span>
+                                                                <span class="link-text" style="opacity:0.9;">{" - "}{ item_label_for_row(row) }</span>
+                                                            </div>
+                                                            <div class="issue-reason">
+                                                                { row.last_error.clone().unwrap_or_else(|| "Download failed".into()) }
+                                                            </div>
+                                                        </div>
+                                                        <div class="row-actions active-status issue-actions">
+                                                            <button class="icon-btn" type_="button" title="Delete" onclick={on_delete}>
+                                                                <Icon icon_id={IconId::LucideTrash2} width={"18"} height={"18"} />
+                                                            </button>
+                                                            <button class="icon-btn" type_="button" title="Move back to backlog" onclick={on_backlog}>
+                                                                <Icon icon_id={IconId::LucideRotateCcw} width={"18"} height={"18"} />
+                                                            </button>
+                                                            <button class="icon-btn" type_="button" title="Retry" onclick={on_retry}>
+                                                                <Icon icon_id={IconId::LucideDownload} width={"18"} height={"18"} />
+                                                            </button>
+                                                        </div>
+                                                    </li>
+                                                }
+                                            })
+                                        }
+                                    </ul>
+                                </div>
+                            </div>
+                        </>
+                    }
+                } else {
+                    html! {}
+                }
+            }
         </main>
     }
 }

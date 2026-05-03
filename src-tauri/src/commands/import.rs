@@ -11,7 +11,10 @@
 /// Returns the number of successfully imported rows.
 
 #[tauri::command]
-pub async fn import_csv_to_db(csv_text: Option<String>, csvText: Option<String>) -> Result<u64, String> {
+pub async fn import_csv_to_db(
+    csv_text: Option<String>,
+    csvText: Option<String>,
+) -> Result<u64, String> {
     // Accept both snake_case and camelCase keys from JS.
     let csv_text = csv_text
         .or(csvText)
@@ -104,7 +107,10 @@ pub async fn import_csv_text(csv_text: String) -> Result<u64, String> {
 
         let platform_token = format!("{:?}", platform).to_lowercase();
         let origin_token = format!("{:?}", origin).to_lowercase();
-        if db.link_exists_in_collection(&link, &platform_token, &handle, &origin_token).unwrap_or(false) {
+        if db
+            .link_exists_in_collection(&link, &platform_token, &handle, &origin_token)
+            .unwrap_or(false)
+        {
             continue;
         }
 
@@ -120,6 +126,7 @@ pub async fn import_csv_text(csv_text: String) -> Result<u64, String> {
             status: crate::database::DownloadStatus::Backlog,
             path: String::new(),
             image_set_id: None,
+            last_error: None,
             date_added: chrono::Utc::now(),
             date_downloaded: None,
         };

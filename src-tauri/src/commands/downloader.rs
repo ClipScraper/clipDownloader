@@ -102,6 +102,28 @@ pub async fn refresh_download_settings(manager: State<'_, DownloadManager>) -> R
         .map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+pub async fn reconcile_downloads(manager: State<'_, DownloadManager>) -> Result<(), String> {
+    manager
+        .send(DownloadCommand::ReconcileState)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn refresh_downloads_snapshot(
+    manager: State<'_, DownloadManager>,
+) -> Result<Vec<crate::database::UiBacklogRow>, String> {
+    let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
+    manager
+        .send(DownloadCommand::RefreshSnapshot { reply: reply_tx })
+        .await
+        .map_err(|e| e.to_string())?;
+    reply_rx
+        .await
+        .map_err(|e| format!("snapshot channel closed: {e}"))?
+}
+
 fn sanitize_url(raw: &str) -> String {
     raw.trim()
         .replace("#__audio_only__", "")
@@ -134,6 +156,7 @@ fn ensure_row_for_url(url: &str, force_audio: Option<bool>) -> Result<(i64, bool
         status: DownloadStatus::Queued,
         path: "unknown_path".into(),
         image_set_id: None,
+        last_error: None,
         date_added: Utc::now(),
         date_downloaded: None,
     };

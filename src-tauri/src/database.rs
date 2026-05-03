@@ -50,7 +50,24 @@ fn init_schema(conn: &Connection) -> Result<()> {
 
     // Legacy builds persisted queued rows as "queue". Normalize them so
     // frontend and backend codepaths do not disagree about visibility/mutations.
-    conn.execute("UPDATE downloads SET status='queued' WHERE status='queue'", [])?;
+    conn.execute(
+        "UPDATE downloads SET status='queued' WHERE status='queue'",
+        [],
+    )?;
+    ensure_last_error_column(conn)?;
+    Ok(())
+}
+
+fn ensure_last_error_column(conn: &Connection) -> Result<()> {
+    let mut stmt = conn.prepare("PRAGMA table_info(downloads)")?;
+    let mut rows = stmt.query([])?;
+    while let Some(row) = rows.next()? {
+        let column_name: String = row.get(1)?;
+        if column_name == "last_error" {
+            return Ok(());
+        }
+    }
+    conn.execute("ALTER TABLE downloads ADD COLUMN last_error TEXT", [])?;
     Ok(())
 }
 
@@ -63,7 +80,7 @@ pub fn open_connection() -> Result<Connection> {
 
 pub fn find_download_by_id_conn(conn: &Connection, id: i64) -> Result<Option<DbDownloadRow>> {
     let mut stmt = conn.prepare(
-        "SELECT id, platform, media, user_handle, origin, link, output_format, status, path, name
+        "SELECT id, platform, media, user_handle, origin, link, output_format, status, path, name, last_error
            FROM downloads
           WHERE id=?1
           LIMIT 1",
@@ -82,6 +99,7 @@ pub fn find_download_by_id_conn(conn: &Connection, id: i64) -> Result<Option<DbD
             status: DownloadStatus::from_db(status_raw),
             path: row.get(8)?,
             name: row.get(9)?,
+            last_error: row.get(10).ok(),
         }))
     } else {
         Ok(None)
@@ -93,11 +111,23 @@ pub fn set_status_by_id_conn(conn: &Connection, id: i64, status: DownloadStatus)
     let updated = conn.execute(
         "UPDATE downloads
             SET status=?1,
+                last_error=CASE WHEN ?1='error' THEN last_error ELSE NULL END,
                 date_downloaded=CASE WHEN ?1='done' THEN CURRENT_TIMESTAMP ELSE date_downloaded END
           WHERE id=?2 AND status<>?1",
         [token, &id.to_string()], // unchanged rows (same status) will not be updated
     )?;
     Ok(updated)
+}
+
+pub fn set_last_error_by_id_conn(
+    conn: &Connection,
+    id: i64,
+    last_error: Option<&str>,
+) -> Result<usize> {
+    conn.execute(
+        "UPDATE downloads SET last_error=?1 WHERE id=?2",
+        params![last_error, id],
+    )
 }
 
 /// Reset any rows that were left in 'downloading' (e.g. after a crash) back to 'queued'.
@@ -125,6 +155,21 @@ pub fn list_queued_ids_conn(conn: &Connection) -> Result<Vec<i64>> {
     Ok(out)
 }
 
+pub fn list_downloading_ids_conn(conn: &Connection) -> Result<Vec<i64>> {
+    let mut stmt = conn.prepare(
+        "SELECT id
+           FROM downloads
+          WHERE status = 'downloading'
+          ORDER BY id",
+    )?;
+    let rows = stmt.query_map([], |row| row.get(0))?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row?);
+    }
+    Ok(out)
+}
+
 pub fn mark_id_done_conn(conn: &Connection, id: i64, path: &str) -> Result<usize> {
     let path_value = if path.is_empty() {
         "unknown_path".to_string()
@@ -133,10 +178,76 @@ pub fn mark_id_done_conn(conn: &Connection, id: i64, path: &str) -> Result<usize
     };
     let now = Utc::now().to_rfc3339();
     let updated = conn.execute(
-        "UPDATE downloads SET status='done', path=?1, date_downloaded=?2 WHERE id=?3",
+        "UPDATE downloads
+            SET status='done',
+                path=?1,
+                last_error=NULL,
+                date_downloaded=?2
+          WHERE id=?3",
         params![path_value, now, id],
     )?;
     Ok(updated)
+}
+
+pub fn list_all_ui_conn(conn: &Connection) -> Result<Vec<UiBacklogRow>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, status, platform, user_handle, origin, media, link, name, output_format, last_error
+           FROM downloads
+          ORDER BY CASE status
+                     WHEN 'downloading' THEN 0
+                     WHEN 'queued' THEN 1
+                     WHEN 'queue' THEN 1
+                     WHEN 'backlog' THEN 2
+                     WHEN 'error' THEN 3
+                     WHEN 'done' THEN 4
+                     WHEN 'canceled' THEN 5
+                     ELSE 6
+                   END,
+                   id",
+    )?;
+
+    let rows = stmt.query_map([], |row| {
+        let id: i64 = row.get(0)?;
+        let status_raw: String = row.get(1)?;
+        let platform: String = row.get(2)?;
+        let handle: String = row.get(3)?;
+        let origin: String = row.get(4)?;
+        let media: String = row.get(5)?;
+        let link: String = row.get(6)?;
+        let _name: String = row.get(7)?;
+        let output_format: String = row.get(8).unwrap_or_else(|_| "default".to_string());
+        let last_error: Option<String> = row.get(9).ok();
+
+        let content_type = match origin.as_str() {
+            "recommendation" | "playlist" | "profile" | "bookmarks" | "liked" | "reposts" => {
+                origin.clone()
+            }
+            _ => "recommendation".to_string(),
+        };
+        let media_token = if media == "image" || media == "images" {
+            "pictures".to_string()
+        } else {
+            "video".to_string()
+        };
+
+        Ok(UiBacklogRow {
+            id,
+            platform,
+            content_type,
+            handle,
+            media: media_token,
+            link,
+            output_format,
+            status: DownloadStatus::from_db(status_raw),
+            last_error,
+        })
+    })?;
+
+    let mut out = Vec::new();
+    for r in rows {
+        out.push(r?);
+    }
+    Ok(out)
 }
 
 /* ----------------------------- enums & models ----------------------------- */
@@ -221,6 +332,7 @@ pub struct Download {
     pub status: DownloadStatus,
     pub path: String,
     pub image_set_id: Option<String>,
+    pub last_error: Option<String>,
     pub date_added: DateTime<Utc>,
     pub date_downloaded: Option<DateTime<Utc>>,
 }
@@ -248,6 +360,8 @@ pub struct UiBacklogRow {
     pub output_format: String,
     #[serde(default)]
     pub status: DownloadStatus,
+    #[serde(default)]
+    pub last_error: Option<String>,
 }
 
 /// Lightweight info for deciding the destination collection directory.
@@ -270,6 +384,7 @@ pub struct DbDownloadRow {
     pub status: DownloadStatus,
     pub path: String,
     pub name: String,
+    pub last_error: Option<String>,
 }
 
 /* ------------------------------ conversions ------------------------------ */
@@ -595,21 +710,39 @@ impl Database {
         };
 
         self.conn.execute(
-            "INSERT INTO downloads (platform, name, media, user_handle, origin, link, output_format, status, path, image_set_id, date_added, date_downloaded)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
-            [
-                &format!("{:?}", download.platform).to_lowercase(),
-                &download.name,
-                &format!("{:?}", download.media).to_lowercase(),
-                &download.user,
-                &format!("{:?}", download.origin).to_lowercase(),
-                &download.link,
-                &format!("{:?}", download.output_format).to_lowercase(),
-                &format!("{:?}", download.status).to_lowercase(),
-                &path_value,
-                &download.image_set_id.clone().unwrap_or_default(),
-                &download.date_added.to_rfc3339(),
-                &download.date_downloaded.as_ref().map(|dt| dt.to_rfc3339()).unwrap_or_default(),
+            "INSERT INTO downloads (
+                platform,
+                name,
+                media,
+                user_handle,
+                origin,
+                link,
+                output_format,
+                status,
+                path,
+                image_set_id,
+                last_error,
+                date_added,
+                date_downloaded
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            params![
+                format!("{:?}", download.platform).to_lowercase(),
+                download.name.clone(),
+                format!("{:?}", download.media).to_lowercase(),
+                download.user.clone(),
+                format!("{:?}", download.origin).to_lowercase(),
+                download.link.clone(),
+                format!("{:?}", download.output_format).to_lowercase(),
+                format!("{:?}", download.status).to_lowercase(),
+                path_value,
+                download.image_set_id.clone().unwrap_or_default(),
+                download.last_error.clone(),
+                download.date_added.to_rfc3339(),
+                download
+                    .date_downloaded
+                    .as_ref()
+                    .map(|dt| dt.to_rfc3339())
+                    .unwrap_or_default(),
             ],
         )?;
         Ok(self.conn.last_insert_rowid())
@@ -767,7 +900,7 @@ impl Database {
     /// Ordered by platform → handle → type → name (case-insensitive).
     pub fn list_backlog_ui(&self) -> Result<Vec<UiBacklogRow>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, status, platform, user_handle, origin, media, link, name, output_format
+            "SELECT id, status, platform, user_handle, origin, media, link, name, output_format, last_error
              FROM downloads
              WHERE status = 'backlog'
              ORDER BY platform COLLATE NOCASE,
@@ -786,6 +919,7 @@ impl Database {
             let link: String = row.get(6)?;
             let _name: String = row.get(7)?;
             let output_format: String = row.get(8).unwrap_or_else(|_| "default".to_string());
+            let last_error: Option<String> = row.get(9).ok();
 
             let content_type = origin.clone();
             let media_token = if media == "image" || media == "images" {
@@ -803,6 +937,7 @@ impl Database {
                 link,
                 output_format,
                 status: DownloadStatus::from_db(status_raw),
+                last_error,
             })
         })?;
 
@@ -816,7 +951,7 @@ impl Database {
     /// Fetch rows with `status = 'queued'`, normalized for the UI.
     pub fn list_queue_ui(&self) -> Result<Vec<UiBacklogRow>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, status, platform, user_handle, origin, media, link, name, output_format
+            "SELECT id, status, platform, user_handle, origin, media, link, name, output_format, last_error
              FROM downloads
              WHERE status IN ('queued', 'queue')
              ORDER BY platform COLLATE NOCASE,
@@ -835,6 +970,7 @@ impl Database {
             let link: String = row.get(6)?;
             let _name: String = row.get(7)?;
             let output_format: String = row.get(8).unwrap_or_else(|_| "default".to_string());
+            let last_error: Option<String> = row.get(9).ok();
 
             let content_type = match origin.as_str() {
                 "recommendation" | "playlist" | "profile" | "bookmarks" | "liked" | "reposts" => {
@@ -857,6 +993,7 @@ impl Database {
                 link,
                 output_format,
                 status: DownloadStatus::from_db(status_raw),
+                last_error,
             })
         })?;
 
@@ -869,7 +1006,7 @@ impl Database {
 
     pub fn list_done_ui(&self) -> Result<Vec<UiBacklogRow>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, status, platform, user_handle, origin, media, link, name, output_format
+            "SELECT id, status, platform, user_handle, origin, media, link, name, output_format, last_error
              FROM downloads
              WHERE status = 'done'
              ORDER BY platform COLLATE NOCASE,
@@ -888,6 +1025,7 @@ impl Database {
             let link: String = row.get(6)?;
             let _name: String = row.get(7)?;
             let output_format: String = row.get(8).unwrap_or_else(|_| "default".to_string());
+            let last_error: Option<String> = row.get(9).ok();
 
             let content_type = match origin.as_str() {
                 "recommendation" | "playlist" | "profile" | "bookmarks" | "liked" | "reposts" => {
@@ -910,6 +1048,7 @@ impl Database {
                 link,
                 output_format,
                 status: DownloadStatus::from_db(status_raw),
+                last_error,
             })
         })?;
 
@@ -922,62 +1061,7 @@ impl Database {
 
     /// Fetch all rows regardless of status for the UI.
     pub fn list_all_ui(&self) -> Result<Vec<UiBacklogRow>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, status, platform, user_handle, origin, media, link, name, output_format
-               FROM downloads
-              ORDER BY CASE status
-                         WHEN 'downloading' THEN 0
-                         WHEN 'queued' THEN 1
-                         WHEN 'queue' THEN 1
-                         WHEN 'backlog' THEN 2
-                         WHEN 'done' THEN 3
-                         WHEN 'error' THEN 4
-                         WHEN 'canceled' THEN 5
-                         ELSE 6
-                       END,
-                       id",
-        )?;
-
-        let rows = stmt.query_map([], |row| {
-            let id: i64 = row.get(0)?;
-            let status_raw: String = row.get(1)?;
-            let platform: String = row.get(2)?;
-            let handle: String = row.get(3)?;
-            let origin: String = row.get(4)?;
-            let media: String = row.get(5)?;
-            let link: String = row.get(6)?;
-            let _name: String = row.get(7)?;
-            let output_format: String = row.get(8).unwrap_or_else(|_| "default".to_string());
-
-            let content_type = match origin.as_str() {
-                "recommendation" | "playlist" | "profile" | "bookmarks" | "liked" | "reposts" => {
-                    origin.clone()
-                }
-                _ => "recommendation".to_string(),
-            };
-            let media_token = if media == "image" || media == "images" {
-                "pictures".to_string()
-            } else {
-                "video".to_string()
-            };
-
-            Ok(UiBacklogRow {
-                id,
-                platform,
-                content_type,
-                handle,
-                media: media_token,
-                link,
-                output_format,
-                status: DownloadStatus::from_db(status_raw),
-            })
-        })?;
-
-        let mut out = Vec::new();
-        for r in rows {
-            out.push(r?);
-        }
-        Ok(out)
+        list_all_ui_conn(&self.conn)
     }
 
     /* -------------------- status transitions (→ Queue) -------------------- */

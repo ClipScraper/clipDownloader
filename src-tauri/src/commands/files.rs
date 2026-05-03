@@ -52,7 +52,10 @@ pub async fn read_csv_from_path(app: tauri::AppHandle, path: String) -> Result<S
 
     match super::import::import_csv_text(csv_text.clone()).await {
         Ok(n) => {
-            println!("[BACKEND] [files] imported {n} rows (drag-drop) from {}", path);
+            println!(
+                "[BACKEND] [files] imported {n} rows (drag-drop) from {}",
+                path
+            );
             let _ = app.emit("import_completed", n);
         }
         Err(e) => {
