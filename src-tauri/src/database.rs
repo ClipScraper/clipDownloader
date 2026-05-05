@@ -170,6 +170,16 @@ pub fn list_downloading_ids_conn(conn: &Connection) -> Result<Vec<i64>> {
     Ok(out)
 }
 
+pub fn list_error_ids_conn(conn: &Connection) -> Result<Vec<i64>> {
+    let mut stmt = conn.prepare("SELECT id FROM downloads WHERE status='error' ORDER BY id")?;
+    let rows = stmt.query_map([], |row| row.get(0))?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row?);
+    }
+    Ok(out)
+}
+
 pub fn mark_id_done_conn(conn: &Connection, id: i64, path: &str) -> Result<usize> {
     let path_value = if path.is_empty() {
         "unknown_path".to_string()
@@ -505,6 +515,12 @@ pub struct Settings {
     /// Prefer system-installed tools (yt-dlp / ffmpeg / gallery-dl) over bundled sidecars
     #[serde(default)]
     pub use_system_binaries: bool,
+    /// Seconds to wait before starting each download (0 = disabled)
+    #[serde(default)]
+    pub cooldown_secs: u32,
+    /// Auto-retry error items when the queue drains and no tasks are active
+    #[serde(default)]
+    pub retry_on_queue_empty: bool,
 }
 
 fn default_true() -> bool {
@@ -804,26 +820,22 @@ impl Database {
         mark_id_done_conn(&self.conn, id, path)
     }
 
-    pub fn link_exists_in_collection(
-        &self,
-        link: &str,
-        platform: &str,
-        user_handle: &str,
-        origin: &str,
-    ) -> Result<bool> {
+    pub fn link_exists_in_collection(&self, link: &str, platform: &str, user_handle: &str, origin: &str) -> Result<bool> {
+        let norm = normalize_link(link.to_string());
         let mut stmt = self.conn.prepare(
-            "SELECT 1 FROM downloads
-              WHERE link      = ?1
-                AND platform  = ?2 COLLATE NOCASE
-                AND (user_handle = ?3 COLLATE NOCASE OR (?3 = 'Unknown' AND (user_handle = '' OR user_handle IS NULL)))
-                AND origin    = ?4 COLLATE NOCASE
-              LIMIT 1",
+            "SELECT link FROM downloads
+              WHERE platform  = ?1 COLLATE NOCASE
+                AND (user_handle = ?2 COLLATE NOCASE OR (?2 = 'Unknown' AND (user_handle = '' OR user_handle IS NULL)))
+                AND origin    = ?3 COLLATE NOCASE",
         )?;
-        let exists = stmt
-            .query([link, platform, user_handle, origin])?
-            .next()?
-            .is_some();
-        Ok(exists)
+        let mut rows = stmt.query([platform, user_handle, origin])?;
+        while let Some(row) = rows.next()? {
+            let db_link: String = row.get(0)?;
+            if normalize_link(db_link) == norm {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     pub fn find_id_by_link(&self, link: &str) -> Result<Option<i64>> {

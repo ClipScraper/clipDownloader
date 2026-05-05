@@ -37,7 +37,13 @@ pub async fn import_csv_text(csv_text: String) -> Result<u64, String> {
 
     // Process each row
     for rec in rdr.records() {
-        let rec = rec.map_err(|e| e.to_string())?;
+        let rec = match rec {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("[import] skipping malformed CSV row: {e}");
+                continue;
+            }
+        };
 
         // Extract CSV columns (Platform,Type,Handle,Media,link)
         let platform_s = rec.get(0).unwrap_or("").to_string();

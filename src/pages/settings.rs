@@ -34,6 +34,10 @@ pub struct Settings {
     pub parallel_downloads: u8,
     #[serde(default)]
     pub use_system_binaries: bool,
+    #[serde(default)]
+    pub cooldown_secs: u32,
+    #[serde(default)]
+    pub retry_on_queue_empty: bool,
 }
 
 fn default_true() -> bool {
@@ -190,6 +194,26 @@ pub fn settings_page() -> Html {
         })
     };
 
+    let on_cooldown_change = {
+        let settings = settings.clone();
+        Callback::from(move |e: web_sys::InputEvent| {
+            let value = e.target_unchecked_into::<web_sys::HtmlInputElement>().value_as_number() as u32;
+            let mut s = (*settings).clone();
+            s.cooldown_secs = value;
+            settings.set(s);
+        })
+    };
+
+    let on_retry_on_queue_empty_change = {
+        let settings = settings.clone();
+        Callback::from(move |e: Event| {
+            let checked = e.target_unchecked_into::<web_sys::HtmlInputElement>().checked();
+            let mut s = (*settings).clone();
+            s.retry_on_queue_empty = checked;
+            settings.set(s);
+        })
+    };
+
     let on_delete_mode_change = {
         let settings = settings.clone();
         Callback::from(move |e: Event| {
@@ -327,6 +351,16 @@ pub fn settings_page() -> Html {
                 </div>
 
                 <div class="form-group row">
+                    <label for="cooldown">{"Cooldown between downloads (seconds)"}</label>
+                    <input type="number" id="cooldown" min="0" value={settings.cooldown_secs.to_string()} oninput={on_cooldown_change} />
+                </div>
+
+                <div class="form-group row">
+                    <label for="retry-on-empty">{"Retry failed downloads when queue empties"}</label>
+                    <input type="checkbox" id="retry-on-empty" checked={settings.retry_on_queue_empty} onchange={on_retry_on_queue_empty_change} />
+                </div>
+
+                <div class="form-group row">
                     <label>{"Check for local libraries"}</label>
                     <div style="display:flex; gap: 12px; align-items:center;">
                         <button onclick={on_check_tools}>{"Check"}</button>
@@ -391,6 +425,8 @@ impl Default for Settings {
             keep_downloading_on_other_pages: true,
             parallel_downloads: 3,
             use_system_binaries: false,
+            cooldown_secs: 0,
+            retry_on_queue_empty: false,
         }
     }
 }

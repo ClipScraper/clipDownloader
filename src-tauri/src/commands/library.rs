@@ -64,11 +64,9 @@ fn path_exists_ok(path: &str) -> bool {
 #[tauri::command]
 pub async fn open_file_for_link(link: String) -> Result<(), String> {
     let db = crate::database::Database::new().map_err(|e| e.to_string())?;
-    let some = db.find_done_row_by_link(&link).map_err(|e| e.to_string())?;
-
-    let (_id, path) = some.ok_or_else(|| "no library item found for link".to_string())?;
+    let Some((_id, path)) = db.find_done_row_by_link(&link).map_err(|e| e.to_string())? else { return Ok(()); };
     if !path_exists_ok(&path) {
-        return Err(format!("file not found: {path}"));
+        return Ok(());
     }
     open_with_default_app(&path)
 }
@@ -76,13 +74,16 @@ pub async fn open_file_for_link(link: String) -> Result<(), String> {
 #[tauri::command]
 pub async fn open_folder_for_link(link: String) -> Result<(), String> {
     let db = crate::database::Database::new().map_err(|e| e.to_string())?;
-    let some = db.find_done_row_by_link(&link).map_err(|e| e.to_string())?;
-
-    let (_id, path) = some.ok_or_else(|| "no library item found for link".to_string())?;
-    if !PathBuf::from(&path).exists() {
-        return Err(format!("path not found: {path}"));
-    }
-    open_folder(&path)
+    let Some((_id, path)) = db.find_done_row_by_link(&link).map_err(|e| e.to_string())? else { return Ok(()); };
+    let p = PathBuf::from(&path);
+    let dir = if p.exists() {
+        path.clone()
+    } else if let Some(parent) = p.parent().filter(|d| d.exists()) {
+        parent.to_string_lossy().to_string()
+    } else {
+        return Ok(());
+    };
+    open_folder(&dir)
 }
 
 #[tauri::command]
@@ -91,7 +92,7 @@ pub async fn open_platform_folder(platform: String) -> Result<(), String> {
     let base = std::path::PathBuf::from(s.download_directory);
     let p = base.join(platform);
     if !p.exists() {
-        return Err(format!("path not found: {}", p.display()));
+        return Ok(());
     }
     open_folder(&p.to_string_lossy())
 }
@@ -107,7 +108,7 @@ pub async fn open_collection_folder(
     let label = crate::database::Database::collection_folder_label(&content_type, &handle);
     let p = base.join(platform).join(label);
     if !p.exists() {
-        return Err(format!("path not found: {}", p.display()));
+        return Ok(());
     }
     open_folder(&p.to_string_lossy())
 }

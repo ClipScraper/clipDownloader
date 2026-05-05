@@ -23,15 +23,12 @@ pub async fn pick_csv_and_read(app: tauri::AppHandle) -> Result<String, String> 
         FilePath::Path(path_buf) => {
             let csv_text = std_fs::read_to_string(path_buf).map_err(|e| e.to_string())?;
 
-            match super::import::import_csv_text(csv_text.clone()).await {
-                Ok(n) => {
-                    println!("[BACKEND] [files] imported {n} rows (picker)");
-                    let _ = app.emit("import_completed", n);
-                }
-                Err(e) => {
-                    eprintln!("[BACKEND] [files] import failed: {e}");
-                    return Err(e);
-                }
+            let result = super::import::import_csv_text(csv_text.clone()).await;
+            let n = result.as_ref().copied().unwrap_or(0);
+            println!("[BACKEND] [files] imported {n} rows (picker)");
+            let _ = app.emit("import_completed", n);
+            if let Err(e) = result {
+                eprintln!("[BACKEND] [files] import partially failed: {e}");
             }
 
             Ok(csv_text)
@@ -50,18 +47,12 @@ pub async fn read_csv_from_path(app: tauri::AppHandle, path: String) -> Result<S
 
     let csv_text = std_fs::read_to_string(&path).map_err(|e| e.to_string())?;
 
-    match super::import::import_csv_text(csv_text.clone()).await {
-        Ok(n) => {
-            println!(
-                "[BACKEND] [files] imported {n} rows (drag-drop) from {}",
-                path
-            );
-            let _ = app.emit("import_completed", n);
-        }
-        Err(e) => {
-            eprintln!("[BACKEND] [files] import failed for {path}: {e}");
-            return Err(e);
-        }
+    let result = super::import::import_csv_text(csv_text.clone()).await;
+    let n = result.as_ref().copied().unwrap_or(0);
+    println!("[BACKEND] [files] imported {n} rows (drag-drop) from {path}");
+    let _ = app.emit("import_completed", n);
+    if let Err(e) = result {
+        eprintln!("[BACKEND] [files] import partially failed for {path}: {e}");
     }
     Ok(csv_text)
 }
