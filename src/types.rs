@@ -54,6 +54,8 @@ pub struct ClipRow {
     pub output_format: Option<String>,
     #[serde(default)]
     pub status: DownloadStatus,
+    #[serde(default)]
+    pub last_error: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

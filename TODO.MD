@@ -35,3 +35,4 @@ fix color buttons on windows
 
 
 number of parallel downloads: I update it to 10, goes back to 3
+cookie_db_path on windows

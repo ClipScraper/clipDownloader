@@ -57,5 +57,9 @@ pub async fn check_sidecar_tools(app: tauri::AppHandle) -> Result<SidecarCheck, 
     let gal_ok = on_path(&["gallery-dl", "gallery_dl"]);
     let ffmpeg_ok = on_path(&["ffmpeg"]);
 
-    Ok(SidecarCheck {yt_dlp: yt_ok, gallery_dl: gal_ok, ffmpeg: ffmpeg_ok})
+    Ok(SidecarCheck {
+        yt_dlp: yt_ok,
+        gallery_dl: gal_ok,
+        ffmpeg: ffmpeg_ok,
+    })
 }

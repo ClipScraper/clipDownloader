@@ -147,6 +147,65 @@
   height: 36px;
 }
 
+.row-actions.active-status {
+  visibility: visible;
+  opacity: 1;
+  position: static;
+  transform: none;
+  margin-left: auto;
+  background: transparent;
+  padding: 0;
+  height: auto;
+}
+
+.stage-text {
+  max-width: 220px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  opacity: 0.88;
+  font-size: 0.92rem;
+}
+
+.progress-text {
+  font-variant-numeric: tabular-nums;
+  min-width: 40px;
+  text-align: right;
+}
+
+.issue-line {
+  align-items: flex-start;
+  min-height: 70px;
+}
+
+.issue-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-right: 172px;
+}
+
+.issue-title {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.issue-reason {
+  color: #f0b4b4;
+  font-size: 0.9rem;
+  line-height: 1.35;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.row-actions.issue-actions {
+  background: transparent;
+}
+
 /* Shared icon button */
 .icon-btn {
   padding: 0;

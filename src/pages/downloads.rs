@@ -27,6 +27,7 @@ fn toggle_icon_for_row(row: &ClipRow) -> IconId {
 pub struct Props {
     pub backlog: Vec<ClipRow>,
     pub queue: Vec<ClipRow>,
+    pub issues: Vec<ClipRow>,
     pub active: Vec<ActiveDownload>,
     pub loading: bool,
     pub paused: bool,
@@ -34,12 +35,14 @@ pub struct Props {
     pub on_delete: Callback<DeleteItem>,
     pub on_move_to_queue: Callback<MoveItem>,
     pub on_move_to_backlog: Callback<crate::app::MoveBackItem>,
+    pub on_retry_issue: Callback<i64>,
 }
 
 #[derive(Clone, PartialEq)]
 pub struct ActiveDownload {
     pub row: ClipRow,
-    pub progress: String, // ignored in UI per requirements
+    pub progress: Option<String>,
+    pub stage: String,
 }
 
 /* ───────────────────────── label helpers ───────────────────────── */
@@ -152,8 +155,10 @@ fn platform_icon_src(p: &str) -> &'static str {
 /* ───────────────────────── component ───────────────────────── */
 #[function_component(DownloadsPage)]
 pub fn downloads_page(props: &Props) -> Html {
-    let has_any_rows =
-        !props.active.is_empty() || !props.queue.is_empty() || !props.backlog.is_empty();
+    let has_any_rows = !props.active.is_empty()
+        || !props.queue.is_empty()
+        || !props.backlog.is_empty()
+        || !props.issues.is_empty();
     let expanded_platforms = use_state(|| std::collections::HashSet::<String>::new());
     let expanded_collections = use_state(|| std::collections::HashSet::<String>::new());
     // Local overrides so icon flips instantly on click (DB persists separately)
@@ -182,7 +187,10 @@ pub fn downloads_page(props: &Props) -> Html {
             let section_id = title.to_lowercase(); // "backlog" or "queue"
 
             // platform -> (handle, type, Platform, ContentType) -> rows
-            let mut map: BTreeMap<String, BTreeMap<(String, String, Platform, ContentType), Vec<ClipRow>>> = BTreeMap::new();
+            let mut map: BTreeMap<
+                String,
+                BTreeMap<(String, String, Platform, ContentType), Vec<ClipRow>>,
+            > = BTreeMap::new();
 
             // De-dupe by (platform, handle, type, link) within this section
             let mut seen = HashSet::<String>::new();
@@ -194,12 +202,22 @@ pub fn downloads_page(props: &Props) -> Html {
                 let plat = platform_str(&r.platform).to_string();
                 let typ = content_type_str(&r.content_type).to_string();
 
-                let dedup_key = format!("{}|{}|{}|{}", plat, r.handle.to_lowercase().trim(), typ, r.link.trim());
+                let dedup_key = format!(
+                    "{}|{}|{}|{}",
+                    plat,
+                    r.handle.to_lowercase().trim(),
+                    typ,
+                    r.link.trim()
+                );
                 if !seen.insert(dedup_key) {
                     continue;
                 }
 
-                map.entry(plat).or_default().entry((r.handle.clone(), typ, r.platform, r.content_type)).or_default().push(r);
+                map.entry(plat)
+                    .or_default()
+                    .entry((r.handle.clone(), typ, r.platform, r.content_type))
+                    .or_default()
+                    .push(r);
             }
 
             html! {
@@ -565,6 +583,242 @@ pub fn downloads_page(props: &Props) -> Html {
         }
     };
 
+    let render_issues = {
+        let expanded_platforms = expanded_platforms.clone();
+        let expanded_collections = expanded_collections.clone();
+        let on_delete_prop = props.on_delete.clone();
+        let on_move_back_prop = props.on_move_to_backlog.clone();
+        let on_retry_prop = props.on_retry_issue.clone();
+
+        move |rows_in: Vec<ClipRow>| -> Html {
+            use std::collections::BTreeMap;
+
+            let mut map: BTreeMap<String, BTreeMap<(String, String), Vec<ClipRow>>> = BTreeMap::new();
+            for mut r in rows_in {
+                if r.handle.trim().is_empty() { r.handle = "Unknown".into(); }
+                let plat = platform_str(&r.platform).to_string();
+                let typ = content_type_str(&r.content_type).to_string();
+                map.entry(plat).or_default().entry((r.handle.clone(), typ)).or_default().push(r);
+            }
+
+            html! {
+                <>
+                    <h2 style="margin: 24px 0 8px 16px;">{"Issues"}</h2>
+                    <div class="summary">
+                        {
+                            for map.into_iter().map(|(plat_label, col_map)| {
+                                let total: usize = col_map.values().map(|v| v.len()).sum();
+                                let col_count = col_map.len();
+                                let platform_key = format!("issues::{}", plat_label);
+                                let is_open = expanded_platforms.contains(&platform_key);
+
+                                let on_platform_click = {
+                                    let expanded_platforms = expanded_platforms.clone();
+                                    let k = platform_key.clone();
+                                    Callback::from(move |_| {
+                                        let mut set = (*expanded_platforms).clone();
+                                        if !set.insert(k.clone()) { set.remove(&k); }
+                                        expanded_platforms.set(set);
+                                    })
+                                };
+
+                                let on_delete_platform = {
+                                    let on_delete = on_delete_prop.clone();
+                                    let platform = match plat_label.as_str() {
+                                        "instagram" => Platform::Instagram,
+                                        "tiktok"    => Platform::Tiktok,
+                                        "youtube"   => Platform::Youtube,
+                                        "pinterest" => Platform::Pinterest,
+                                        _           => Platform::Tiktok,
+                                    };
+                                    let plat_s = plat_label.clone();
+                                    Callback::from(move |e: MouseEvent| {
+                                        e.prevent_default();
+                                        e.stop_propagation();
+                                        let plat_s = plat_s.clone();
+                                        wasm_bindgen_futures::spawn_local(async move {
+                                            let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "platform": plat_s })).unwrap();
+                                            let _ = invoke("delete_rows_by_platform", args).await;
+                                        });
+                                        on_delete.emit(DeleteItem::Platform(platform));
+                                    })
+                                };
+
+                                let platform_rows = if is_open {
+                                    html! {
+                                        <div>
+                                            {
+                                                for col_map.into_iter().map(|((handle, typ_str), rows)| {
+                                                    let col_key = format!("issues::{}::{}::{}", plat_label, handle, typ_str);
+                                                    let col_open = expanded_collections.contains(&col_key);
+
+                                                    let on_col_click = {
+                                                        let expanded_collections = expanded_collections.clone();
+                                                        let k = col_key.clone();
+                                                        Callback::from(move |_| {
+                                                            let mut set = (*expanded_collections).clone();
+                                                            if !set.insert(k.clone()) { set.remove(&k); }
+                                                            expanded_collections.set(set);
+                                                        })
+                                                    };
+
+                                                    let on_delete_col = {
+                                                        let on_delete = on_delete_prop.clone();
+                                                        let plat_s = plat_label.clone();
+                                                        let handle_s = handle.clone();
+                                                        let typ_s = typ_str.clone();
+                                                        let platform = match plat_label.as_str() {
+                                                            "instagram" => Platform::Instagram,
+                                                            "tiktok"    => Platform::Tiktok,
+                                                            "youtube"   => Platform::Youtube,
+                                                            "pinterest" => Platform::Pinterest,
+                                                            _           => Platform::Tiktok,
+                                                        };
+                                                        let ctype = match typ_str.as_str() {
+                                                            "liked"          => ContentType::Liked,
+                                                            "reposts"        => ContentType::Reposts,
+                                                            "profile"        => ContentType::Profile,
+                                                            "bookmarks"      => ContentType::Bookmarks,
+                                                            "playlist"       => ContentType::Playlist,
+                                                            "recommendation" => ContentType::Recommendation,
+                                                            "manual"         => ContentType::Manual,
+                                                            "pinboard"       => ContentType::Pinboard,
+                                                            _                => ContentType::Other,
+                                                        };
+                                                        Callback::from(move |e: MouseEvent| {
+                                                            e.prevent_default();
+                                                            e.stop_propagation();
+                                                            let plat_s = plat_s.clone();
+                                                            let handle_s = handle_s.clone();
+                                                            let handle_b = handle_s.clone();
+                                                            let typ_s = typ_s.clone();
+                                                            wasm_bindgen_futures::spawn_local(async move {
+                                                                let args = serde_wasm_bindgen::to_value(&serde_json::json!({
+                                                                    "platform": plat_s,
+                                                                    "handle": handle_b,
+                                                                    "origin": typ_s,
+                                                                })).unwrap();
+                                                                let _ = invoke("delete_rows_by_collection", args).await;
+                                                            });
+                                                            on_delete.emit(DeleteItem::Collection(platform, handle_s, ctype));
+                                                        })
+                                                    };
+
+                                                    html! {
+                                                        <div class="collection-block" key={col_key.clone()}>
+                                                            <div class="collection-item" onclick={on_col_click}>
+                                                                <div class="item-left">
+                                                                    <span class="item-title">{ format!("{} | {}", handle, typ_str) }</span>
+                                                                </div>
+                                                                <div class="item-right">
+                                                                    <span>{ format!("{} items", rows.len()) }</span>
+                                                                    <button class="icon-btn" type_="button" title="Delete" onclick={on_delete_col}>
+                                                                        <Icon icon_id={IconId::LucideTrash2} width={"18"} height={"18"} />
+                                                                    </button>
+                                                                </div>
+                                                            </div>
+                                                            {
+                                                                if col_open {
+                                                                    html! {
+                                                                        <div class="rows-card">
+                                                                            <ul class="rows">
+                                                                                {
+                                                                                    for rows.into_iter().map(|row| {
+                                                                                        let issue_id = row.id;
+                                                                                        let on_delete_row = {
+                                                                                            let on_delete = on_delete_prop.clone();
+                                                                                            let link = row.link.clone();
+                                                                                            Callback::from(move |e: MouseEvent| {
+                                                                                                e.prevent_default();
+                                                                                                e.stop_propagation();
+                                                                                                let link_b = link.clone();
+                                                                                                wasm_bindgen_futures::spawn_local(async move {
+                                                                                                    let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "link": link_b })).unwrap();
+                                                                                                    let _ = invoke("delete_rows_by_link", args).await;
+                                                                                                });
+                                                                                                on_delete.emit(DeleteItem::Row(link.clone()));
+                                                                                            })
+                                                                                        };
+                                                                                        let on_backlog_row = {
+                                                                                            let on_move_back = on_move_back_prop.clone();
+                                                                                            let link = row.link.clone();
+                                                                                            Callback::from(move |e: MouseEvent| {
+                                                                                                e.prevent_default();
+                                                                                                e.stop_propagation();
+                                                                                                on_move_back.emit(crate::app::MoveBackItem::Row(link.clone()));
+                                                                                            })
+                                                                                        };
+                                                                                        let on_retry_row = {
+                                                                                            let on_retry = on_retry_prop.clone();
+                                                                                            Callback::from(move |e: MouseEvent| {
+                                                                                                e.prevent_default();
+                                                                                                e.stop_propagation();
+                                                                                                on_retry.emit(issue_id);
+                                                                                            })
+                                                                                        };
+                                                                                        html! {
+                                                                                            <li class="row-line issue-line" key={row.link.clone()}>
+                                                                                                <div class="issue-copy">
+                                                                                                    <div class="issue-title">
+                                                                                                        <span class="link-text">{ item_label_for_row(&row) }</span>
+                                                                                                    </div>
+                                                                                                    <div class="issue-reason">
+                                                                                                        { row.last_error.clone().unwrap_or_else(|| "Download failed".into()) }
+                                                                                                    </div>
+                                                                                                </div>
+                                                                                                <div class="row-actions active-status issue-actions">
+                                                                                                    <button class="icon-btn" type_="button" title="Delete" onclick={on_delete_row}>
+                                                                                                        <Icon icon_id={IconId::LucideTrash2} width={"18"} height={"18"} />
+                                                                                                    </button>
+                                                                                                    <button class="icon-btn" type_="button" title="Move back to backlog" onclick={on_backlog_row}>
+                                                                                                        <Icon icon_id={IconId::LucideRotateCcw} width={"18"} height={"18"} />
+                                                                                                    </button>
+                                                                                                    <button class="icon-btn" type_="button" title="Retry" onclick={on_retry_row}>
+                                                                                                        <Icon icon_id={IconId::LucideDownload} width={"18"} height={"18"} />
+                                                                                                    </button>
+                                                                                                </div>
+                                                                                            </li>
+                                                                                        }
+                                                                                    })
+                                                                                }
+                                                                            </ul>
+                                                                        </div>
+                                                                    }
+                                                                } else { html!{} }
+                                                            }
+                                                        </div>
+                                                    }
+                                                })
+                                            }
+                                        </div>
+                                    }
+                                } else { html!{} };
+
+                                html! {
+                                    <div class="platform-block" key={platform_key.clone()}>
+                                        <div class="platform-item" onclick={on_platform_click}>
+                                            <div class="item-left">
+                                                <img class="brand-icon" src={platform_icon_src(&plat_label)} />
+                                                <span class="item-title">{ plat_label.clone() }</span>
+                                            </div>
+                                            <div class="item-right">
+                                                <span>{ format!("{} collections | {} items", col_count, total) }</span>
+                                                <button class="icon-btn" type_="button" title="Delete" onclick={on_delete_platform}>
+                                                    <Icon icon_id={IconId::LucideTrash2} width={"18"} height={"18"} />
+                                                </button>
+                                            </div>
+                                        </div>
+                                        { platform_rows }
+                                    </div>
+                                }
+                            })
+                        }
+                    </div>
+                </>
+            }
+        }
+    };
+
     html! {
         <main class="container downloads">
             <div style="display:flex; align-items:center; gap:8px; margin: 24px 0 8px 16px;">
@@ -606,8 +860,15 @@ pub fn downloads_page(props: &Props) -> Html {
                                                     <img class="brand-icon" src={platform_icon_src(&plat_label)} />
                                                     <span class="link-text">{ collection_title(&active.row) }</span>
                                                     <span class="link-text" style="opacity:0.9;">{" - "}{ item_label_for_row(&active.row) }</span>
-                                                    <div class="row-actions">
-                                                        <span class="progress-text">{ &active.progress }</span>
+                                                    <div class="row-actions active-status">
+                                                        <span class="stage-text">{ &active.stage }</span>
+                                                        {
+                                                            if let Some(progress) = &active.progress {
+                                                                html! { <span class="progress-text">{ progress }</span> }
+                                                            } else {
+                                                                html! {}
+                                                            }
+                                                        }
                                                     </div>
                                                 </li>
                                             }
@@ -632,7 +893,21 @@ pub fn downloads_page(props: &Props) -> Html {
                 }
             }
 
-            { render_section(props.backlog.clone(), "Backlog", true) }
+            {
+                if !props.backlog.is_empty() {
+                    html! { render_section(props.backlog.clone(), "Backlog", true) }
+                } else {
+                    html! {}
+                }
+            }
+
+            {
+                if !props.issues.is_empty() {
+                    render_issues(props.issues.clone())
+                } else {
+                    html! {}
+                }
+            }
         </main>
     }
 }

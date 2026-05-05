@@ -168,7 +168,7 @@ pub fn settings_page() -> Html {
 
     let on_parallel_downloads_change = {
         let settings = settings.clone();
-        Callback::from(move |e: Event| {
+        Callback::from(move |e: web_sys::InputEvent| {
             let value = e
                 .target_unchecked_into::<web_sys::HtmlInputElement>()
                 .value_as_number() as u8;
@@ -323,7 +323,7 @@ pub fn settings_page() -> Html {
 
                 <div class="form-group row">
                     <label for="parallel-downloads">{"Parallel downloads"}</label>
-                    <input type="number" id="parallel-downloads" min="1" value={settings.parallel_downloads.to_string()} onchange={on_parallel_downloads_change} />
+                    <input type="number" id="parallel-downloads" min="1" value={settings.parallel_downloads.to_string()} oninput={on_parallel_downloads_change} />
                 </div>
 
                 <div class="form-group row">

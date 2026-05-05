@@ -130,6 +130,41 @@ fn sanitize<S: Into<String>>(s: S) -> String {
     t.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+fn stage_message_from_output_line(line: &str) -> Option<&'static str> {
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    if trimmed.contains("Extracting URL") {
+        Some("Extracting media info")
+    } else if trimmed.contains("Downloading webpage") {
+        Some("Fetching webpage")
+    } else if trimmed.contains("Downloading JSON metadata")
+        || trimmed.contains("Downloading API JSON")
+    {
+        Some("Fetching metadata")
+    } else if trimmed.contains("Downloading m3u8 information")
+        || trimmed.contains("Downloading MPD manifest")
+    {
+        Some("Fetching stream manifest")
+    } else if trimmed.contains("[download] Destination:")
+        || trimmed.contains("[download] Resuming download at")
+    {
+        Some("Downloading media")
+    } else if trimmed.contains("Merging formats into") {
+        Some("Merging audio and video")
+    } else if trimmed.contains("Deleting original file") {
+        Some("Cleaning up temp files")
+    } else if trimmed.contains("ExtractAudio") {
+        Some("Extracting audio")
+    } else if trimmed.contains("has already been downloaded") {
+        Some("Already downloaded")
+    } else {
+        None
+    }
+}
+
 // Probe uploader using yt-dlp sidecar (simulate + print)
 async fn probe_uploader(
     app: &tauri::AppHandle,
@@ -207,18 +242,21 @@ async fn choose_output_template(
 ) -> io::Result<String> {
     let rest_id = sanitize(rest_token_from_url(processed_url));
 
-    let mut author_real = probe_uploader(app, cookie_arg, processed_url, is_ig_images)
-        .await
-        .or_else(|| {
-            if processed_url.contains("instagram.com/") {
-                ig_handle_from_url(processed_url)
-            } else if processed_url.contains("tiktok.com/") {
-                tiktok_username_from_url(processed_url)
-            } else {
-                None
-            }
-        })
-        .unwrap_or_else(|| "unknown".into());
+    let url_author = if processed_url.contains("instagram.com/") {
+        ig_handle_from_url(processed_url)
+    } else if processed_url.contains("tiktok.com/") {
+        tiktok_username_from_url(processed_url)
+    } else {
+        None
+    };
+
+    let mut author_real = if let Some(author) = url_author {
+        author
+    } else {
+        probe_uploader(app, cookie_arg, processed_url, is_ig_images)
+            .await
+            .unwrap_or_else(|| "unknown".into())
+    };
     author_real = sanitize(author_real);
 
     let base_stem = format!("{author_real} [{rest_id}]");
@@ -249,7 +287,16 @@ async fn choose_output_template(
 
 /* ---------- runner ---------- */
 
-pub async fn run_yt_dlp_with_progress(app: &tauri::AppHandle, out_dir: &Path, cookie_arg: &str, processed_url: &str, is_ig_images: bool, on_duplicate: &OnDuplicate, id: i64, emitter: Arc<dyn Fn(DownloadEvent) + Send + Sync>) -> io::Result<(bool, String)> {
+pub async fn run_yt_dlp_with_progress(
+    app: &tauri::AppHandle,
+    out_dir: &Path,
+    cookie_arg: &str,
+    processed_url: &str,
+    is_ig_images: bool,
+    on_duplicate: &OnDuplicate,
+    id: i64,
+    emitter: Arc<dyn Fn(DownloadEvent) + Send + Sync>,
+) -> io::Result<(bool, String)> {
     let audio_only = processed_url.ends_with("#__audio_only__");
     let real_url = if audio_only {
         &processed_url[..processed_url.len() - "#__audio_only__".len()]
@@ -279,23 +326,51 @@ pub async fn run_yt_dlp_with_progress(app: &tauri::AppHandle, out_dir: &Path, co
 
     // Determine resource dir for bundled ffmpeg (when not using system binaries)
     use tauri::path::BaseDirectory;
-    let res_dir = app.path().resolve("", BaseDirectory::Resource).unwrap_or_else(|_| std::env::current_dir().unwrap_or_else(|_| ".".into()));
+    let res_dir = app
+        .path()
+        .resolve("", BaseDirectory::Resource)
+        .unwrap_or_else(|_| std::env::current_dir().unwrap_or_else(|_| ".".into()));
     // Only force ffmpeg location when using bundled sidecar tools
     if !settings.use_system_binaries {
         args.push("--ffmpeg-location".into());
         args.push(res_dir.to_string_lossy().to_string());
     }
 
+    (emitter)(DownloadEvent::Message {
+        id,
+        message: "Inspecting media metadata".into(),
+    });
+
     // Output template with uniqueness policy
-    let output_template = choose_output_template(app, out_dir, cookie_arg, real_url, is_ig_images, audio_only, on_duplicate).await?;
+    let output_template = choose_output_template(
+        app,
+        out_dir,
+        cookie_arg,
+        real_url,
+        is_ig_images,
+        audio_only,
+        on_duplicate,
+    )
+    .await?;
     args.push("-o".into());
     args.push(output_template.clone());
 
     // URL last
     args.push(real_url.to_string());
 
-    let planned_path = out_dir.join(output_template.replace("%(ext)s", if audio_only { "mp3" } else { "mp4" }));
-    println!("[YT-DLP][sidecar] policy={:?} dir='{}'\nurl='{}'\nout='{}'", on_duplicate, out_dir.display(), real_url, planned_path.display());
+    let planned_path =
+        out_dir.join(output_template.replace("%(ext)s", if audio_only { "mp3" } else { "mp4" }));
+    println!(
+        "[YT-DLP][sidecar] policy={:?} dir='{}'\nurl='{}'\nout='{}'",
+        on_duplicate,
+        out_dir.display(),
+        real_url,
+        planned_path.display()
+    );
+    (emitter)(DownloadEvent::Message {
+        id,
+        message: format!("Prepared output file {}", planned_path.display()),
+    });
 
     let cmd = if settings.use_system_binaries {
         app.shell().command("yt-dlp")
@@ -310,7 +385,12 @@ pub async fn run_yt_dlp_with_progress(app: &tauri::AppHandle, out_dir: &Path, co
         std::env::var("PATH").unwrap_or_default()
     } else {
         // Prepend bundled resources so yt-dlp can find ffmpeg from the app
-        format!("{}{}{}", res_dir.to_string_lossy(), path_sep(), std::env::var("PATH").unwrap_or_default())
+        format!(
+            "{}{}{}",
+            res_dir.to_string_lossy(),
+            path_sep(),
+            std::env::var("PATH").unwrap_or_default()
+        )
     };
 
     let (mut rx, child) =
@@ -318,12 +398,18 @@ pub async fn run_yt_dlp_with_progress(app: &tauri::AppHandle, out_dir: &Path, co
             io::Error::new(io::ErrorKind::Other, format!("spawn yt-dlp failed: {e}"))
         })?;
 
+    (emitter)(DownloadEvent::Message {
+        id,
+        message: "Launching downloader".into(),
+    });
+
     let _guard = KillGuard(Some(child));
 
     let mut all_output = String::new();
     let mut already_downloaded = false;
     let mut file_skipped = false;
     let mut ok = false;
+    let mut last_stage: Option<&'static str> = None;
 
     loop {
         // Yield to allow other tasks (like event emission) to run
@@ -346,17 +432,41 @@ pub async fn run_yt_dlp_with_progress(app: &tauri::AppHandle, out_dir: &Path, co
                     all_output.push_str(l);
                     all_output.push('\n');
 
+                    if let Some(stage) = stage_message_from_output_line(l) {
+                        if last_stage != Some(stage) {
+                            last_stage = Some(stage);
+                            (emitter)(DownloadEvent::Message {
+                                id,
+                                message: stage.into(),
+                            });
+                        }
+                    }
+
                     if l.contains("has already been downloaded") {
                         already_downloaded = true;
                     }
-                    if l.contains("has already been recorded in the archive") || l.starts_with("[download] Skipping") {
+                    if l.contains("has already been recorded in the archive")
+                        || l.starts_with("[download] Skipping")
+                    {
                         file_skipped = true;
                     }
 
                     if let Some(progress) = parse_progress_percentage(l) {
-                        (emitter)(DownloadEvent::Progress {id, progress, downloaded_bytes: 0, total_bytes: None});
-                    } else if (l.contains("[download]") || l.contains("[info]")) && !l.contains("Starting download for") && !l.contains("Sleeping") && !l.starts_with("[info] Downloading") {
-                        (emitter)(DownloadEvent::Message {id, message: l.to_string()});
+                        (emitter)(DownloadEvent::Progress {
+                            id,
+                            progress,
+                            downloaded_bytes: 0,
+                            total_bytes: None,
+                        });
+                    } else if (l.contains("[download]") || l.contains("[info]"))
+                        && !l.contains("Starting download for")
+                        && !l.contains("Sleeping")
+                        && !l.starts_with("[info] Downloading")
+                    {
+                        (emitter)(DownloadEvent::Message {
+                            id,
+                            message: l.to_string(),
+                        });
                     }
                 }
             }
@@ -367,7 +477,19 @@ pub async fn run_yt_dlp_with_progress(app: &tauri::AppHandle, out_dir: &Path, co
                     if !l.is_empty() {
                         all_output.push_str(l);
                         all_output.push('\n');
-                        (emitter)(DownloadEvent::Message {id, message: l.to_string()});
+                        if let Some(stage) = stage_message_from_output_line(l) {
+                            if last_stage != Some(stage) {
+                                last_stage = Some(stage);
+                                (emitter)(DownloadEvent::Message {
+                                    id,
+                                    message: stage.into(),
+                                });
+                            }
+                        }
+                        (emitter)(DownloadEvent::Message {
+                            id,
+                            message: l.to_string(),
+                        });
                     }
                 }
             }
