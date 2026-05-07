@@ -426,6 +426,10 @@ pub fn app() -> Html {
                         id: i64,
                         status: DownloadStatus,
                     },
+                    BulkStatusChanged {
+                        ids: Vec<i64>,
+                        status: DownloadStatus,
+                    },
                     Progress {
                         id: i64,
                         progress: f32,
@@ -449,6 +453,21 @@ pub fn app() -> Html {
                         let mut should_refresh = false;
 
                         match evt {
+                            DownloadEventPayload::BulkStatusChanged { ids, status } => {
+                                for id in &ids {
+                                    if let Some(entry) = map.get_mut(id) {
+                                        entry.row.status = status;
+                                        entry.row.last_error = None;
+                                        entry.progress = 0.0;
+                                        entry.downloaded_bytes = 0;
+                                        entry.total_bytes = None;
+                                        entry.stage_text = default_stage_text(&entry.row);
+                                        entry.last_message = None;
+                                    }
+                                }
+                                commit = true;
+                                should_refresh = true;
+                            }
                             DownloadEventPayload::StatusChanged { id, status } => match status {
                                 DownloadStatus::Done | DownloadStatus::Canceled => {
                                     if map.remove(&id).is_none() {

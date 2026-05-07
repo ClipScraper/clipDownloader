@@ -263,8 +263,9 @@ pub async fn execute_download_job(
                                     });
                                     return Ok(finals.get(0).cloned());
                                 } else {
-                                    last_error =
-                                        Some(format!("No files moved from {}", tmp_dir.display()));
+                                    last_error.get_or_insert_with(|| {
+                                        format!("No files moved from {}", tmp_dir.display())
+                                    });
                                 }
                             }
                             Ok((_ok, output, tmp_dir)) => {
@@ -280,7 +281,7 @@ pub async fn execute_download_job(
                                     specific_cookie_error =
                                         friendly_browser_error(browser, &output);
                                 }
-                                last_error = Some(msg.clone());
+                                last_error.get_or_insert(msg.clone());
                                 (emitter)(DownloadEvent::Message {
                                     id: row.id,
                                     message: msg,
@@ -288,7 +289,7 @@ pub async fn execute_download_job(
                                 let _ = fs::remove_dir_all(&tmp_dir);
                             }
                             Err(e) => {
-                                last_error = Some(e.to_string());
+                                last_error.get_or_insert_with(|| e.to_string());
                             }
                         }
                     }
@@ -333,7 +334,9 @@ pub async fn execute_download_job(
                         });
                         return Ok(finals.get(0).cloned());
                     } else {
-                        last_error = Some(format!("No files moved from {}", tmp_dir.display()));
+                        last_error.get_or_insert_with(|| {
+                            format!("No files moved from {}", tmp_dir.display())
+                        });
                     }
                 }
                 Ok((_ok, output, tmp_dir)) => {
@@ -343,7 +346,7 @@ pub async fn execute_download_job(
                     if specific_cookie_error.is_none() {
                         specific_cookie_error = friendly_browser_error(browser, &output);
                     }
-                    last_error = Some(msg.clone());
+                    last_error.get_or_insert(msg.clone());
                     (emitter)(DownloadEvent::Message {
                         id: row.id,
                         message: msg,
@@ -351,7 +354,7 @@ pub async fn execute_download_job(
                     let _ = fs::remove_dir_all(&tmp_dir);
                 }
                 Err(e) => {
-                    last_error = Some(e.to_string());
+                    last_error.get_or_insert_with(|| e.to_string());
                 }
             }
             continue;
@@ -394,14 +397,14 @@ pub async fn execute_download_job(
                 if specific_cookie_error.is_none() {
                     specific_cookie_error = friendly_browser_error(browser, &output);
                 }
-                last_error = Some(msg.clone());
+                last_error.get_or_insert(msg.clone());
                 (emitter)(DownloadEvent::Message {
                     id: row.id,
                     message: msg,
                 });
             }
             Err(e) => {
-                last_error = Some(e.to_string());
+                last_error.get_or_insert_with(|| e.to_string());
             }
         }
     }

@@ -1,3 +1,4 @@
+use crate::dom::assign_missing_descriptive_ids;
 use crate::types::{content_type_str, platform_str, ClipRow, MediaKind};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
@@ -81,6 +82,10 @@ fn collection_title(row: &ClipRow) -> String {
 
 #[function_component(LibraryPage)]
 pub fn library_page() -> Html {
+    use_effect(|| {
+        assign_missing_descriptive_ids("library-page");
+        || ()
+    });
     let done_rows = use_state(|| Vec::<ClipRow>::new());
 
     // load once
@@ -139,7 +144,7 @@ pub fn library_page() -> Html {
     }
 
     html! {
-        <main class="container downloads library">
+        <main id="library-page" class="container downloads library">
             <h1>{"Library"}</h1>
             <div class="summary">
                 {

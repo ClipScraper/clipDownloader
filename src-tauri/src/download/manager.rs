@@ -1,4 +1,4 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt;
 use std::sync::Arc;
 
@@ -7,9 +7,10 @@ use tokio::sync::{mpsc, oneshot};
 use tauri::{AppHandle, Emitter};
 
 use crate::database::{
-    find_download_by_id_conn, list_all_ui_conn, list_downloading_ids_conn, list_queued_ids_conn,
-    mark_id_done_conn, reset_stale_downloading_to_queued_conn, set_last_error_by_id_conn,
-    set_status_by_id_conn, DownloadStatus, UiBacklogRow,
+    find_download_by_id_conn, list_all_ui_conn, list_downloading_ids_conn, list_error_ids_conn,
+    list_queued_ids_conn, mark_id_done_conn, reset_stale_downloading_to_queued_conn,
+    set_last_error_by_id_conn, set_status_bulk_conn, set_status_by_id_conn, DownloadStatus,
+    UiBacklogRow,
 };
 use crate::download::pipeline;
 use crate::settings;
@@ -20,6 +21,10 @@ use rusqlite::Connection;
 pub enum DownloadEvent {
     StatusChanged {
         id: i64,
+        status: DownloadStatus,
+    },
+    BulkStatusChanged {
+        ids: Vec<i64>,
         status: DownloadStatus,
     },
     Progress {
@@ -106,6 +111,9 @@ pub async fn run_download_manager(
     let initial_settings = settings::load_settings();
     let mut paused = !initial_settings.download_automatically;
     let mut max_parallel = initial_settings.parallel_downloads.max(1) as usize;
+    let mut cooldown_secs = initial_settings.cooldown_secs;
+    let mut retry_on_queue_empty = initial_settings.retry_on_queue_empty;
+    let mut auto_retried: HashSet<i64> = HashSet::new();
 
     // On startup, recover any rows stuck in 'downloading' from a previous run
     {
@@ -139,6 +147,7 @@ pub async fn run_download_manager(
         &mut overrides,
         paused,
         max_parallel,
+        cooldown_secs,
         &cmd_tx,
         false,
     )
@@ -148,6 +157,7 @@ pub async fn run_download_manager(
         let mut force_start = false;
         match cmd {
             DownloadCommand::Enqueue { ids } => {
+                auto_retried.clear();
                 enqueue_ids(
                     &app,
                     db.clone(),
@@ -196,8 +206,16 @@ pub async fn run_download_manager(
                 force_start = true;
             }
             DownloadCommand::RefreshSettings => {
-                max_parallel = settings::load_settings().parallel_downloads.max(1) as usize;
-                tracing::info!("Updated max_parallel to {}", max_parallel);
+                let s = settings::load_settings();
+                max_parallel = s.parallel_downloads.max(1) as usize;
+                cooldown_secs = s.cooldown_secs;
+                retry_on_queue_empty = s.retry_on_queue_empty;
+                tracing::info!(
+                    "Updated max_parallel={} cooldown={}s retry_on_empty={}",
+                    max_parallel,
+                    cooldown_secs,
+                    retry_on_queue_empty
+                );
             }
             DownloadCommand::SetPaused(next) => {
                 paused = next;
@@ -211,6 +229,21 @@ pub async fn run_download_manager(
             }
             DownloadCommand::TaskFinished { id } => {
                 active.remove(&id);
+                if retry_on_queue_empty && !paused && queue.is_empty() && active.is_empty() {
+                    let db_clone = db.clone();
+                    let error_ids = tauri::async_runtime::spawn_blocking(move || {
+                        let conn = db_clone.blocking_lock();
+                        list_error_ids_conn(&*conn).unwrap_or_default()
+                    })
+                    .await
+                    .unwrap_or_default();
+                    for eid in error_ids {
+                        if !auto_retried.contains(&eid) {
+                            auto_retried.insert(eid);
+                            queue.push_back(eid);
+                        }
+                    }
+                }
             }
         }
 
@@ -222,6 +255,7 @@ pub async fn run_download_manager(
             &mut overrides,
             paused,
             max_parallel,
+            cooldown_secs,
             &cmd_tx,
             force_start,
         )
@@ -292,30 +326,62 @@ async fn enqueue_ids(
     active: &HashMap<i64, ActiveTask>,
     status: DownloadStatus,
 ) {
-    for id in ids {
-        if active.contains_key(id) {
-            continue;
+    if ids.len() == 1 {
+        let id = ids[0];
+        if active.contains_key(&id) || queue.contains(&id) {
+            return;
         }
-        if queue.contains(id) {
-            continue;
-        }
-        let changed = match set_status(db.clone(), *id, status).await {
+        let changed = match set_status(db.clone(), id, status).await {
             Ok(c) => c,
             Err(err) => {
                 emit_event(
                     app,
                     DownloadEvent::Message {
-                        id: *id,
+                        id,
                         message: format!("Failed to set status: {err}"),
                     },
                 );
-                continue;
+                return;
             }
         };
         if changed {
-            emit_event(app, DownloadEvent::StatusChanged { id: *id, status });
+            emit_event(app, DownloadEvent::StatusChanged { id, status });
         }
-        queue.push_back(*id);
+        queue.push_back(id);
+        return;
+    }
+
+    let to_enqueue: Vec<i64> = ids
+        .iter()
+        .copied()
+        .filter(|id| !active.contains_key(id) && !queue.contains(id))
+        .collect();
+    if to_enqueue.is_empty() {
+        return;
+    }
+
+    let db_clone = db.clone();
+    let ids_clone = to_enqueue.clone();
+    let changed = tauri::async_runtime::spawn_blocking(move || {
+        let conn = db_clone.blocking_lock();
+        set_status_bulk_conn(&*conn, &ids_clone, status)
+    })
+    .await
+    .ok()
+    .and_then(Result::ok)
+    .unwrap_or(0);
+
+    if changed > 0 {
+        emit_event(
+            app,
+            DownloadEvent::BulkStatusChanged {
+                ids: to_enqueue.clone(),
+                status,
+            },
+        );
+    }
+    for id in to_enqueue {
+        queue.push_back(id);
     }
 }
 
@@ -404,6 +470,7 @@ async fn maybe_start_next(
     overrides: &mut HashMap<i64, DownloadOverrides>,
     paused: bool,
     max_parallel: usize,
+    cooldown_secs: u32,
     cmd_tx: &mpsc::Sender<DownloadCommand>,
     force: bool,
 ) {
@@ -446,6 +513,9 @@ async fn maybe_start_next(
         let db_clone = db.clone();
         let opts = overrides.remove(&id);
         let handle = tauri::async_runtime::spawn(async move {
+            if cooldown_secs > 0 {
+                tokio::time::sleep(std::time::Duration::from_secs(cooldown_secs as u64)).await;
+            }
             match run_download_with_progress(&app_clone, db_clone.clone(), id, opts).await {
                 Ok(path) => {
                     let _ = set_status(db_clone.clone(), id, DownloadStatus::Done).await;

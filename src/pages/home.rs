@@ -10,6 +10,7 @@ use yew_hooks::prelude::*;
 use yew_icons::{Icon, IconId};
 
 use crate::app::log_invoke_err;
+use crate::dom::assign_missing_descriptive_ids;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 struct DownloadResult {
@@ -41,6 +42,10 @@ pub struct Props {
 #[function_component(HomePage)]
 pub fn home_page(props: &Props) -> Html {
     println!("[FRONTEND] [pages/home.rs] [home_page component]");
+    use_effect(|| {
+        assign_missing_descriptive_ids("home-page");
+        || ()
+    });
     let greet_input_ref = use_node_ref();
     let name = use_state(|| String::new());
     let download_results = use_state(|| Vec::<DownloadResult>::new());
@@ -311,17 +316,17 @@ pub fn home_page(props: &Props) -> Html {
     };
 
     html! {
-        <main class="container" {ondragover} {ondragleave} {ondrop}>
-            <h1>{"Welcome to Clip Downloader"}</h1>
-            <form class="home-form" onsubmit={greet}>
-                <input id="url-input" ref={greet_input_ref} placeholder="Enter url..." oninput={on_input} disabled={*is_downloading} />
+        <main id="home-page" class="container" {ondragover} {ondragleave} {ondrop}>
+            <h1 id="home-page-heading">{"Welcome to Clip Downloader"}</h1>
+            <form id="home-download-form" class="home-form" onsubmit={greet}>
+                <input id="home-download-url-input" ref={greet_input_ref} placeholder="Enter url..." oninput={on_input} disabled={*is_downloading} />
                 { if !*is_downloading {
                     html! {
-                        <div style="display:flex; gap:10px; align-items:center;">
-                            <button type="submit" class="download-cta" title="Download" disabled={!is_valid_url || *is_downloading}>
+                        <div id="home-download-actions" style="display:flex; gap:10px; align-items:center;">
+                            <button id="home-submit-download-button" type="submit" class="download-cta" title="Download" disabled={!is_valid_url || *is_downloading}>
                                 <Icon icon_id={IconId::LucideDownload} width={"36"} height={"36"} />
                             </button>
-                            <button type="button" class="download-cta" title={ if *output_icon_is_music { "Music" } else { "Video" } } onclick={toggle_output_icon}>
+                            <button id="home-output-mode-toggle-button" type="button" class="download-cta" title={ if *output_icon_is_music { "Music" } else { "Video" } } onclick={toggle_output_icon}>
                                 {
                                     if *output_icon_is_music {
                                         html!{ <Icon icon_id={IconId::LucideMusic} width={"28"} height={"28"} /> }
@@ -337,26 +342,29 @@ pub fn home_page(props: &Props) -> Html {
 
             { if *is_downloading {
                 html! {
-                    <div class="row" style="margin-top: 16px; flex-direction: column; align-items: center; gap: 12px;">
-                        <span style="font-family: monospace; font-size: 0.9em;">{(*download_progress).clone()}</span>
-                        <button type="button" onclick={cancel_download}>{"Cancel"}</button>
+                    <div id="home-active-download-status" class="row" style="margin-top: 16px; flex-direction: column; align-items: center; gap: 12px;">
+                        <span id="home-active-download-progress-text" style="font-family: monospace; font-size: 0.9em;">{(*download_progress).clone()}</span>
+                        <button id="home-cancel-download-button" type="button" onclick={cancel_download}>{"Cancel"}</button>
                     </div>
                 }
             } else {
                 html! {}
             }}
 
-            <div class="messages">
-                { for (*download_results).clone().into_iter().map(|result| {
+            <div id="home-download-results" class="messages">
+                { for (*download_results).clone().into_iter().enumerate().map(|(index, result)| {
                     html! {
-                        <div class={if result.success { "message-success" } else { "message-error" }}>
+                        <div
+                            id={format!("home-download-result-message-{}", index + 1)}
+                            class={if result.success { "message-success" } else { "message-error" }}
+                        >
                             { result.message }
                         </div>
                     }
                 })}
             </div>
-            <div class="row home-actions">
-                <button type="button" onclick={open_click}>{"Import list"}</button>
+            <div id="home-secondary-actions" class="row home-actions">
+                <button id="home-import-list-button" type="button" onclick={open_click}>{"Import list"}</button>
             </div>
         </main>
     }

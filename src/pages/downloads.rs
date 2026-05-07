@@ -1,4 +1,5 @@
 use crate::app::{DeleteItem, MoveItem};
+use crate::dom::assign_missing_descriptive_ids;
 use crate::types::{content_type_str, platform_str, ClipRow, ContentType, MediaKind, Platform};
 use wasm_bindgen::prelude::*;
 use yew::prelude::*;
@@ -155,6 +156,10 @@ fn platform_icon_src(p: &str) -> &'static str {
 /* ───────────────────────── component ───────────────────────── */
 #[function_component(DownloadsPage)]
 pub fn downloads_page(props: &Props) -> Html {
+    use_effect(|| {
+        assign_missing_descriptive_ids("downloads-page");
+        || ()
+    });
     let has_any_rows = !props.active.is_empty()
         || !props.queue.is_empty()
         || !props.backlog.is_empty()
@@ -593,12 +598,19 @@ pub fn downloads_page(props: &Props) -> Html {
         move |rows_in: Vec<ClipRow>| -> Html {
             use std::collections::BTreeMap;
 
-            let mut map: BTreeMap<String, BTreeMap<(String, String), Vec<ClipRow>>> = BTreeMap::new();
+            let mut map: BTreeMap<String, BTreeMap<(String, String), Vec<ClipRow>>> =
+                BTreeMap::new();
             for mut r in rows_in {
-                if r.handle.trim().is_empty() { r.handle = "Unknown".into(); }
+                if r.handle.trim().is_empty() {
+                    r.handle = "Unknown".into();
+                }
                 let plat = platform_str(&r.platform).to_string();
                 let typ = content_type_str(&r.content_type).to_string();
-                map.entry(plat).or_default().entry((r.handle.clone(), typ)).or_default().push(r);
+                map.entry(plat)
+                    .or_default()
+                    .entry((r.handle.clone(), typ))
+                    .or_default()
+                    .push(r);
             }
 
             html! {
@@ -820,7 +832,7 @@ pub fn downloads_page(props: &Props) -> Html {
     };
 
     html! {
-        <main class="container downloads">
+        <main id="downloads-page" class="container downloads">
             <div style="display:flex; align-items:center; gap:8px; margin: 24px 0 8px 16px;">
                 <h2 style="margin:0;">{"Downloading"}</h2>
                 <button class="icon-btn" type_="button" onclick={on_toggle_pause_click_header} title={ if props.paused { "Play" } else { "Pause" } }>

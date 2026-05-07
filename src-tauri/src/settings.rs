@@ -30,6 +30,8 @@ impl Default for Settings {
             keep_downloading_on_other_pages: true,
             parallel_downloads: 3,
             use_system_binaries: false,
+            cooldown_secs: 0,
+            retry_on_queue_empty: false,
         }
     }
 }
@@ -139,6 +141,8 @@ pub fn save_settings(settings: &Settings) -> Result<(), String> {
         keep_downloading_on_other_pages: settings.keep_downloading_on_other_pages,
         parallel_downloads: settings.parallel_downloads,
         use_system_binaries: settings.use_system_binaries,
+        cooldown_secs: settings.cooldown_secs,
+        retry_on_queue_empty: settings.retry_on_queue_empty,
     };
 
     let body = serde_json::to_string_pretty(&to_write)
