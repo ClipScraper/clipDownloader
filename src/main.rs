@@ -3,6 +3,8 @@ mod app;
 #[cfg(target_arch = "wasm32")]
 mod components;
 #[cfg(target_arch = "wasm32")]
+mod dom;
+#[cfg(target_arch = "wasm32")]
 mod pages;
 #[cfg(target_arch = "wasm32")]
 mod types;

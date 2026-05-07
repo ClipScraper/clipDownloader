@@ -9,7 +9,8 @@ use tauri::{AppHandle, Emitter};
 use crate::database::{
     find_download_by_id_conn, list_all_ui_conn, list_downloading_ids_conn, list_error_ids_conn,
     list_queued_ids_conn, mark_id_done_conn, reset_stale_downloading_to_queued_conn,
-    set_last_error_by_id_conn, set_status_by_id_conn, DownloadStatus, UiBacklogRow,
+    set_last_error_by_id_conn, set_status_bulk_conn, set_status_by_id_conn, DownloadStatus,
+    UiBacklogRow,
 };
 use crate::download::pipeline;
 use crate::settings;
@@ -20,6 +21,10 @@ use rusqlite::Connection;
 pub enum DownloadEvent {
     StatusChanged {
         id: i64,
+        status: DownloadStatus,
+    },
+    BulkStatusChanged {
+        ids: Vec<i64>,
         status: DownloadStatus,
     },
     Progress {
@@ -205,7 +210,12 @@ pub async fn run_download_manager(
                 max_parallel = s.parallel_downloads.max(1) as usize;
                 cooldown_secs = s.cooldown_secs;
                 retry_on_queue_empty = s.retry_on_queue_empty;
-                tracing::info!("Updated max_parallel={} cooldown={}s retry_on_empty={}", max_parallel, cooldown_secs, retry_on_queue_empty);
+                tracing::info!(
+                    "Updated max_parallel={} cooldown={}s retry_on_empty={}",
+                    max_parallel,
+                    cooldown_secs,
+                    retry_on_queue_empty
+                );
             }
             DownloadCommand::SetPaused(next) => {
                 paused = next;
@@ -316,30 +326,62 @@ async fn enqueue_ids(
     active: &HashMap<i64, ActiveTask>,
     status: DownloadStatus,
 ) {
-    for id in ids {
-        if active.contains_key(id) {
-            continue;
+    if ids.len() == 1 {
+        let id = ids[0];
+        if active.contains_key(&id) || queue.contains(&id) {
+            return;
         }
-        if queue.contains(id) {
-            continue;
-        }
-        let changed = match set_status(db.clone(), *id, status).await {
+        let changed = match set_status(db.clone(), id, status).await {
             Ok(c) => c,
             Err(err) => {
                 emit_event(
                     app,
                     DownloadEvent::Message {
-                        id: *id,
+                        id,
                         message: format!("Failed to set status: {err}"),
                     },
                 );
-                continue;
+                return;
             }
         };
         if changed {
-            emit_event(app, DownloadEvent::StatusChanged { id: *id, status });
+            emit_event(app, DownloadEvent::StatusChanged { id, status });
         }
-        queue.push_back(*id);
+        queue.push_back(id);
+        return;
+    }
+
+    let to_enqueue: Vec<i64> = ids
+        .iter()
+        .copied()
+        .filter(|id| !active.contains_key(id) && !queue.contains(id))
+        .collect();
+    if to_enqueue.is_empty() {
+        return;
+    }
+
+    let db_clone = db.clone();
+    let ids_clone = to_enqueue.clone();
+    let changed = tauri::async_runtime::spawn_blocking(move || {
+        let conn = db_clone.blocking_lock();
+        set_status_bulk_conn(&*conn, &ids_clone, status)
+    })
+    .await
+    .ok()
+    .and_then(Result::ok)
+    .unwrap_or(0);
+
+    if changed > 0 {
+        emit_event(
+            app,
+            DownloadEvent::BulkStatusChanged {
+                ids: to_enqueue.clone(),
+                status,
+            },
+        );
+    }
+    for id in to_enqueue {
+        queue.push_back(id);
     }
 }
 

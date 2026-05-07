@@ -64,7 +64,9 @@ fn path_exists_ok(path: &str) -> bool {
 #[tauri::command]
 pub async fn open_file_for_link(link: String) -> Result<(), String> {
     let db = crate::database::Database::new().map_err(|e| e.to_string())?;
-    let Some((_id, path)) = db.find_done_row_by_link(&link).map_err(|e| e.to_string())? else { return Ok(()); };
+    let Some((_id, path)) = db.find_done_row_by_link(&link).map_err(|e| e.to_string())? else {
+        return Ok(());
+    };
     if !path_exists_ok(&path) {
         return Ok(());
     }
@@ -74,7 +76,9 @@ pub async fn open_file_for_link(link: String) -> Result<(), String> {
 #[tauri::command]
 pub async fn open_folder_for_link(link: String) -> Result<(), String> {
     let db = crate::database::Database::new().map_err(|e| e.to_string())?;
-    let Some((_id, path)) = db.find_done_row_by_link(&link).map_err(|e| e.to_string())? else { return Ok(()); };
+    let Some((_id, path)) = db.find_done_row_by_link(&link).map_err(|e| e.to_string())? else {
+        return Ok(());
+    };
     let p = PathBuf::from(&path);
     let dir = if p.exists() {
         path.clone()

@@ -1,3 +1,4 @@
+use crate::dom::assign_missing_descriptive_ids;
 use gloo_timers::callback::Timeout;
 use wasm_bindgen::prelude::*;
 use yew::prelude::*;
@@ -10,6 +11,10 @@ extern "C" {
 
 #[function_component(SponsorPage)]
 pub fn sponsor_page() -> Html {
+    use_effect(|| {
+        assign_missing_descriptive_ids("sponsor-page");
+        || ()
+    });
     let recently_copied = use_state(|| String::new());
 
     let make_copy_callback =
@@ -37,29 +42,29 @@ pub fn sponsor_page() -> Html {
     let eth_addr = "0x66994e0929576881B752a2BB8C249c9C8e74C253";
 
     html! {
-        <div class="container">
-            <h1>{"Support ClipScraper Development"}</h1>
-            <p>{"If you find ClipScraper useful, or if there are any features you would like to see, please consider supporting its development."}</p>
+        <div id="sponsor-page" class="container">
+            <h1 id="sponsor-page-heading">{"Support ClipScraper Development"}</h1>
+            <p id="sponsor-page-intro">{"If you find ClipScraper useful, or if there are any features you would like to see, please consider supporting its development."}</p>
 
-            <div class="donation-addresses">
-                <div class="address">
-                    <span class="label">{"BTC:"}</span>
-                    <span class="value">{btc_addr}</span>
-                    <i class={classes!("copy-icon", "fas", if *recently_copied == "btc" { "fa-check" } else { "fa-copy" })} onclick={make_copy_callback(btc_addr, "btc", recently_copied.clone())} title="Copy address"></i>
+            <div id="sponsor-donation-addresses" class="donation-addresses">
+                <div id="sponsor-btc-address-row" class="address">
+                    <span id="sponsor-btc-label" class="label">{"BTC:"}</span>
+                    <span id="sponsor-btc-value" class="value">{btc_addr}</span>
+                    <i id="sponsor-btc-copy-button" class={classes!("copy-icon", "fas", if *recently_copied == "btc" { "fa-check" } else { "fa-copy" })} onclick={make_copy_callback(btc_addr, "btc", recently_copied.clone())} title="Copy address"></i>
                 </div>
-                <div class="address">
-                    <span class="label">{"ETH (ERC20):"}</span>
-                    <span class="value">{eth_addr}</span>
-                    <i class={classes!("copy-icon", "fas", if *recently_copied == "eth" { "fa-check" } else { "fa-copy" })} onclick={make_copy_callback(eth_addr, "eth", recently_copied.clone())} title="Copy address"></i>
+                <div id="sponsor-eth-address-row" class="address">
+                    <span id="sponsor-eth-label" class="label">{"ETH (ERC20):"}</span>
+                    <span id="sponsor-eth-value" class="value">{eth_addr}</span>
+                    <i id="sponsor-eth-copy-button" class={classes!("copy-icon", "fas", if *recently_copied == "eth" { "fa-check" } else { "fa-copy" })} onclick={make_copy_callback(eth_addr, "eth", recently_copied.clone())} title="Copy address"></i>
                 </div>
-                <div class="address">
-                    <span class="label">{"USDT (ERC20):"}</span>
-                    <span class="value">{eth_addr}</span>
-                    <i class={classes!("copy-icon", "fas", if *recently_copied == "usdt" { "fa-check" } else { "fa-copy" })} onclick={make_copy_callback(eth_addr, "usdt", recently_copied.clone())} title="Copy address"></i>
+                <div id="sponsor-usdt-address-row" class="address">
+                    <span id="sponsor-usdt-label" class="label">{"USDT (ERC20):"}</span>
+                    <span id="sponsor-usdt-value" class="value">{eth_addr}</span>
+                    <i id="sponsor-usdt-copy-button" class={classes!("copy-icon", "fas", if *recently_copied == "usdt" { "fa-check" } else { "fa-copy" })} onclick={make_copy_callback(eth_addr, "usdt", recently_copied.clone())} title="Copy address"></i>
                 </div>
             </div>
 
-            <p class="footer-note">{"If there are any other ways you would like to support the project, please let us know at support@clipscraper.com"}</p>
+            <p id="sponsor-footer-note" class="footer-note">{"If there are any other ways you would like to support the project, please let us know at support@clipscraper.com"}</p>
         </div>
     }
 }

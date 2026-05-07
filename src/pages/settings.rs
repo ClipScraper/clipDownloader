@@ -1,3 +1,4 @@
+use crate::dom::assign_missing_descriptive_ids;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
 use yew::prelude::*;
@@ -73,6 +74,10 @@ extern "C" {
 
 #[function_component(SettingsPage)]
 pub fn settings_page() -> Html {
+    use_effect(|| {
+        assign_missing_descriptive_ids("settings-page");
+        || ()
+    });
     let settings = use_state(Settings::default);
     let libs = use_state(|| None::<SidecarCheck>);
     let settings_clone = settings.clone();
@@ -197,7 +202,9 @@ pub fn settings_page() -> Html {
     let on_cooldown_change = {
         let settings = settings.clone();
         Callback::from(move |e: web_sys::InputEvent| {
-            let value = e.target_unchecked_into::<web_sys::HtmlInputElement>().value_as_number() as u32;
+            let value = e
+                .target_unchecked_into::<web_sys::HtmlInputElement>()
+                .value_as_number() as u32;
             let mut s = (*settings).clone();
             s.cooldown_secs = value;
             settings.set(s);
@@ -207,7 +214,9 @@ pub fn settings_page() -> Html {
     let on_retry_on_queue_empty_change = {
         let settings = settings.clone();
         Callback::from(move |e: Event| {
-            let checked = e.target_unchecked_into::<web_sys::HtmlInputElement>().checked();
+            let checked = e
+                .target_unchecked_into::<web_sys::HtmlInputElement>()
+                .checked();
             let mut s = (*settings).clone();
             s.retry_on_queue_empty = checked;
             settings.set(s);
@@ -281,102 +290,102 @@ pub fn settings_page() -> Html {
     };
 
     html! {
-        <main class="container">
-            <h1>{"Settings"}</h1>
-            <div class="settings-form">
-                <div class="form-group">
-                    <label for="download-dir">{"Default Download Directory"}</label>
-                    <div class="input-group">
-                        <input type="text" id="download-dir" readonly=true value={settings.download_directory.clone()} />
-                        <button onclick={on_directory_pick}>{"Select"}</button>
-                        <button onclick={on_open_directory} class="icon-btn">
+        <main id="settings-page" class="container">
+            <h1 id="settings-page-heading">{"Settings"}</h1>
+            <div id="settings-form" class="settings-form">
+                <div id="settings-download-directory-group" class="form-group">
+                    <label id="settings-download-directory-label" for="settings-download-directory-input">{"Default Download Directory"}</label>
+                    <div id="settings-download-directory-controls" class="input-group">
+                        <input type="text" id="settings-download-directory-input" readonly=true value={settings.download_directory.clone()} />
+                        <button id="settings-select-directory-button" onclick={on_directory_pick}>{"Select"}</button>
+                        <button id="settings-open-directory-button" onclick={on_open_directory} class="icon-btn">
                             <Icon icon_id={IconId::LucideFolder} width={"30"} height={"30"} />
                         </button>
                     </div>
                 </div>
 
-                <div class="form-group row">
-                    <label for="on-duplicate">{"If duplicate name"}</label>
-                    <select id="on-duplicate" onchange={on_duplicate_change}>
-                        <option value="CreateNew" selected={settings.on_duplicate == OnDuplicate::CreateNew}>{"Create new file"}</option>
-                        <option value="Overwrite" selected={settings.on_duplicate == OnDuplicate::Overwrite}>{"Overwrite file"}</option>
-                        <option value="DoNothing" selected={settings.on_duplicate == OnDuplicate::DoNothing}>{"Do nothing"}</option>
+                <div id="settings-duplicate-behavior-group" class="form-group row">
+                    <label id="settings-duplicate-behavior-label" for="settings-duplicate-behavior-select">{"If duplicate name"}</label>
+                    <select id="settings-duplicate-behavior-select" onchange={on_duplicate_change}>
+                        <option id="settings-duplicate-behavior-create-new-option" value="CreateNew" selected={settings.on_duplicate == OnDuplicate::CreateNew}>{"Create new file"}</option>
+                        <option id="settings-duplicate-behavior-overwrite-option" value="Overwrite" selected={settings.on_duplicate == OnDuplicate::Overwrite}>{"Overwrite file"}</option>
+                        <option id="settings-duplicate-behavior-do-nothing-option" value="DoNothing" selected={settings.on_duplicate == OnDuplicate::DoNothing}>{"Do nothing"}</option>
                     </select>
                 </div>
 
-                <div class="form-group row">
-                    <label for="delete-mode">{"Delete behavior"}</label>
-                    <select id="delete-mode" onchange={on_delete_mode_change}>
-                        <option value="Soft" selected={settings.delete_mode == DeleteMode::Soft}>
+                <div id="settings-delete-mode-group" class="form-group row">
+                    <label id="settings-delete-mode-label" for="settings-delete-mode-select">{"Delete behavior"}</label>
+                    <select id="settings-delete-mode-select" onchange={on_delete_mode_change}>
+                        <option id="settings-delete-mode-soft-option" value="Soft" selected={settings.delete_mode == DeleteMode::Soft}>
                             {"Soft delete (remove from library only)"}
                         </option>
-                        <option value="Hard" selected={settings.delete_mode == DeleteMode::Hard}>
+                        <option id="settings-delete-mode-hard-option" value="Hard" selected={settings.delete_mode == DeleteMode::Hard}>
                             {"Hard delete (remove files from disk)"}
                         </option>
                     </select>
                 </div>
 
-                <div class="form-group row">
-                    <label>{"Default output"}</label>
-                    <div style="display:flex; gap: 16px; align-items:center;">
-                        <label style="display:flex; gap:6px; align-items:center;">
-                            <input type="radio" name="default-output" value="audio" onchange={on_default_output_change.clone()} checked={settings.default_output == DefaultOutput::Audio} />
+                <div id="settings-default-output-group" class="form-group row">
+                    <label id="settings-default-output-label">{"Default output"}</label>
+                    <div id="settings-default-output-options" style="display:flex; gap: 16px; align-items:center;">
+                        <label id="settings-default-output-audio-label" for="settings-default-output-audio-radio" style="display:flex; gap:6px; align-items:center;">
+                            <input id="settings-default-output-audio-radio" type="radio" name="default-output" value="audio" onchange={on_default_output_change.clone()} checked={settings.default_output == DefaultOutput::Audio} />
                             {"Audio"}
                         </label>
-                        <label style="display:flex; gap:6px; align-items:center;">
-                            <input type="radio" name="default-output" value="video" onchange={on_default_output_change} checked={settings.default_output == DefaultOutput::Video} />
+                        <label id="settings-default-output-video-label" for="settings-default-output-video-radio" style="display:flex; gap:6px; align-items:center;">
+                            <input id="settings-default-output-video-radio" type="radio" name="default-output" value="video" onchange={on_default_output_change} checked={settings.default_output == DefaultOutput::Video} />
                             {"Video"}
                         </label>
                     </div>
                 </div>
 
-                <div class="form-group row">
-                    <label for="debug-logs">{"Activate debug logs"}</label>
-                    <input type="checkbox" id="debug-logs" checked={settings.debug_logs} onchange={on_debug_logs_change} />
+                <div id="settings-debug-logs-group" class="form-group row">
+                    <label id="settings-debug-logs-label" for="settings-debug-logs-checkbox">{"Activate debug logs"}</label>
+                    <input type="checkbox" id="settings-debug-logs-checkbox" checked={settings.debug_logs} onchange={on_debug_logs_change} />
                 </div>
 
-                <div class="form-group row">
-                    <label for="download-automatically">{"Download automatically"}</label>
-                    <input type="checkbox" id="download-automatically" checked={settings.download_automatically} onchange={on_download_automatically_change} />
+                <div id="settings-download-automatically-group" class="form-group row">
+                    <label id="settings-download-automatically-label" for="settings-download-automatically-checkbox">{"Download automatically"}</label>
+                    <input type="checkbox" id="settings-download-automatically-checkbox" checked={settings.download_automatically} onchange={on_download_automatically_change} />
                 </div>
 
-                <div class="form-group row">
-                    <label for="keep-downloading">{"Keep downloading on other pages"}</label>
-                    <input type="checkbox" id="keep-downloading" checked={settings.keep_downloading_on_other_pages} onchange={on_keep_downloading_change} />
+                <div id="settings-keep-downloading-group" class="form-group row">
+                    <label id="settings-keep-downloading-label" for="settings-keep-downloading-checkbox">{"Keep downloading on other pages"}</label>
+                    <input type="checkbox" id="settings-keep-downloading-checkbox" checked={settings.keep_downloading_on_other_pages} onchange={on_keep_downloading_change} />
                 </div>
 
-                <div class="form-group row">
-                    <label for="parallel-downloads">{"Parallel downloads"}</label>
-                    <input type="number" id="parallel-downloads" min="1" value={settings.parallel_downloads.to_string()} oninput={on_parallel_downloads_change} />
+                <div id="settings-parallel-downloads-group" class="form-group row">
+                    <label id="settings-parallel-downloads-label" for="settings-parallel-downloads-input">{"Parallel downloads"}</label>
+                    <input type="number" id="settings-parallel-downloads-input" min="1" value={settings.parallel_downloads.to_string()} oninput={on_parallel_downloads_change} />
                 </div>
 
-                <div class="form-group row">
-                    <label for="cooldown">{"Cooldown between downloads (seconds)"}</label>
-                    <input type="number" id="cooldown" min="0" value={settings.cooldown_secs.to_string()} oninput={on_cooldown_change} />
+                <div id="settings-cooldown-group" class="form-group row">
+                    <label id="settings-cooldown-label" for="settings-cooldown-input">{"Cooldown between downloads (seconds)"}</label>
+                    <input type="number" id="settings-cooldown-input" min="0" value={settings.cooldown_secs.to_string()} oninput={on_cooldown_change} />
                 </div>
 
-                <div class="form-group row">
-                    <label for="retry-on-empty">{"Retry failed downloads when queue empties"}</label>
-                    <input type="checkbox" id="retry-on-empty" checked={settings.retry_on_queue_empty} onchange={on_retry_on_queue_empty_change} />
+                <div id="settings-retry-on-empty-group" class="form-group row">
+                    <label id="settings-retry-on-empty-label" for="settings-retry-on-empty-checkbox">{"Retry failed downloads when queue empties"}</label>
+                    <input type="checkbox" id="settings-retry-on-empty-checkbox" checked={settings.retry_on_queue_empty} onchange={on_retry_on_queue_empty_change} />
                 </div>
 
-                <div class="form-group row">
-                    <label>{"Check for local libraries"}</label>
-                    <div style="display:flex; gap: 12px; align-items:center;">
-                        <button onclick={on_check_tools}>{"Check"}</button>
+                <div id="settings-local-libraries-group" class="form-group row">
+                    <label id="settings-local-libraries-label">{"Check for local libraries"}</label>
+                    <div id="settings-local-libraries-controls" style="display:flex; gap: 12px; align-items:center;">
+                        <button id="settings-check-tools-button" onclick={on_check_tools}>{"Check"}</button>
                         {
                             if let Some(stats) = (*libs).clone() {
                                 let ok_color = "#22c55e";
                                 let bad_color = "#ef4444";
                                 html!{
-                                    <div style="display:flex; gap: 16px; align-items:center; font-weight: 600;">
-                                        <span style={format!("display:inline-flex; gap:6px; align-items:center; color:{};", if stats.yt_dlp { ok_color } else { bad_color })}>
+                                    <div id="settings-tool-status-summary" style="display:flex; gap: 16px; align-items:center; font-weight: 600;">
+                                        <span id="settings-yt-dlp-status" style={format!("display:inline-flex; gap:6px; align-items:center; color:{};", if stats.yt_dlp { ok_color } else { bad_color })}>
                                             { if stats.yt_dlp { "✓" } else { "✗" } }{" yt-dlp"}
                                         </span>
-                                        <span style={format!("display:inline-flex; gap:6px; align-items:center; color:{};", if stats.gallery_dl { ok_color } else { bad_color })}>
+                                        <span id="settings-gallery-dl-status" style={format!("display:inline-flex; gap:6px; align-items:center; color:{};", if stats.gallery_dl { ok_color } else { bad_color })}>
                                             { if stats.gallery_dl { "✓" } else { "✗" } }{" gallery-dl"}
                                         </span>
-                                        <span style={format!("display:inline-flex; gap:6px; align-items:center; color:{};", if stats.ffmpeg { ok_color } else { bad_color })}>
+                                        <span id="settings-ffmpeg-status" style={format!("display:inline-flex; gap:6px; align-items:center; color:{};", if stats.ffmpeg { ok_color } else { bad_color })}>
                                             { if stats.ffmpeg { "✓" } else { "✗" } }{" ffmpeg"}
                                         </span>
                                     </div>
@@ -390,11 +399,11 @@ pub fn settings_page() -> Html {
                     if let Some(stats) = (*libs).clone() {
                         if stats.yt_dlp && stats.gallery_dl && stats.ffmpeg {
                             html!{
-                                <div class="form-group row">
-                                    <label for="use-system-binaries">{"Use local dependencies instead of sidecar"}</label>
+                                <div id="settings-system-binaries-group" class="form-group row">
+                                    <label id="settings-system-binaries-label" for="settings-system-binaries-checkbox">{"Use local dependencies instead of sidecar"}</label>
                                     <input
                                         type="checkbox"
-                                        id="use-system-binaries"
+                                        id="settings-system-binaries-checkbox"
                                         checked={settings.use_system_binaries}
                                         onchange={on_use_system_binaries_change}
                                     />
@@ -404,8 +413,8 @@ pub fn settings_page() -> Html {
                     } else { html!{} }
                 }
 
-                <div class="form-group center">
-                    <button onclick={on_save}>{"Save"}</button>
+                <div id="settings-save-group" class="form-group center">
+                    <button id="settings-save-button" onclick={on_save}>{"Save"}</button>
                 </div>
             </div>
         </main>

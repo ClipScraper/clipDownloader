@@ -263,7 +263,9 @@ pub async fn execute_download_job(
                                     });
                                     return Ok(finals.get(0).cloned());
                                 } else {
-                                    last_error.get_or_insert_with(|| format!("No files moved from {}", tmp_dir.display()));
+                                    last_error.get_or_insert_with(|| {
+                                        format!("No files moved from {}", tmp_dir.display())
+                                    });
                                 }
                             }
                             Ok((_ok, output, tmp_dir)) => {
@@ -332,7 +334,9 @@ pub async fn execute_download_job(
                         });
                         return Ok(finals.get(0).cloned());
                     } else {
-                        last_error.get_or_insert_with(|| format!("No files moved from {}", tmp_dir.display()));
+                        last_error.get_or_insert_with(|| {
+                            format!("No files moved from {}", tmp_dir.display())
+                        });
                     }
                 }
                 Ok((_ok, output, tmp_dir)) => {

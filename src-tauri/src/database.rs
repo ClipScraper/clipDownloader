@@ -119,6 +119,27 @@ pub fn set_status_by_id_conn(conn: &Connection, id: i64, status: DownloadStatus)
     Ok(updated)
 }
 
+pub fn set_status_bulk_conn(
+    conn: &Connection,
+    ids: &[i64],
+    status: DownloadStatus,
+) -> Result<usize> {
+    if ids.is_empty() {
+        return Ok(0);
+    }
+    let id_list = ids
+        .iter()
+        .map(|id| id.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    let token = status.as_str();
+    let updated = conn.execute(
+        &format!("UPDATE downloads SET status=?1, last_error=CASE WHEN ?1='error' THEN last_error ELSE NULL END WHERE id IN ({id_list}) AND status<>?1"),
+        [token],
+    )?;
+    Ok(updated)
+}
+
 pub fn set_last_error_by_id_conn(
     conn: &Connection,
     id: i64,
@@ -820,7 +841,13 @@ impl Database {
         mark_id_done_conn(&self.conn, id, path)
     }
 
-    pub fn link_exists_in_collection(&self, link: &str, platform: &str, user_handle: &str, origin: &str) -> Result<bool> {
+    pub fn link_exists_in_collection(
+        &self,
+        link: &str,
+        platform: &str,
+        user_handle: &str,
+        origin: &str,
+    ) -> Result<bool> {
         let norm = normalize_link(link.to_string());
         let mut stmt = self.conn.prepare(
             "SELECT link FROM downloads
