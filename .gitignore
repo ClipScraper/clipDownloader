@@ -30,4 +30,9 @@ target
 
 src-tauri/binaries/**
 
+# Bundled ffmpeg/ffprobe Windows binaries (~200MB each). Never commit these —
+# run.ps1 fetches them for local dev and the release workflow fetches them when
+# building a release. See .github/workflows/release.yaml "Prepare sidecars".
+src-tauri/resources/*.exe
+
 .sidecars/**

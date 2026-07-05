@@ -54,20 +54,33 @@ fn init_schema(conn: &Connection) -> Result<()> {
         "UPDATE downloads SET status='queued' WHERE status='queue'",
         [],
     )?;
-    ensure_last_error_column(conn)?;
+    // Older databases were created before these columns existed. `CREATE TABLE
+    // IF NOT EXISTS` above is a no-op for them, so migrate any missing columns.
+    ensure_column(
+        conn,
+        "output_format",
+        "ALTER TABLE downloads ADD COLUMN output_format TEXT NOT NULL DEFAULT 'default' CHECK (output_format IN ('default','audio','video'))",
+    )?;
+    ensure_column(
+        conn,
+        "last_error",
+        "ALTER TABLE downloads ADD COLUMN last_error TEXT",
+    )?;
     Ok(())
 }
 
-fn ensure_last_error_column(conn: &Connection) -> Result<()> {
+/// Add a column via the provided `ALTER TABLE ... ADD COLUMN` DDL if it does
+/// not already exist on the `downloads` table.
+fn ensure_column(conn: &Connection, column: &str, add_column_ddl: &str) -> Result<()> {
     let mut stmt = conn.prepare("PRAGMA table_info(downloads)")?;
     let mut rows = stmt.query([])?;
     while let Some(row) = rows.next()? {
         let column_name: String = row.get(1)?;
-        if column_name == "last_error" {
+        if column_name == column {
             return Ok(());
         }
     }
-    conn.execute("ALTER TABLE downloads ADD COLUMN last_error TEXT", [])?;
+    conn.execute(add_column_ddl, [])?;
     Ok(())
 }
 

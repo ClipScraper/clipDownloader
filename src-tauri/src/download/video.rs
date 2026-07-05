@@ -214,7 +214,7 @@ async fn probe_uploader(
     let mut first_line: Option<String> = None;
     while let Some(ev) = rx.recv().await {
         if let CommandEvent::Stdout(bytes) = ev {
-            let s = String::from_utf8_lossy(&bytes);
+            let s = crate::utils::text::decode_process_output(&bytes);
             for line in s.lines() {
                 let l = line.trim();
                 if !l.is_empty() && first_line.is_none() {
@@ -426,7 +426,7 @@ pub async fn run_yt_dlp_with_progress(
 
         match event {
             CommandEvent::Stdout(bytes) => {
-                let s = String::from_utf8_lossy(&bytes);
+                let s = crate::utils::text::decode_process_output(&bytes);
                 for line in s.lines() {
                     let l = line.trim();
                     all_output.push_str(l);
@@ -471,7 +471,7 @@ pub async fn run_yt_dlp_with_progress(
                 }
             }
             CommandEvent::Stderr(bytes) => {
-                let s = String::from_utf8_lossy(&bytes);
+                let s = crate::utils::text::decode_process_output(&bytes);
                 for line in s.lines() {
                     let l = line.trim();
                     if !l.is_empty() {

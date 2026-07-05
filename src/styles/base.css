@@ -7,8 +7,11 @@
   line-height: 24px;
   font-weight: 400;
 
-  color: #0f0f0f;
-  background-color: #f6f6f6;
+  /* App is a dark-themed UI: force dark regardless of the OS setting so the
+     dark-styled components (cards, action bars, icons) render as designed. */
+  color-scheme: dark;
+  color: #f6f6f6;
+  background-color: #2f2f2f;
 
   font-synthesis: none;
   text-rendering: optimizeLegibility;
@@ -18,6 +21,7 @@
 }
 
 body {
+  background-color: #2f2f2f;
   -webkit-user-select: none; /* Safari */
   -ms-user-select: none; /* IE 10 and IE 11 */
   user-select: none; /* Standard syntax */
@@ -112,8 +116,8 @@ button {
   font-size: 1em;
   font-weight: 500;
   font-family: inherit;
-  color: #0f0f0f;
-  background-color: #ffffff;
+  color: #ffffff;
+  background-color: #0f0f0f98;
   transition: border-color 0.25s;
   box-shadow: 0 2px 2px rgba(0, 0, 0, 0.2);
 }
@@ -127,7 +131,7 @@ button:hover {
 }
 button:active {
   border-color: #396cd8;
-  background-color: #e8e8e8;
+  background-color: #0f0f0f69;
 }
 
 /* Settings Form Styles */
@@ -207,8 +211,8 @@ select {
   font-size: 1em;
   font-weight: 500;
   font-family: inherit;
-  color: #0f0f0f;
-  background-color: #ffffff;
+  color: #ffffff;
+  background-color: #0f0f0f98;
   transition: border-color 0.25s;
   box-shadow: 0 2px 2px rgba(0, 0, 0, 0.2);
 }
