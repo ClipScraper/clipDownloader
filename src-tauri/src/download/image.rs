@@ -107,7 +107,7 @@ pub async fn run_gallery_dl_to_temp(
 
         match ev {
             CommandEvent::Stdout(bytes) => {
-                let s = String::from_utf8_lossy(&bytes);
+                let s = crate::utils::text::decode_process_output(&bytes);
                 for line in s.lines() {
                     let l = line.trim();
                     if !l.is_empty() {
@@ -121,7 +121,7 @@ pub async fn run_gallery_dl_to_temp(
                 }
             }
             CommandEvent::Stderr(bytes) => {
-                let s = String::from_utf8_lossy(&bytes);
+                let s = crate::utils::text::decode_process_output(&bytes);
                 all_output.push_str(&s);
             }
             CommandEvent::Terminated(code) => {

@@ -1,5 +1,9 @@
 [build]
 target = "./index.html"
+# Assets are served from the app's own bundle (tauri://localhost), so
+# Subresource Integrity adds no security value and its hashes intermittently
+# get blocked in the WebView. Disable it.
+no_sri = true
 
 [watch]
 ignore = ["./src-tauri"]

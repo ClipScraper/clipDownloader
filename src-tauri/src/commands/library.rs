@@ -27,38 +27,57 @@ fn open_with_default_app(path: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn open_folder(path: &str) -> Result<(), String> {
-    let p = PathBuf::from(path);
-    let dir = p.parent().ok_or_else(|| "no parent folder".to_string())?;
-    let dir_str = dir.to_string_lossy().to_string();
-
+/// Open a directory itself in the OS file manager.
+fn reveal_dir(dir: &str) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
         Command::new("explorer")
-            .arg(dir_str)
+            .arg(dir)
             .spawn()
             .map_err(|e| format!("failed to open folder: {e}"))?;
     }
     #[cfg(target_os = "macos")]
     {
         Command::new("open")
-            .arg(dir_str)
+            .arg(dir)
             .spawn()
             .map_err(|e| format!("failed to open folder: {e}"))?;
     }
     #[cfg(target_os = "linux")]
     {
         Command::new("xdg-open")
-            .arg(dir_str)
+            .arg(dir)
             .spawn()
             .map_err(|e| format!("failed to open folder: {e}"))?;
     }
     Ok(())
 }
 
-fn path_exists_ok(path: &str) -> bool {
+/// Resolve a path stored in the database to one that actually exists on disk.
+///
+/// Older builds mis-decoded yt-dlp's cp1252 stdout as UTF-8, corrupting any
+/// non-ASCII characters in the stored download path (e.g. `Téléchargements`
+/// became `T�l�chargements`). Only the download-root prefix is affected, so if
+/// the stored path is missing we re-root the below-root components under the
+/// correctly-encoded `download_directory` from settings.
+fn resolve_stored_path(path: &str) -> Option<PathBuf> {
     let p = PathBuf::from(path);
-    p.exists() && p.is_file()
+    if p.exists() {
+        return Some(p);
+    }
+    let root = PathBuf::from(crate::settings::load_settings().download_directory);
+    let root_depth = root.components().count();
+    let comps: Vec<_> = p.components().collect();
+    if comps.len() > root_depth {
+        let mut rebuilt = root;
+        for c in &comps[root_depth..] {
+            rebuilt.push(c.as_os_str());
+        }
+        if rebuilt.exists() {
+            return Some(rebuilt);
+        }
+    }
+    None
 }
 
 #[tauri::command]
@@ -67,27 +86,34 @@ pub async fn open_file_for_link(link: String) -> Result<(), String> {
     let Some((_id, path)) = db.find_done_row_by_link(&link).map_err(|e| e.to_string())? else {
         return Ok(());
     };
-    if !path_exists_ok(&path) {
+    let Some(real) = resolve_stored_path(&path).filter(|p| p.is_file()) else {
         return Ok(());
-    }
-    open_with_default_app(&path)
+    };
+    open_with_default_app(&real.to_string_lossy())
 }
 
 #[tauri::command]
 pub async fn open_folder_for_link(link: String) -> Result<(), String> {
+    let s = crate::settings::load_settings();
     let db = crate::database::Database::new().map_err(|e| e.to_string())?;
     let Some((_id, path)) = db.find_done_row_by_link(&link).map_err(|e| e.to_string())? else {
         return Ok(());
     };
-    let p = PathBuf::from(&path);
-    let dir = if p.exists() {
-        path.clone()
-    } else if let Some(parent) = p.parent().filter(|d| d.exists()) {
-        parent.to_string_lossy().to_string()
-    } else {
-        return Ok(());
-    };
-    open_folder(&dir)
+
+    // Prefer the folder containing the resolved file; otherwise fall back to
+    // the configured download root so the user still lands somewhere useful.
+    let dir = resolve_stored_path(&path)
+        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+        .filter(|d| d.exists())
+        .or_else(|| {
+            let root = PathBuf::from(&s.download_directory);
+            root.exists().then_some(root)
+        });
+
+    match dir {
+        Some(d) => reveal_dir(&d.to_string_lossy()),
+        None => Ok(()),
+    }
 }
 
 #[tauri::command]
@@ -98,7 +124,7 @@ pub async fn open_platform_folder(platform: String) -> Result<(), String> {
     if !p.exists() {
         return Ok(());
     }
-    open_folder(&p.to_string_lossy())
+    reveal_dir(&p.to_string_lossy())
 }
 
 #[tauri::command]
@@ -114,7 +140,7 @@ pub async fn open_collection_folder(
     if !p.exists() {
         return Ok(());
     }
-    open_folder(&p.to_string_lossy())
+    reveal_dir(&p.to_string_lossy())
 }
 
 #[tauri::command]
