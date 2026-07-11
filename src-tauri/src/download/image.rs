@@ -90,9 +90,6 @@ pub async fn run_gallery_dl_to_temp(
     let mut ok = false;
 
     loop {
-        // Yield to allow other tasks (like event emission) to run
-        tokio::task::yield_now().await;
-
         let ev = match timeout(Duration::from_secs(180), rx.recv()).await {
             Ok(Some(e)) => e,
             Ok(None) => break,

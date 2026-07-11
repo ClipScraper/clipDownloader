@@ -410,11 +410,12 @@ pub async fn run_yt_dlp_with_progress(
     let mut file_skipped = false;
     let mut ok = false;
     let mut last_stage: Option<&'static str> = None;
+    // Throttle progress emission: yt-dlp prints a progress line very frequently,
+    // and each emitted event crosses the IPC boundary and forces a frontend
+    // re-render. Only emit on a >=1% change (or completion).
+    let mut last_progress: f32 = -1.0;
 
     loop {
-        // Yield to allow other tasks (like event emission) to run
-        tokio::task::yield_now().await;
-
         let event = match timeout(Duration::from_secs(180), rx.recv()).await {
             Ok(Some(e)) => e,
             Ok(None) => break,
@@ -452,12 +453,15 @@ pub async fn run_yt_dlp_with_progress(
                     }
 
                     if let Some(progress) = parse_progress_percentage(l) {
-                        (emitter)(DownloadEvent::Progress {
-                            id,
-                            progress,
-                            downloaded_bytes: 0,
-                            total_bytes: None,
-                        });
+                        if (progress - last_progress).abs() >= 0.01 || progress >= 1.0 {
+                            last_progress = progress;
+                            (emitter)(DownloadEvent::Progress {
+                                id,
+                                progress,
+                                downloaded_bytes: 0,
+                                total_bytes: None,
+                            });
+                        }
                     } else if (l.contains("[download]") || l.contains("[info]"))
                         && !l.contains("Starting download for")
                         && !l.contains("Sleeping")

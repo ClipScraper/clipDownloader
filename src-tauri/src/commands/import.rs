@@ -24,6 +24,13 @@ pub async fn import_csv_to_db(
 }
 
 pub async fn import_csv_text(csv_text: String) -> Result<u64, String> {
+    // CSV parsing + rusqlite are blocking; keep them off the async runtime.
+    tauri::async_runtime::spawn_blocking(move || import_csv_text_blocking(csv_text))
+        .await
+        .map_err(|e| format!("Join error: {e}"))?
+}
+
+fn import_csv_text_blocking(csv_text: String) -> Result<u64, String> {
     println!("[BACKEND] [commands/import.rs] [import_csv_to_db]");
 
     let mut rdr = csv::ReaderBuilder::new()
@@ -33,6 +40,11 @@ pub async fn import_csv_text(csv_text: String) -> Result<u64, String> {
 
     // Initialize database connection
     let db = crate::database::Database::new().map_err(|e| e.to_string())?;
+
+    // Batch every insert into one transaction: N implicit transactions (one
+    // fsync each) collapse into a single commit. The duplicate check reads the
+    // same connection, so rows inserted earlier in the loop are still visible.
+    db.with_transaction(|| {
     let mut inserted: u64 = 0;
 
     // Process each row
@@ -143,4 +155,5 @@ pub async fn import_csv_text(csv_text: String) -> Result<u64, String> {
     }
 
     Ok(inserted)
+    })
 }

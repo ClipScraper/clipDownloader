@@ -1,9 +1,27 @@
 use crate::database::{DefaultOutput, DeleteMode, OnDuplicate, Settings};
+use once_cell::sync::Lazy;
+use std::sync::RwLock;
 use std::{
     fs,
     path::{Path, PathBuf},
 };
 use uuid::Uuid;
+
+/// In-memory settings cache. `load_settings` is called many times per download
+/// (pipeline + each yt-dlp/gallery-dl helper); without a cache each call did a
+/// file read, a temp-file write-probe, and a full JSON rewrite. The cache is
+/// populated on first read and refreshed by `save_settings`.
+static SETTINGS_CACHE: Lazy<RwLock<Option<Settings>>> = Lazy::new(|| RwLock::new(None));
+
+fn cache_get() -> Option<Settings> {
+    SETTINGS_CACHE.read().ok().and_then(|g| g.clone())
+}
+
+fn cache_set(settings: &Settings) {
+    if let Ok(mut g) = SETTINGS_CACHE.write() {
+        *g = Some(settings.clone());
+    }
+}
 
 /// Where we store settings.json on macOS:
 ///   ~/Library/Application Support/clip-downloader/settings.json
@@ -90,8 +108,20 @@ fn validated_download_dir<S: Into<String>>(candidate: S) -> String {
     path.to_string_lossy().to_string()
 }
 
-/// Load settings from JSON, **validate the download path**, and persist any fixups.
+/// Load settings, using the in-memory cache when warm. The first (cold) call
+/// reads from disk, validates the download directory, and persists any fixups;
+/// subsequent calls are served from memory until `save_settings` refreshes it.
 pub fn load_settings() -> Settings {
+    if let Some(cached) = cache_get() {
+        return cached;
+    }
+    let settings = load_settings_from_disk();
+    cache_set(&settings);
+    settings
+}
+
+/// Load settings from JSON, **validate the download path**, and persist any fixups.
+fn load_settings_from_disk() -> Settings {
     let path = settings_json_path();
 
     // Ensure parent directory exists
@@ -148,6 +178,9 @@ pub fn save_settings(settings: &Settings) -> Result<(), String> {
     let body = serde_json::to_string_pretty(&to_write)
         .map_err(|e| format!("Failed to serialize settings: {e}"))?;
     fs::write(&path, body).map_err(|e| format!("Failed to write settings.json: {e}"))?;
+
+    // Keep the cache in sync so readers see the update without touching disk.
+    cache_set(&to_write);
     Ok(())
 }
 

@@ -362,14 +362,22 @@ async fn enqueue_ids(
 
     let db_clone = db.clone();
     let ids_clone = to_enqueue.clone();
-    let changed = tauri::async_runtime::spawn_blocking(move || {
+    let changed = match tauri::async_runtime::spawn_blocking(move || {
         let conn = db_clone.blocking_lock();
         set_status_bulk_conn(&*conn, &ids_clone, status)
     })
     .await
-    .ok()
-    .and_then(Result::ok)
-    .unwrap_or(0);
+    {
+        Ok(Ok(n)) => n,
+        Ok(Err(e)) => {
+            tracing::warn!("bulk status update failed: {e}");
+            0
+        }
+        Err(e) => {
+            tracing::warn!("bulk status update join error: {e}");
+            0
+        }
+    };
 
     if changed > 0 {
         emit_event(
@@ -587,10 +595,10 @@ async fn set_last_error(
 }
 
 fn emit_event(app: &AppHandle, event: DownloadEvent) {
+    // No unconditional stdout per event: download output is chatty and this ran
+    // for every progress/message line regardless of the debug-logs setting.
     if let Err(err) = app.emit("download_event", &event) {
-        eprintln!("emit_event failed: {err}");
-    } else {
-        println!("[DownloadEvent] {:?}", event);
+        tracing::warn!("emit_event failed: {err}");
     }
 }
 

@@ -147,7 +147,19 @@ pub fn settings_page() -> Html {
                 .checked();
             let mut s = (*settings).clone();
             s.debug_logs = checked;
+            let settings_to_save = s.clone();
             settings.set(s);
+            spawn_local(async move {
+                let args = serde_wasm_bindgen::to_value(
+                    &serde_json::json!({ "settings": settings_to_save }),
+                )
+                .unwrap();
+                let result = invoke("save_settings", args).await;
+                if !result.is_null() {
+                    web_sys::console::error_1(&"Failed to save debug log setting:".into());
+                    web_sys::console::error_1(&result);
+                }
+            });
         })
     };
 

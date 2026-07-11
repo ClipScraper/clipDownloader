@@ -119,7 +119,7 @@ pub async fn delete_rows_by_platform(platform: String) -> Result<u64, String> {
     let pairs = db
         .list_ids_and_paths_by_platform(&platform)
         .map_err(|e| e.to_string())?;
-    let (ids, paths): (Vec<_>, Vec<_>) = pairs.into_iter().unzip();
+    let (_ids, paths): (Vec<_>, Vec<_>) = pairs.into_iter().unzip();
     if matches!(mode, crate::database::DeleteMode::Hard) {
         for p in paths.into_iter() {
             if !p.is_empty() && p != "unknown_path" {
@@ -127,10 +127,7 @@ pub async fn delete_rows_by_platform(platform: String) -> Result<u64, String> {
             }
         }
     }
-    let mut deleted: u64 = 0;
-    for id in ids.into_iter() {
-        deleted += db.delete_row_by_id(id).map_err(|e| e.to_string())? as u64;
-    }
+    let deleted = db.delete_by_platform(&platform).map_err(|e| e.to_string())? as u64;
     Ok(deleted)
 }
 
@@ -146,7 +143,7 @@ pub async fn delete_rows_by_collection(
     let pairs = db
         .list_ids_and_paths_by_collection(&platform, &handle, &origin)
         .map_err(|e| e.to_string())?;
-    let (ids, paths): (Vec<_>, Vec<_>) = pairs.into_iter().unzip();
+    let (_ids, paths): (Vec<_>, Vec<_>) = pairs.into_iter().unzip();
     if matches!(mode, crate::database::DeleteMode::Hard) {
         for p in paths.into_iter() {
             if !p.is_empty() && p != "unknown_path" {
@@ -154,10 +151,9 @@ pub async fn delete_rows_by_collection(
             }
         }
     }
-    let mut deleted: u64 = 0;
-    for id in ids.into_iter() {
-        deleted += db.delete_row_by_id(id).map_err(|e| e.to_string())? as u64;
-    }
+    let deleted = db
+        .delete_by_collection(&platform, &handle, &origin)
+        .map_err(|e| e.to_string())? as u64;
     Ok(deleted)
 }
 
@@ -166,17 +162,16 @@ pub async fn delete_rows_by_link(link: String) -> Result<u64, String> {
     use std::fs;
     let db = crate::database::Database::new().map_err(|e| e.to_string())?;
     let mode = crate::settings::load_settings().delete_mode;
-    let pairs = db
-        .list_ids_and_paths_by_link(&link)
-        .map_err(|e| e.to_string())?;
-    let mut deleted: u64 = 0;
-    for (id, path) in pairs.into_iter() {
-        if matches!(mode, crate::database::DeleteMode::Hard) {
+    if matches!(mode, crate::database::DeleteMode::Hard) {
+        let pairs = db
+            .list_ids_and_paths_by_link(&link)
+            .map_err(|e| e.to_string())?;
+        for (_id, path) in pairs.into_iter() {
             if !path.is_empty() && path != "unknown_path" {
                 let _ = fs::remove_file(&path);
             }
         }
-        deleted += db.delete_row_by_id(id).map_err(|e| e.to_string())? as u64;
     }
+    let deleted = db.delete_by_link(&link).map_err(|e| e.to_string())? as u64;
     Ok(deleted)
 }

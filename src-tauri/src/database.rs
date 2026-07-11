@@ -2,9 +2,44 @@ use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection, Result};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::sync::Once;
+use std::time::Duration;
 
 pub struct Database {
     conn: Connection,
+}
+
+/// Schema creation + migrations are process-global work: they only need to run
+/// once against the shared database file, not on every connection open. Guard
+/// them so hot command paths that open short-lived connections don't repeatedly
+/// re-run `CREATE TABLE`/`ALTER TABLE`/`PRAGMA table_info` scans.
+static SCHEMA_INIT: Once = Once::new();
+
+/// Per-connection configuration. These pragmas are cheap and must be applied to
+/// every connection (WAL is persistent at the DB level, but `busy_timeout` and
+/// `foreign_keys` are per-connection). WAL + a busy timeout let the manager's
+/// long-lived connection and the commands' short-lived connections write
+/// concurrently without immediate `SQLITE_BUSY` ("database is locked") errors.
+fn configure_connection(conn: &Connection) -> Result<()> {
+    conn.busy_timeout(Duration::from_secs(5))?;
+    // `execute_batch` tolerates the row that `PRAGMA journal_mode` returns.
+    conn.execute_batch(
+        "PRAGMA journal_mode=WAL;
+         PRAGMA synchronous=NORMAL;
+         PRAGMA foreign_keys=ON;",
+    )?;
+    Ok(())
+}
+
+/// Run schema init/migrations at most once per process. The first caller
+/// (startup, via `open_connection` in `lib.rs`) performs the work and any error
+/// propagates; later callers are a no-op.
+fn init_schema_once(conn: &Connection) -> Result<()> {
+    let mut result = Ok(());
+    SCHEMA_INIT.call_once(|| {
+        result = init_schema(conn);
+    });
+    result
 }
 
 fn init_schema(conn: &Connection) -> Result<()> {
@@ -66,6 +101,16 @@ fn init_schema(conn: &Connection) -> Result<()> {
         "last_error",
         "ALTER TABLE downloads ADD COLUMN last_error TEXT",
     )?;
+
+    // Indexes for the columns the app filters/orders by. Without these every
+    // list/move/delete/lookup is a full table scan that degrades linearly as the
+    // library grows.
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_downloads_status ON downloads(status);
+         CREATE INDEX IF NOT EXISTS idx_downloads_link ON downloads(link);
+         CREATE INDEX IF NOT EXISTS idx_downloads_collection
+             ON downloads(platform, user_handle, origin);",
+    )?;
     Ok(())
 }
 
@@ -87,7 +132,8 @@ fn ensure_column(conn: &Connection, column: &str, add_column_ddl: &str) -> Resul
 pub fn open_connection() -> Result<Connection> {
     let db_path = Database::get_db_path()?;
     let conn = Connection::open(&db_path)?;
-    init_schema(&conn)?;
+    configure_connection(&conn)?;
+    init_schema_once(&conn)?;
     Ok(conn)
 }
 
@@ -625,6 +671,47 @@ impl Database {
             .conn
             .execute("DELETE FROM downloads WHERE id=?1", [id])?;
         Ok(n)
+    }
+
+    /// Delete every row for a platform in a single statement.
+    pub fn delete_by_platform(&self, platform: &str) -> Result<usize> {
+        self.conn
+            .execute("DELETE FROM downloads WHERE platform=?1", [platform])
+    }
+
+    /// Delete every row in a (platform, handle, origin) collection in one statement.
+    pub fn delete_by_collection(
+        &self,
+        platform: &str,
+        handle: &str,
+        origin: &str,
+    ) -> Result<usize> {
+        self.conn.execute(
+            "DELETE FROM downloads WHERE platform=?1 AND user_handle=?2 AND origin=?3",
+            [platform, handle, origin],
+        )
+    }
+
+    /// Delete every row matching a link in one statement.
+    pub fn delete_by_link(&self, link: &str) -> Result<usize> {
+        self.conn
+            .execute("DELETE FROM downloads WHERE link=?1", [link])
+    }
+
+    /// Run `f` inside a single transaction. On `Ok` the transaction is committed;
+    /// on `Err` (or panic) it is rolled back. Lets callers batch many writes into
+    /// one fsync instead of paying the implicit-transaction cost per statement.
+    pub fn with_transaction<T>(
+        &self,
+        f: impl FnOnce() -> std::result::Result<T, String>,
+    ) -> std::result::Result<T, String> {
+        let tx = self
+            .conn
+            .unchecked_transaction()
+            .map_err(|e| e.to_string())?;
+        let out = f()?;
+        tx.commit().map_err(|e| e.to_string())?;
+        Ok(out)
     }
 
     /// Utility: ids and paths for all rows under a platform.
