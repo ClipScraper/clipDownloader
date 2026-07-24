@@ -192,10 +192,7 @@ pub fn downloads_page(props: &Props) -> Html {
             let section_id = title.to_lowercase(); // "backlog" or "queue"
 
             // platform -> (handle, type, Platform, ContentType) -> rows
-            let mut map: BTreeMap<
-                String,
-                BTreeMap<(String, String, Platform, ContentType), Vec<ClipRow>>,
-            > = BTreeMap::new();
+            let mut map: BTreeMap<String, BTreeMap<(String, String, Platform, ContentType), Vec<ClipRow>>> = BTreeMap::new();
 
             // De-dupe by (platform, handle, type, link) within this section
             let mut seen = HashSet::<String>::new();
@@ -207,22 +204,12 @@ pub fn downloads_page(props: &Props) -> Html {
                 let plat = platform_str(&r.platform).to_string();
                 let typ = content_type_str(&r.content_type).to_string();
 
-                let dedup_key = format!(
-                    "{}|{}|{}|{}",
-                    plat,
-                    r.handle.to_lowercase().trim(),
-                    typ,
-                    r.link.trim()
-                );
+                let dedup_key = format!("{}|{}|{}|{}", plat, r.handle.to_lowercase().trim(), typ, r.link.trim());
                 if !seen.insert(dedup_key) {
                     continue;
                 }
 
-                map.entry(plat)
-                    .or_default()
-                    .entry((r.handle.clone(), typ, r.platform, r.content_type))
-                    .or_default()
-                    .push(r);
+                map.entry(plat).or_default().entry((r.handle.clone(), typ, r.platform, r.content_type)).or_default().push(r);
             }
 
             html! {
@@ -598,19 +585,14 @@ pub fn downloads_page(props: &Props) -> Html {
         move |rows_in: Vec<ClipRow>| -> Html {
             use std::collections::BTreeMap;
 
-            let mut map: BTreeMap<String, BTreeMap<(String, String), Vec<ClipRow>>> =
-                BTreeMap::new();
+            let mut map: BTreeMap<String, BTreeMap<(String, String), Vec<ClipRow>>> = BTreeMap::new();
             for mut r in rows_in {
                 if r.handle.trim().is_empty() {
                     r.handle = "Unknown".into();
                 }
                 let plat = platform_str(&r.platform).to_string();
                 let typ = content_type_str(&r.content_type).to_string();
-                map.entry(plat)
-                    .or_default()
-                    .entry((r.handle.clone(), typ))
-                    .or_default()
-                    .push(r);
+                map.entry(plat).or_default().entry((r.handle.clone(), typ)).or_default().push(r);
             }
 
             html! {

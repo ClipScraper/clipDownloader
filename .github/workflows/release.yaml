@@ -339,6 +339,47 @@ jobs:
             Get-ChildItem -Recurse "$env:BUNDLE_DIR" | ForEach-Object { $_.FullName }
           }
 
+      - name: Azure Login for Microsoft code signing (Windows)
+        if: startsWith(matrix.os, 'windows')
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Install AzureSignTool (Windows)
+        if: startsWith(matrix.os, 'windows')
+        shell: powershell
+        run: dotnet tool install --global AzureSignTool
+
+      - name: Sign Windows release artifacts (Key Vault)
+        if: startsWith(matrix.os, 'windows')
+        shell: powershell
+        env:
+          AZURE_KEYVAULT_NAME: ${{ secrets.AZURE_KEYVAULT_NAME }}
+          AZURE_CERT_NAME: ${{ secrets.AZURE_CERT_NAME }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          if (-not $env:AZURE_KEYVAULT_NAME) { throw "AZURE_KEYVAULT_NAME secret is not set" }
+          if (-not $env:AZURE_CERT_NAME) { throw "AZURE_CERT_NAME secret is not set" }
+
+          $targets = Get-ChildItem -Path "$env:BUNDLE_DIR" -Recurse -File |
+            Where-Object { $_.Extension -iin ".exe", ".msi" }
+          if (-not $targets) { throw "No Windows .exe or .msi artifacts found under $env:BUNDLE_DIR" }
+
+          $vaultUrl = "https://$env:AZURE_KEYVAULT_NAME.vault.azure.net/"
+          $token = az account get-access-token --resource "https://vault.azure.net" --query accessToken -o tsv
+          foreach ($target in $targets) {
+            Write-Host "Signing $($target.FullName)"
+            AzureSignTool sign `
+              -kvu $vaultUrl `
+              -kvc $env:AZURE_CERT_NAME `
+              -kva $token `
+              -tr "http://timestamp.digicert.com" `
+              -td sha256 `
+              -fd sha256 `
+              $target.FullName
+            if ($LASTEXITCODE -ne 0) { throw "AzureSignTool failed with exit code $LASTEXITCODE" }
+          }
+
       # Verify whole app and (best-effort) staple
       - name: Verify & Staple (macOS)
         if: startsWith(matrix.os, 'macos')

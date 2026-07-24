@@ -248,8 +248,7 @@ pub fn home_page(props: &Props) -> Html {
                 let active_download_id = active_download_id.clone();
                 async move {
                     if let Some(id) = *active_download_id {
-                        let args =
-                            serde_wasm_bindgen::to_value(&serde_json::json!({ "id": id })).unwrap();
+                        let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "id": id })).unwrap();
                         let _ = invoke("cancel_download", args).await;
                     }
                 }
@@ -286,26 +285,18 @@ pub fn home_page(props: &Props) -> Html {
                     web_sys::console::log_1(&format!("Files found: {}", files.length()).into());
                     if files.length() > 0 {
                         if let Some(file) = files.get(0) {
-                            log::info(
-                                "csv_drop_browser",
-                                serde_json::json!({ "filename": file.name() }),
-                            );
+                            log::info("csv_drop_browser", serde_json::json!({ "filename": file.name() }));
                             web_sys::console::log_1(&format!("File name: {}", file.name()).into());
                             let file_reader = web_sys::FileReader::new().unwrap();
                             file_reader.read_as_text(&file).unwrap();
                             let on_csv_load = on_csv_load.clone();
                             let onload = Closure::wrap(Box::new(move |e: web_sys::ProgressEvent| {
                                 web_sys::console::log_1(&"File loaded".into());
-                                let reader: web_sys::FileReader =
-                                    e.target().unwrap().dyn_into().unwrap();
+                                let reader: web_sys::FileReader = e.target().unwrap().dyn_into().unwrap();
                                 let csv_text = reader.result().unwrap().as_string().unwrap();
-                                log::info(
-                                    "csv_drop_loaded",
-                                    serde_json::json!({ "bytes": csv_text.len() }),
-                                );
+                                log::info("csv_drop_loaded", serde_json::json!({ "bytes": csv_text.len() }));
                                 on_csv_load.emit(csv_text);
-                            })
-                                as Box<dyn FnMut(_)>);
+                            }) as Box<dyn FnMut(_)>);
                             file_reader.set_onload(Some(onload.as_ref().unchecked_ref()));
                             onload.forget();
                         }

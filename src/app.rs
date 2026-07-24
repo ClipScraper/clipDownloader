@@ -76,10 +76,7 @@ fn default_stage_text(row: &ClipRow) -> String {
     }
 }
 
-fn merge_download_entries(
-    previous: &HashMap<i64, DownloadEntry>,
-    rows: Vec<ClipRow>,
-) -> HashMap<i64, DownloadEntry> {
+fn merge_download_entries(previous: &HashMap<i64, DownloadEntry>, rows: Vec<ClipRow>) -> HashMap<i64, DownloadEntry> {
     let mut map = HashMap::new();
 
     for row in rows {
@@ -125,11 +122,7 @@ fn merge_download_entries(
                 if entry.row.last_error.is_none() {
                     entry.row.last_error = entry.last_message.clone();
                 }
-                entry.stage_text = entry
-                    .row
-                    .last_error
-                    .clone()
-                    .unwrap_or_else(|| "Failed".into());
+                entry.stage_text = entry.row.last_error.clone().unwrap_or_else(|| "Failed".into());
             }
             DownloadStatus::Done | DownloadStatus::Canceled => {}
         }
@@ -163,20 +156,12 @@ fn summarize_download_message(message: &str) -> String {
     trimmed.to_string()
 }
 
-fn commit_download_map(
-    downloads: &UseStateHandle<HashMap<i64, DownloadEntry>>,
-    downloads_ref: &Rc<RefCell<HashMap<i64, DownloadEntry>>>,
-    next: HashMap<i64, DownloadEntry>,
-) {
+fn commit_download_map(downloads: &UseStateHandle<HashMap<i64, DownloadEntry>>, downloads_ref: &Rc<RefCell<HashMap<i64, DownloadEntry>>>, next: HashMap<i64, DownloadEntry>) {
     *downloads_ref.borrow_mut() = next.clone();
     downloads.set(next);
 }
 
-fn spawn_refresh_downloads(
-    downloads: UseStateHandle<HashMap<i64, DownloadEntry>>,
-    downloads_ref: Rc<RefCell<HashMap<i64, DownloadEntry>>>,
-    ready: UseStateHandle<bool>,
-) {
+fn spawn_refresh_downloads(downloads: UseStateHandle<HashMap<i64, DownloadEntry>>, downloads_ref: Rc<RefCell<HashMap<i64, DownloadEntry>>>, ready: UseStateHandle<bool>) {
     spawn_local(async move {
         match invoke("refresh_downloads_snapshot", JsValue::NULL).await {
             Ok(js) => match serde_wasm_bindgen::from_value::<Vec<ClipRow>>(js) {
@@ -187,9 +172,7 @@ fn spawn_refresh_downloads(
                     commit_download_map(&downloads, &downloads_ref, next);
                 }
                 Err(err) => {
-                    web_sys::console::error_1(
-                        &format!("deserialize(refresh_downloads_snapshot) failed: {err}").into(),
-                    );
+                    web_sys::console::error_1(&format!("deserialize(refresh_downloads_snapshot) failed: {err}").into());
                 }
             },
             Err(e) => log_invoke_err("refresh_downloads_snapshot", e),
@@ -198,12 +181,7 @@ fn spawn_refresh_downloads(
     });
 }
 
-fn schedule_download_refresh(
-    refresh_pending: Rc<Cell<bool>>,
-    downloads: UseStateHandle<HashMap<i64, DownloadEntry>>,
-    downloads_ref: Rc<RefCell<HashMap<i64, DownloadEntry>>>,
-    ready: UseStateHandle<bool>,
-) {
+fn schedule_download_refresh(refresh_pending: Rc<Cell<bool>>, downloads: UseStateHandle<HashMap<i64, DownloadEntry>>, downloads_ref: Rc<RefCell<HashMap<i64, DownloadEntry>>>, ready: UseStateHandle<bool>) {
     if refresh_pending.get() {
         return;
     }
@@ -252,10 +230,7 @@ fn spawn_import_from_path(path: String) {
                 web_sys::console::log_1(&"✅ Imported CSV from drop (backend)".into())
             }
             Err(e) => {
-                log::error(
-                    "csv_drop_failed",
-                    serde_json::json!({ "error": format!("{e:?}") }),
-                );
+                log::error("csv_drop_failed", serde_json::json!({ "error": format!("{e:?}") }));
                 log_invoke_err("read_csv_from_path", e)
             }
         }
@@ -273,16 +248,10 @@ async fn start_dragdrop_listener() {
                 let on = js_sys::Function::from(on_fn);
                 let handler = Closure::<dyn FnMut(JsValue)>::new(move |event: JsValue| {
                     web_sys::console::log_1(&"🔥 onDragDropEvent fired".into());
-                    let payload = js_sys::Reflect::get(&event, &JsValue::from_str("payload"))
-                        .unwrap_or(event.clone());
-                    let typ = js_sys::Reflect::get(&payload, &JsValue::from_str("type"))
-                        .ok()
-                        .and_then(|v| v.as_string())
-                        .unwrap_or_default();
+                    let payload = js_sys::Reflect::get(&event, &JsValue::from_str("payload")).unwrap_or(event.clone());
+                    let typ = js_sys::Reflect::get(&payload, &JsValue::from_str("type")).ok().and_then(|v| v.as_string()).unwrap_or_default();
                     if typ == "drop" {
-                        if let Ok(paths) =
-                            js_sys::Reflect::get(&payload, &JsValue::from_str("paths"))
-                        {
+                        if let Ok(paths) = js_sys::Reflect::get(&payload, &JsValue::from_str("paths")) {
                             let arr = js_sys::Array::from(&paths);
                             if arr.length() > 0 {
                                 if let Some(path) = arr.get(0).as_string() {
@@ -298,10 +267,7 @@ async fn start_dragdrop_listener() {
                 web_sys::console::log_1(&"✅ attached onDragDropEvent listener".into());
             }
         }
-        log::debug(
-            "dragdrop_listener_attached",
-            serde_json::json!({ "attached": attached }),
-        );
+        log::debug("dragdrop_listener_attached", serde_json::json!({ "attached": attached }));
     }
 
     if !attached {
@@ -361,9 +327,7 @@ pub fn app() -> Html {
                     if let Ok(s) = serde_wasm_bindgen::from_value::<Settings>(loaded) {
                         settings.set(s.clone());
                         let paused = !s.download_automatically;
-                        let args =
-                            serde_wasm_bindgen::to_value(&serde_json::json!({ "paused": paused }))
-                                .unwrap();
+                        let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "paused": paused })).unwrap();
                         let _ = invoke("set_download_paused", args).await;
                         let _ = invoke("refresh_download_settings", JsValue::NULL).await;
                     }
@@ -386,11 +350,7 @@ pub fn app() -> Html {
         let downloads_ref = downloads_ref.clone();
         let downloads_ready = downloads_ready.clone();
         use_effect_with((), move |_| {
-            spawn_refresh_downloads(
-                downloads.clone(),
-                downloads_ref.clone(),
-                downloads_ready.clone(),
-            );
+            spawn_refresh_downloads(downloads.clone(), downloads_ref.clone(), downloads_ready.clone());
             || ()
         });
     }
@@ -401,11 +361,7 @@ pub fn app() -> Html {
         let downloads_ready = downloads_ready.clone();
         use_effect_with(*page, move |p| {
             if *p == Page::Downloads {
-                spawn_refresh_downloads(
-                    downloads.clone(),
-                    downloads_ref.clone(),
-                    downloads_ready.clone(),
-                );
+                spawn_refresh_downloads(downloads.clone(), downloads_ref.clone(), downloads_ready.clone());
             }
             || ()
         });
@@ -422,32 +378,16 @@ pub fn app() -> Html {
                 #[derive(serde::Deserialize, Debug)]
                 #[serde(tag = "type")]
                 enum DownloadEventPayload {
-                    StatusChanged {
-                        id: i64,
-                        status: DownloadStatus,
-                    },
-                    BulkStatusChanged {
-                        ids: Vec<i64>,
-                        status: DownloadStatus,
-                    },
-                    Progress {
-                        id: i64,
-                        progress: f32,
-                        downloaded_bytes: u64,
-                        total_bytes: Option<u64>,
-                    },
-                    Message {
-                        id: i64,
-                        message: String,
-                    },
+                    StatusChanged {id: i64, status: DownloadStatus},
+                    BulkStatusChanged {ids: Vec<i64>, status: DownloadStatus},
+                    Progress {id: i64, progress: f32, downloaded_bytes: u64, total_bytes: Option<u64>},
+                    Message {id: i64, message: String},
                 }
 
                 let handler = Closure::<dyn FnMut(JsValue)>::new(move |event: JsValue| {
-                    let payload = js_sys::Reflect::get(&event, &JsValue::from_str("payload"))
-                        .unwrap_or(event.clone());
+                    let payload = js_sys::Reflect::get(&event, &JsValue::from_str("payload")).unwrap_or(event.clone());
 
-                    if let Ok(evt) = serde_wasm_bindgen::from_value::<DownloadEventPayload>(payload)
-                    {
+                    if let Ok(evt) = serde_wasm_bindgen::from_value::<DownloadEventPayload>(payload) {
                         let mut map = downloads_ref.borrow().clone();
                         let mut commit = false;
                         let mut should_refresh = false;
@@ -486,11 +426,7 @@ pub fn app() -> Html {
                                         entry.progress = 0.0;
                                         entry.downloaded_bytes = 0;
                                         entry.total_bytes = None;
-                                        entry.stage_text = entry
-                                            .row
-                                            .last_error
-                                            .clone()
-                                            .unwrap_or_else(|| "Failed".into());
+                                        entry.stage_text = entry.row.last_error.clone().unwrap_or_else(|| "Failed".into());
                                         commit = true;
                                     } else {
                                         should_refresh = true;
@@ -523,12 +459,7 @@ pub fn app() -> Html {
                                     }
                                 }
                             },
-                            DownloadEventPayload::Progress {
-                                id,
-                                progress,
-                                downloaded_bytes,
-                                total_bytes,
-                            } => {
+                            DownloadEventPayload::Progress {id, progress, downloaded_bytes, total_bytes} => {
                                 if let Some(entry) = map.get_mut(&id) {
                                     entry.row.status = DownloadStatus::Downloading;
                                     entry.progress = progress;
@@ -541,10 +472,7 @@ pub fn app() -> Html {
                                 }
                             }
                             DownloadEventPayload::Message { id, message } => {
-                                log::info(
-                                    "download_event_message",
-                                    serde_json::json!({ "id": id, "message": message.clone() }),
-                                );
+                                log::info("download_event_message", serde_json::json!({ "id": id, "message": message.clone() }));
                                 if let Some(entry) = map.get_mut(&id) {
                                     entry.last_message = Some(message.clone());
                                     if entry.row.status == DownloadStatus::Error {
@@ -562,12 +490,7 @@ pub fn app() -> Html {
                             commit_download_map(&downloads, &downloads_ref, map);
                         }
                         if should_refresh {
-                            schedule_download_refresh(
-                                refresh_pending.clone(),
-                                downloads.clone(),
-                                downloads_ref.clone(),
-                                downloads_ready.clone(),
-                            );
+                            schedule_download_refresh(refresh_pending.clone(), downloads.clone(), downloads_ref.clone(), downloads_ready.clone());
                         }
                     }
                 });
@@ -586,14 +509,8 @@ pub fn app() -> Html {
         use_effect_with((), move |_| {
             spawn_local(async move {
                 let handler = Closure::<dyn FnMut(JsValue)>::new(move |_event: JsValue| {
-                    web_sys::console::log_1(
-                        &"[UI] import_completed event received, reloading downloads".into(),
-                    );
-                    spawn_refresh_downloads(
-                        downloads.clone(),
-                        downloads_ref.clone(),
-                        downloads_ready.clone(),
-                    );
+                    web_sys::console::log_1(&"[UI] import_completed event received, reloading downloads".into());
+                    spawn_refresh_downloads(downloads.clone(), downloads_ref.clone(), downloads_ready.clone());
                 });
                 let _ = listen("import_completed", &handler).await;
                 handler.forget();
@@ -609,8 +526,7 @@ pub fn app() -> Html {
             paused_state.set(next);
             log::info("queue_toggle", serde_json::json!({ "paused": next }));
             spawn_local(async move {
-                let args =
-                    serde_wasm_bindgen::to_value(&serde_json::json!({ "paused": next })).unwrap();
+                let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "paused": next })).unwrap();
                 if let Err(e) = invoke("set_download_paused", args).await {
                     log_invoke_err("set_download_paused", e);
                 }
@@ -631,21 +547,12 @@ pub fn app() -> Html {
     let on_move_to_queue = {
         let downloads_ref = downloads_ref.clone();
         Callback::from(move |item: crate::app::MoveItem| {
-            let ids: Vec<i64> = downloads_ref
-                .borrow()
-                .values()
-                .filter(|entry| {
-                    entry.row.status == DownloadStatus::Backlog
-                        && matches_move_item(&entry.row, &item)
-                })
-                .map(|entry| entry.row.id)
-                .collect();
+            let ids: Vec<i64> = downloads_ref.borrow().values().filter(|entry| {entry.row.status == DownloadStatus::Backlog && matches_move_item(&entry.row, &item)}).map(|entry| entry.row.id).collect();
             if ids.is_empty() {
                 return;
             }
             spawn_local(async move {
-                let args =
-                    serde_wasm_bindgen::to_value(&serde_json::json!({ "ids": ids })).unwrap();
+                let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "ids": ids })).unwrap();
                 if let Err(e) = invoke("enqueue_downloads", args).await {
                     log_invoke_err("enqueue_downloads", e);
                 }
@@ -656,26 +563,12 @@ pub fn app() -> Html {
     let on_move_to_backlog = {
         let downloads_ref = downloads_ref.clone();
         Callback::from(move |item: crate::app::MoveBackItem| {
-            let ids: Vec<i64> = downloads_ref
-                .borrow()
-                .values()
-                .filter(|entry| {
-                    matches_move_back_item(&entry.row, &item)
-                        && matches!(
-                            entry.row.status,
-                            DownloadStatus::Queued
-                                | DownloadStatus::Downloading
-                                | DownloadStatus::Error
-                        )
-                })
-                .map(|entry| entry.row.id)
-                .collect();
+            let ids: Vec<i64> = downloads_ref.borrow().values().filter(|entry| {matches_move_back_item(&entry.row, &item) && matches!(entry.row.status, DownloadStatus::Queued | DownloadStatus::Downloading | DownloadStatus::Error)}).map(|entry| entry.row.id).collect();
             if ids.is_empty() {
                 return;
             }
             spawn_local(async move {
-                let args =
-                    serde_wasm_bindgen::to_value(&serde_json::json!({ "ids": ids })).unwrap();
+                let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "ids": ids })).unwrap();
                 if let Err(e) = invoke("move_downloads_to_backlog", args).await {
                     log_invoke_err("move_downloads_to_backlog", e);
                 }
@@ -685,8 +578,7 @@ pub fn app() -> Html {
 
     let on_retry_issue = Callback::from(move |id: i64| {
         spawn_local(async move {
-            let args =
-                serde_wasm_bindgen::to_value(&serde_json::json!({ "ids": vec![id] })).unwrap();
+            let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "ids": vec![id] })).unwrap();
             if let Err(e) = invoke("enqueue_downloads", args).await {
                 log_invoke_err("enqueue_downloads", e);
             }
@@ -710,61 +602,31 @@ pub fn app() -> Html {
         });
     }
 
-    let backlog_rows_vec: Vec<ClipRow> = (*downloads)
-        .values()
-        .filter(|entry| entry.row.status == DownloadStatus::Backlog)
-        .map(|entry| entry.row.clone())
-        .collect();
-    let queue_rows_vec: Vec<ClipRow> = (*downloads)
-        .values()
-        .filter(|entry| entry.row.status == DownloadStatus::Queued)
-        .map(|entry| entry.row.clone())
-        .collect();
-    let issue_rows_vec: Vec<ClipRow> = (*downloads)
-        .values()
-        .filter(|entry| entry.row.status == DownloadStatus::Error)
-        .map(|entry| {
-            let mut row = entry.row.clone();
-            if row.last_error.is_none() {
-                row.last_error = entry.last_message.clone();
-            }
-            row
-        })
-        .collect();
-    let active_downloads_vec: Vec<ActiveDownload> = (*downloads)
-        .values()
-        .filter(|entry| entry.row.status == DownloadStatus::Downloading)
-        .map(|entry| ActiveDownload {
-            row: entry.row.clone(),
-            progress: if entry.progress > 0.0 {
-                Some(format!("{:.0}%", entry.progress * 100.0))
-            } else {
-                None
-            },
-            stage: entry.stage_text.clone(),
-        })
-        .collect();
+    let backlog_rows_vec: Vec<ClipRow> = (*downloads).values().filter(|entry| entry.row.status == DownloadStatus::Backlog).map(|entry| entry.row.clone()).collect();
+    let queue_rows_vec: Vec<ClipRow> = (*downloads).values().filter(|entry| entry.row.status == DownloadStatus::Queued).map(|entry| entry.row.clone()).collect();
+    let issue_rows_vec: Vec<ClipRow> = (*downloads).values().filter(|entry| entry.row.status == DownloadStatus::Error).map(|entry| {
+        let mut row = entry.row.clone();
+        if row.last_error.is_none() {
+            row.last_error = entry.last_message.clone();
+        }
+        row
+    }).collect();
+    let active_downloads_vec: Vec<ActiveDownload> = (*downloads).values().filter(|entry| entry.row.status == DownloadStatus::Downloading).map(|entry| ActiveDownload {
+        row: entry.row.clone(),
+        progress: if entry.progress > 0.0 {
+            Some(format!("{:.0}%", entry.progress * 100.0))
+        } else {
+            None
+        },
+        stage: entry.stage_text.clone(),
+    }).collect();
 
     let body = match *page {
         Page::Home => {
             html! { <pages::home::HomePage on_open_file={on_open_file} on_csv_load={on_csv_load.clone()} /> }
         }
         Page::Downloads => {
-            html! {
-                <pages::downloads::DownloadsPage
-                    backlog={backlog_rows_vec}
-                    queue={queue_rows_vec}
-                    issues={issue_rows_vec}
-                    active={active_downloads_vec}
-                    loading={!*downloads_ready}
-                    paused = {*paused}
-                    on_toggle_pause={on_toggle_pause}
-                    on_delete={on_delete}
-                    on_move_to_queue={on_move_to_queue}
-                    on_move_to_backlog={on_move_to_backlog}
-                    on_retry_issue={on_retry_issue}
-                />
-            }
+            html! {<pages::downloads::DownloadsPage backlog={backlog_rows_vec} queue={queue_rows_vec} issues={issue_rows_vec} active={active_downloads_vec} loading={!*downloads_ready} paused = {*paused} on_toggle_pause={on_toggle_pause} on_delete={on_delete} on_move_to_queue={on_move_to_queue} on_move_to_backlog={on_move_to_backlog} on_retry_issue={on_retry_issue} />}
         }
         Page::Library => html! { <pages::library::LibraryPage /> },
         Page::Settings => html! { <pages::settings::SettingsPage /> },

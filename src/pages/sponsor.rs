@@ -17,16 +17,13 @@ pub fn sponsor_page() -> Html {
     });
     let recently_copied = use_state(|| String::new());
 
-    let make_copy_callback =
-        |address: &'static str, id: &'static str, recently_copied: UseStateHandle<String>| {
+    let make_copy_callback = |address: &'static str, id: &'static str, recently_copied: UseStateHandle<String>| {
             Callback::from(move |_| {
                 let recently_copied = recently_copied.clone();
                 let id_str = id.to_string();
                 let address_str = address.to_string();
                 wasm_bindgen_futures::spawn_local(async move {
-                    let args =
-                        serde_wasm_bindgen::to_value(&serde_json::json!({ "text": address_str }))
-                            .unwrap();
+                    let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "text": address_str })).unwrap();
                     invoke("plugin:clipboard|write_text", args).await;
                 });
                 recently_copied.set(id_str);

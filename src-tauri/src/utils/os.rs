@@ -10,16 +10,12 @@ pub fn home() -> PathBuf {
 fn cookie_db_path(browser: &str) -> Option<PathBuf> {
     let h = home();
     match browser {
-        "brave" => {
-            Some(h.join("Library/Application Support/BraveSoftware/Brave-Browser/Default/Cookies"))
-        }
-        "chrome" => Some(h.join("Library/Application Support/Google/Chrome/Default/Cookies")),
-        "firefox" => Some(h.join("Library/Application Support/Firefox/Profiles")),
-        "librewolf" => Some(h.join("Library/Application Support/librewolf/Profiles")),
-        "safari" => Some(h.join(
-            "Library/Containers/com.apple.Safari/Data/Library/Cookies/Cookies.binarycookies",
-        )),
-        _ => None,
+        "brave"         => Some(h.join("Library/Application Support/BraveSoftware/Brave-Browser/Default/Cookies")),
+        "chrome"        => Some(h.join("Library/Application Support/Google/Chrome/Default/Cookies")),
+        "firefox"       => Some(h.join("Library/Application Support/Firefox/Profiles")),
+        "librewolf"     => Some(h.join("Library/Application Support/librewolf/Profiles")),
+        "safari"        => Some(h.join("Library/Containers/com.apple.Safari/Data/Library/Cookies/Cookies.binarycookies")),
+        _               => None,
     }
 }
 
@@ -63,10 +59,7 @@ fn firefox_profile_args(root: &Path, browser_label: &str) -> Vec<(String, String
             continue;
         }
         let profile_name = entry.file_name().to_string_lossy().to_string();
-        out.push((
-            format!("{browser_label} ({profile_name})"),
-            format!("firefox:{}", profile_dir.display()),
-        ));
+        out.push((format!("{browser_label} ({profile_name})"), format!("firefox:{}", profile_dir.display())));
     }
     out
 }

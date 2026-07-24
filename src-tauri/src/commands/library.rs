@@ -102,11 +102,7 @@ pub async fn open_platform_folder(platform: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn open_collection_folder(
-    platform: String,
-    handle: String,
-    content_type: String,
-) -> Result<(), String> {
+pub async fn open_collection_folder(platform: String, handle: String, content_type: String) -> Result<(), String> {
     let s = crate::settings::load_settings();
     let base = std::path::PathBuf::from(s.download_directory);
     let label = crate::database::Database::collection_folder_label(&content_type, &handle);

@@ -38,9 +38,7 @@ impl Default for Settings {
 
 fn default_download_dir() -> PathBuf {
     // Cross-platform Downloads folder (dirs::download_dir handles win/mac/linux)
-    dirs::download_dir()
-        .or_else(|| dirs::home_dir())
-        .unwrap_or_else(|| PathBuf::from("/"))
+    dirs::download_dir().or_else(|| dirs::home_dir()).unwrap_or_else(|| PathBuf::from("/"))
 }
 
 fn dir_is_writable(p: &Path) -> bool {
@@ -48,12 +46,7 @@ fn dir_is_writable(p: &Path) -> bool {
         return false;
     }
     let test = p.join(format!(".writecheck-{}.tmp", Uuid::new_v4()));
-    match fs::OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(true)
-        .open(&test)
-    {
+    match fs::OpenOptions::new().create(true).write(true).truncate(true).open(&test) {
         Ok(_) => {
             let _ = fs::remove_file(test);
             true
@@ -112,10 +105,7 @@ pub fn load_settings() -> Settings {
     }
 
     // Persist the clean copy (also migrates any old/invalid file)
-    let _ = fs::write(
-        &path,
-        serde_json::to_string_pretty(&settings).unwrap_or_else(|_| "{}".into()),
-    );
+    let _ = fs::write(&path, serde_json::to_string_pretty(&settings).unwrap_or_else(|_| "{}".into()));
 
     settings
 }

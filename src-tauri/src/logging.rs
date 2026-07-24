@@ -1,16 +1,10 @@
 use once_cell::sync::OnceCell;
 use std::path::PathBuf;
 
-use tracing_appender::{
-    non_blocking::{self, WorkerGuard},
-    rolling::RollingFileAppender,
-};
-use tracing_subscriber::{
-    filter::LevelFilter, fmt, prelude::*, reload, util::SubscriberInitExt, EnvFilter,
-};
+use tracing_appender::{non_blocking::{self, WorkerGuard}, rolling::RollingFileAppender};
+use tracing_subscriber::{filter::LevelFilter, fmt, prelude::*, reload, util::SubscriberInitExt, EnvFilter};
 
-static FILE_FILTER_HANDLE: OnceCell<reload::Handle<EnvFilter, tracing_subscriber::Registry>> =
-    OnceCell::new();
+static FILE_FILTER_HANDLE: OnceCell<reload::Handle<EnvFilter, tracing_subscriber::Registry>> = OnceCell::new();
 static _GUARD: OnceCell<WorkerGuard> = OnceCell::new(); // keep writer alive
 
 fn log_dir() -> PathBuf {
@@ -28,8 +22,7 @@ pub fn init(file_enabled: bool) {
 
     // Daily rotation; current file is app.log and rotated copies per day.
     let file_appender: RollingFileAppender = tracing_appender::rolling::daily(dir, "app.log");
-    let (nb_writer, guard): (non_blocking::NonBlocking, WorkerGuard) =
-        tracing_appender::non_blocking(file_appender);
+    let (nb_writer, guard): (non_blocking::NonBlocking, WorkerGuard) = tracing_appender::non_blocking(file_appender);
 
     // Keep background worker alive for the process lifetime.
     let _ = _GUARD.set(guard);

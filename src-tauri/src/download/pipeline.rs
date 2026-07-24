@@ -22,12 +22,7 @@ fn ensure_parent_dir(p: &Path) {
     }
 }
 
-fn move_with_policy(
-    src: &Path,
-    dest_dir: &Path,
-    file_name: &str,
-    on_duplicate: &OnDuplicate,
-) -> std::io::Result<(Option<String>, &'static str)> {
+fn move_with_policy(src: &Path, dest_dir: &Path, file_name: &str,on_duplicate: &OnDuplicate) -> std::io::Result<(Option<String>, &'static str)> {
     let (stem, ext) = match file_name.rsplit_once('.') {
         Some((s, e)) if !s.is_empty() && !e.is_empty() => (s.to_string(), e.to_string()),
         _ => (file_name.to_string(), String::from("bin")),
@@ -74,12 +69,7 @@ fn move_with_policy(
     }
 }
 
-fn move_tmp_into_site_dir(
-    tmp: &Path,
-    dest_dir: &Path,
-    on_duplicate: &OnDuplicate,
-    mut notify: impl FnMut(String),
-) -> std::io::Result<(bool, Vec<String>)> {
+fn move_tmp_into_site_dir(tmp: &Path, dest_dir: &Path, on_duplicate: &OnDuplicate, mut notify: impl FnMut(String)) -> std::io::Result<(bool, Vec<String>)> {
     let mut moved_any = false;
     let mut finals = Vec::new();
     fs::create_dir_all(dest_dir).ok();
@@ -89,25 +79,15 @@ fn move_tmp_into_site_dir(
             continue;
         }
         let src = entry.path();
-        let file_name = src
-            .file_name()
-            .and_then(|s| s.to_str())
-            .unwrap_or("image.bin");
+        let file_name = src.file_name().and_then(|s| s.to_str()).unwrap_or("image.bin");
         match move_with_policy(src, dest_dir, file_name, on_duplicate) {
             Ok((Some(fp), action)) => {
                 moved_any = true;
                 notify(format!("{action}: {fp}"));
                 finals.push(fp);
             }
-            Ok((None, _)) => notify(format!(
-                "Skipped (exists): {}",
-                dest_dir.join(file_name).display()
-            )),
-            Err(e) => notify(format!(
-                "Failed to move {} → {}: {e}",
-                src.display(),
-                dest_dir.join(file_name).display()
-            )),
+            Ok((None, _)) => notify(format!("Skipped (exists): {}", dest_dir.join(file_name).display())),
+            Err(e) => notify(format!("Failed to move {} → {}: {e}", src.display(), dest_dir.join(file_name).display())),
         }
     }
     Ok((moved_any, finals))
@@ -198,18 +178,7 @@ pub async fn execute_download_job(
             } else {
                 cleaned_url.clone()
             };
-            match video::run_yt_dlp_with_progress(
-                &app,
-                &dest_dir,
-                cookie_arg,
-                &effective_url,
-                false,
-                &settings.on_duplicate,
-                row.id,
-                emitter.clone(),
-            )
-            .await
-            {
+            match video::run_yt_dlp_with_progress(&app, &dest_dir, cookie_arg, &effective_url, false, &settings.on_duplicate, row.id, emitter.clone()).await {
                 Ok((true, output)) => {
                     (emitter)(DownloadEvent::Message {
                         id: row.id,
@@ -217,75 +186,34 @@ pub async fn execute_download_job(
                             "Saved (audio)".into()
                         } else {
                             "Saved (video)".into()
-                        },
+                        }
                     });
-                    let files = parse_multiple_filenames_from_output(
-                        &output,
-                        &cleaned_url,
-                        Some(&dest_dir),
-                    );
+                    let files = parse_multiple_filenames_from_output(&output, &cleaned_url, Some(&dest_dir));
                     return Ok(files.get(0).map(|t| t.2.clone()));
                 }
                 Ok((false, _)) | Err(_) => {
                     if is_ig_post_p {
-                        (emitter)(DownloadEvent::Message {
-                            id: row.id,
-                            message: "Video fetch failed, trying image fallback".into(),
-                        });
-                        match image::run_gallery_dl_to_temp(
-                            &app,
-                            &download_root,
-                            &cleaned_url,
-                            cookie_arg,
-                            row.id,
-                            emitter.clone(),
-                        )
-                        .await
-                        {
+                        (emitter)(DownloadEvent::Message {id: row.id, message: "Video fetch failed, trying image fallback".into()});
+                        match image::run_gallery_dl_to_temp(&app, &download_root, &cleaned_url, cookie_arg, row.id, emitter.clone()).await {
                             Ok((ok, _out, tmp_dir)) if ok => {
-                                let (moved_any, finals) = move_tmp_into_site_dir(
-                                    &tmp_dir,
-                                    &dest_dir,
-                                    &settings.on_duplicate,
-                                    |line| {
-                                        (emitter)(DownloadEvent::Message {
-                                            id: row.id,
-                                            message: line,
-                                        });
-                                    },
-                                )
-                                .unwrap_or((false, vec![]));
+                                let (moved_any, finals) = move_tmp_into_site_dir(&tmp_dir, &dest_dir, &settings.on_duplicate, |line| {
+                                    (emitter)(DownloadEvent::Message {id: row.id, message: line});
+                                }).unwrap_or((false, vec![]));
                                 let _ = fs::remove_dir_all(&tmp_dir);
                                 if moved_any {
-                                    (emitter)(DownloadEvent::Message {
-                                        id: row.id,
-                                        message: "Saved images".into(),
-                                    });
+                                    (emitter)(DownloadEvent::Message {id: row.id, message: "Saved images".into()});
                                     return Ok(finals.get(0).cloned());
                                 } else {
-                                    last_error.get_or_insert_with(|| {
-                                        format!("No files moved from {}", tmp_dir.display())
-                                    });
+                                    last_error.get_or_insert_with(|| {format!("No files moved from {}", tmp_dir.display())});
                                 }
                             }
                             Ok((_ok, output, tmp_dir)) => {
-                                let msg =
-                                    friendly_browser_error(browser, &output).unwrap_or_else(|| {
-                                        format!(
-                                            "gallery-dl failed (IG fallback) tmp={}\n{}",
-                                            tmp_dir.display(),
-                                            output
-                                        )
-                                    });
+                                let msg = friendly_browser_error(browser, &output).unwrap_or_else(|| {format!("gallery-dl failed (IG fallback) tmp={}\n{}", tmp_dir.display(), output)});
                                 if specific_cookie_error.is_none() {
-                                    specific_cookie_error =
-                                        friendly_browser_error(browser, &output);
+                                    specific_cookie_error = friendly_browser_error(browser, &output);
                                 }
                                 last_error.get_or_insert(msg.clone());
-                                (emitter)(DownloadEvent::Message {
-                                    id: row.id,
-                                    message: msg,
-                                });
+                                (emitter)(DownloadEvent::Message {id: row.id, message: msg});
                                 let _ = fs::remove_dir_all(&tmp_dir);
                             }
                             Err(e) => {
@@ -299,58 +227,27 @@ pub async fn execute_download_job(
         }
 
         if site == "pinterest" || is_tt_photo {
-            (emitter)(DownloadEvent::Message {
-                id: row.id,
-                message: "Preparing image download".into(),
-            });
-            match image::run_gallery_dl_to_temp(
-                &app,
-                &download_root,
-                &cleaned_url,
-                cookie_arg,
-                row.id,
-                emitter.clone(),
-            )
-            .await
-            {
+            (emitter)(DownloadEvent::Message {id: row.id, message: "Preparing image download".into()});
+            match image::run_gallery_dl_to_temp(&app, &download_root, &cleaned_url, cookie_arg, row.id, emitter.clone()).await {
                 Ok((ok, _output, tmp_dir)) if ok => {
-                    let (moved_any, finals) = move_tmp_into_site_dir(
-                        &tmp_dir,
-                        &dest_dir,
-                        &settings.on_duplicate,
-                        |line| {
-                            (emitter)(DownloadEvent::Message {
-                                id: row.id,
-                                message: line,
-                            });
-                        },
-                    )
-                    .unwrap_or((false, vec![]));
+                    let (moved_any, finals) = move_tmp_into_site_dir(&tmp_dir, &dest_dir, &settings.on_duplicate, |line| {
+                            (emitter)(DownloadEvent::Message {id: row.id, message: line});
+                        }).unwrap_or((false, vec![]));
                     let _ = fs::remove_dir_all(&tmp_dir);
                     if moved_any {
-                        (emitter)(DownloadEvent::Message {
-                            id: row.id,
-                            message: "Saved images".into(),
-                        });
+                        (emitter)(DownloadEvent::Message {id: row.id, message: "Saved images".into()});
                         return Ok(finals.get(0).cloned());
                     } else {
-                        last_error.get_or_insert_with(|| {
-                            format!("No files moved from {}", tmp_dir.display())
-                        });
+                        last_error.get_or_insert_with(|| {format!("No files moved from {}", tmp_dir.display())});
                     }
                 }
                 Ok((_ok, output, tmp_dir)) => {
-                    let msg = friendly_browser_error(browser, &output).unwrap_or_else(|| {
-                        format!("gallery-dl failed tmp={}\n{}", tmp_dir.display(), output)
-                    });
+                    let msg = friendly_browser_error(browser, &output).unwrap_or_else(|| {format!("gallery-dl failed tmp={}\n{}", tmp_dir.display(), output)});
                     if specific_cookie_error.is_none() {
                         specific_cookie_error = friendly_browser_error(browser, &output);
                     }
                     last_error.get_or_insert(msg.clone());
-                    (emitter)(DownloadEvent::Message {
-                        id: row.id,
-                        message: msg,
-                    });
+                    (emitter)(DownloadEvent::Message {id: row.id, message: msg});
                     let _ = fs::remove_dir_all(&tmp_dir);
                 }
                 Err(e) => {
@@ -365,17 +262,7 @@ pub async fn execute_download_job(
         } else {
             cleaned_url.clone()
         };
-        match video::run_yt_dlp_with_progress(
-            &app,
-            &dest_dir,
-            cookie_arg,
-            &effective_url,
-            false,
-            &settings.on_duplicate,
-            row.id,
-            emitter.clone(),
-        )
-        .await
+        match video::run_yt_dlp_with_progress(&app, &dest_dir, cookie_arg, &effective_url, false, &settings.on_duplicate, row.id, emitter.clone()).await
         {
             Ok((true, output)) => {
                 (emitter)(DownloadEvent::Message {
@@ -384,16 +271,13 @@ pub async fn execute_download_job(
                         "Saved (audio)".into()
                     } else {
                         "Saved (video)".into()
-                    },
+                    }
                 });
-                let files =
-                    parse_multiple_filenames_from_output(&output, &cleaned_url, Some(&dest_dir));
+                let files = parse_multiple_filenames_from_output(&output, &cleaned_url, Some(&dest_dir));
                 return Ok(files.get(0).map(|t| t.2.clone()));
             }
             Ok((false, output)) => {
-                let msg = friendly_browser_error(browser, &output).unwrap_or_else(|| {
-                    format!("yt-dlp failed with browser: {browser}\noutput:\n{output}")
-                });
+                let msg = friendly_browser_error(browser, &output).unwrap_or_else(|| {format!("yt-dlp failed with browser: {browser}\noutput:\n{output}")});
                 if specific_cookie_error.is_none() {
                     specific_cookie_error = friendly_browser_error(browser, &output);
                 }
