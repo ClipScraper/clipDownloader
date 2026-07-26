@@ -82,38 +82,46 @@ fn resolve_stored_path(path: &str) -> Option<PathBuf> {
 
 #[tauri::command]
 pub async fn open_file_for_link(link: String) -> Result<(), String> {
-    let db = crate::database::Database::new().map_err(|e| e.to_string())?;
-    let Some((_id, path)) = db.find_done_row_by_link(&link).map_err(|e| e.to_string())? else {
-        return Ok(());
-    };
-    let Some(real) = resolve_stored_path(&path).filter(|p| p.is_file()) else {
-        return Ok(());
-    };
-    open_with_default_app(&real.to_string_lossy())
+    tauri::async_runtime::spawn_blocking(move || {
+        let db = crate::database::Database::new().map_err(|e| e.to_string())?;
+        let Some((_id, path)) = db.find_done_row_by_link(&link).map_err(|e| e.to_string())? else {
+            return Ok(());
+        };
+        let Some(real) = resolve_stored_path(&path).filter(|p| p.is_file()) else {
+            return Ok(());
+        };
+        open_with_default_app(&real.to_string_lossy())
+    })
+    .await
+    .map_err(|e| format!("Join error: {e}"))?
 }
 
 #[tauri::command]
 pub async fn open_folder_for_link(link: String) -> Result<(), String> {
-    let s = crate::settings::load_settings();
-    let db = crate::database::Database::new().map_err(|e| e.to_string())?;
-    let Some((_id, path)) = db.find_done_row_by_link(&link).map_err(|e| e.to_string())? else {
-        return Ok(());
-    };
+    tauri::async_runtime::spawn_blocking(move || {
+        let s = crate::settings::load_settings();
+        let db = crate::database::Database::new().map_err(|e| e.to_string())?;
+        let Some((_id, path)) = db.find_done_row_by_link(&link).map_err(|e| e.to_string())? else {
+            return Ok(());
+        };
 
-    // Prefer the folder containing the resolved file; otherwise fall back to
-    // the configured download root so the user still lands somewhere useful.
-    let dir = resolve_stored_path(&path)
-        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
-        .filter(|d| d.exists())
-        .or_else(|| {
-            let root = PathBuf::from(&s.download_directory);
-            root.exists().then_some(root)
-        });
+        // Prefer the folder containing the resolved file; otherwise fall back to
+        // the configured download root so the user still lands somewhere useful.
+        let dir = resolve_stored_path(&path)
+            .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+            .filter(|d| d.exists())
+            .or_else(|| {
+                let root = PathBuf::from(&s.download_directory);
+                root.exists().then_some(root)
+            });
 
-    match dir {
-        Some(d) => reveal_dir(&d.to_string_lossy()),
-        None => Ok(()),
-    }
+        match dir {
+            Some(d) => reveal_dir(&d.to_string_lossy()),
+            None => Ok(()),
+        }
+    })
+    .await
+    .map_err(|e| format!("Join error: {e}"))?
 }
 
 #[tauri::command]
@@ -145,28 +153,32 @@ pub async fn open_collection_folder(
 
 #[tauri::command]
 pub async fn delete_library_item(link: String) -> Result<(), String> {
-    use std::fs;
+    tauri::async_runtime::spawn_blocking(move || {
+        use std::fs;
 
-    let db = crate::database::Database::new().map_err(|e| e.to_string())?;
-    let some = db.find_done_row_by_link(&link).map_err(|e| e.to_string())?;
+        let db = crate::database::Database::new().map_err(|e| e.to_string())?;
+        let some = db.find_done_row_by_link(&link).map_err(|e| e.to_string())?;
 
-    let (id, path) = some.ok_or_else(|| "no library item found for link".to_string())?;
+        let (id, path) = some.ok_or_else(|| "no library item found for link".to_string())?;
 
-    // Respect delete mode
-    let mode = crate::settings::load_settings().delete_mode;
-    if matches!(mode, crate::database::DeleteMode::Hard) {
-        // Best-effort file delete first
-        if !path.is_empty() && path != "unknown_path" {
-            if let Err(e) = fs::remove_file(&path) {
-                // If it doesn't exist, that's fine; otherwise surface error
-                if std::io::ErrorKind::NotFound != e.kind() {
-                    return Err(format!("failed to delete file: {e}"));
+        // Respect delete mode
+        let mode = crate::settings::load_settings().delete_mode;
+        if matches!(mode, crate::database::DeleteMode::Hard) {
+            // Best-effort file delete first
+            if !path.is_empty() && path != "unknown_path" {
+                if let Err(e) = fs::remove_file(&path) {
+                    // If it doesn't exist, that's fine; otherwise surface error
+                    if std::io::ErrorKind::NotFound != e.kind() {
+                        return Err(format!("failed to delete file: {e}"));
+                    }
                 }
             }
         }
-    }
 
-    // Remove DB row
-    let _ = db.delete_row_by_id(id).map_err(|e| e.to_string())?;
-    Ok(())
+        // Remove DB row
+        let _ = db.delete_row_by_id(id).map_err(|e| e.to_string())?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("Join error: {e}"))?
 }

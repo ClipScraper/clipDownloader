@@ -287,16 +287,7 @@ async fn choose_output_template(
 
 /* ---------- runner ---------- */
 
-pub async fn run_yt_dlp_with_progress(
-    app: &tauri::AppHandle,
-    out_dir: &Path,
-    cookie_arg: &str,
-    processed_url: &str,
-    is_ig_images: bool,
-    on_duplicate: &OnDuplicate,
-    id: i64,
-    emitter: Arc<dyn Fn(DownloadEvent) + Send + Sync>,
-) -> io::Result<(bool, String)> {
+pub async fn run_yt_dlp_with_progress(app: &tauri::AppHandle, out_dir: &Path, cookie_arg: &str, processed_url: &str, is_ig_images: bool, on_duplicate: &OnDuplicate, id: i64, emitter: Arc<dyn Fn(DownloadEvent) + Send + Sync>) -> io::Result<(bool, String)> {
     let audio_only = processed_url.ends_with("#__audio_only__");
     let real_url = if audio_only {
         &processed_url[..processed_url.len() - "#__audio_only__".len()]
@@ -326,58 +317,31 @@ pub async fn run_yt_dlp_with_progress(
 
     // Determine resource dir for bundled ffmpeg (when not using system binaries)
     use tauri::path::BaseDirectory;
-    let res_dir = app
-        .path()
-        .resolve("", BaseDirectory::Resource)
-        .unwrap_or_else(|_| std::env::current_dir().unwrap_or_else(|_| ".".into()));
+    let res_dir = app.path().resolve("", BaseDirectory::Resource).unwrap_or_else(|_| std::env::current_dir().unwrap_or_else(|_| ".".into()));
     // Only force ffmpeg location when using bundled sidecar tools
     if !settings.use_system_binaries {
         args.push("--ffmpeg-location".into());
         args.push(res_dir.to_string_lossy().to_string());
     }
 
-    (emitter)(DownloadEvent::Message {
-        id,
-        message: "Inspecting media metadata".into(),
-    });
+    (emitter)(DownloadEvent::Message {id, message: "Inspecting media metadata".into()});
 
     // Output template with uniqueness policy
-    let output_template = choose_output_template(
-        app,
-        out_dir,
-        cookie_arg,
-        real_url,
-        is_ig_images,
-        audio_only,
-        on_duplicate,
-    )
-    .await?;
+    let output_template = choose_output_template(app, out_dir, cookie_arg, real_url, is_ig_images, audio_only, on_duplicate).await?;
     args.push("-o".into());
     args.push(output_template.clone());
 
     // URL last
     args.push(real_url.to_string());
 
-    let planned_path =
-        out_dir.join(output_template.replace("%(ext)s", if audio_only { "mp3" } else { "mp4" }));
-    println!(
-        "[YT-DLP][sidecar] policy={:?} dir='{}'\nurl='{}'\nout='{}'",
-        on_duplicate,
-        out_dir.display(),
-        real_url,
-        planned_path.display()
-    );
-    (emitter)(DownloadEvent::Message {
-        id,
-        message: format!("Prepared output file {}", planned_path.display()),
-    });
+    let planned_path = out_dir.join(output_template.replace("%(ext)s", if audio_only { "mp3" } else { "mp4" }));
+    println!("[YT-DLP][sidecar] policy={:?} dir='{}'\nurl='{}'\nout='{}'", on_duplicate, out_dir.display(), real_url, planned_path.display());
+    (emitter)(DownloadEvent::Message {id, message: format!("Prepared output file {}", planned_path.display())});
 
     let cmd = if settings.use_system_binaries {
         app.shell().command("yt-dlp")
     } else {
-        app.shell().sidecar("yt-dlp").map_err(|e| {
-            io::Error::new(io::ErrorKind::Other, format!("sidecar(yt-dlp) error: {e}"))
-        })?
+        app.shell().sidecar("yt-dlp").map_err(|e| {io::Error::new(io::ErrorKind::Other, format!("sidecar(yt-dlp) error: {e}"))})?
     };
 
     let new_path = if settings.use_system_binaries {
@@ -385,23 +349,13 @@ pub async fn run_yt_dlp_with_progress(
         std::env::var("PATH").unwrap_or_default()
     } else {
         // Prepend bundled resources so yt-dlp can find ffmpeg from the app
-        format!(
-            "{}{}{}",
-            res_dir.to_string_lossy(),
-            path_sep(),
-            std::env::var("PATH").unwrap_or_default()
-        )
+        format!("{}{}{}", res_dir.to_string_lossy(), path_sep(), std::env::var("PATH").unwrap_or_default())
     };
 
     let (mut rx, child) =
-        cmd.args(args).env("PATH", new_path).spawn().map_err(|e| {
-            io::Error::new(io::ErrorKind::Other, format!("spawn yt-dlp failed: {e}"))
-        })?;
+        cmd.args(args).env("PATH", new_path).spawn().map_err(|e| {io::Error::new(io::ErrorKind::Other, format!("spawn yt-dlp failed: {e}"))})?;
 
-    (emitter)(DownloadEvent::Message {
-        id,
-        message: "Launching downloader".into(),
-    });
+    (emitter)(DownloadEvent::Message {id, message: "Launching downloader".into()});
 
     let _guard = KillGuard(Some(child));
 
@@ -410,9 +364,7 @@ pub async fn run_yt_dlp_with_progress(
     let mut file_skipped = false;
     let mut ok = false;
     let mut last_stage: Option<&'static str> = None;
-    // Throttle progress emission: yt-dlp prints a progress line very frequently,
-    // and each emitted event crosses the IPC boundary and forces a frontend
-    // re-render. Only emit on a >=1% change (or completion).
+    // Throttle progress emission: yt-dlp prints a progress line very frequently, and each emitted event crosses the IPC boundary and forces a frontend re-render. Only emit on a >=1% change (or completion).
     let mut last_progress: f32 = -1.0;
 
     loop {
@@ -436,41 +388,24 @@ pub async fn run_yt_dlp_with_progress(
                     if let Some(stage) = stage_message_from_output_line(l) {
                         if last_stage != Some(stage) {
                             last_stage = Some(stage);
-                            (emitter)(DownloadEvent::Message {
-                                id,
-                                message: stage.into(),
-                            });
+                            (emitter)(DownloadEvent::Message {id, message: stage.into()});
                         }
                     }
 
                     if l.contains("has already been downloaded") {
                         already_downloaded = true;
                     }
-                    if l.contains("has already been recorded in the archive")
-                        || l.starts_with("[download] Skipping")
-                    {
+                    if l.contains("has already been recorded in the archive") || l.starts_with("[download] Skipping") {
                         file_skipped = true;
                     }
 
                     if let Some(progress) = parse_progress_percentage(l) {
                         if (progress - last_progress).abs() >= 0.01 || progress >= 1.0 {
                             last_progress = progress;
-                            (emitter)(DownloadEvent::Progress {
-                                id,
-                                progress,
-                                downloaded_bytes: 0,
-                                total_bytes: None,
-                            });
+                            (emitter)(DownloadEvent::Progress {id, progress, downloaded_bytes: 0, total_bytes: None});
                         }
-                    } else if (l.contains("[download]") || l.contains("[info]"))
-                        && !l.contains("Starting download for")
-                        && !l.contains("Sleeping")
-                        && !l.starts_with("[info] Downloading")
-                    {
-                        (emitter)(DownloadEvent::Message {
-                            id,
-                            message: l.to_string(),
-                        });
+                    } else if (l.contains("[download]") || l.contains("[info]")) && !l.contains("Starting download for") && !l.contains("Sleeping") && !l.starts_with("[info] Downloading") {
+                        (emitter)(DownloadEvent::Message {id, message: l.to_string()});
                     }
                 }
             }
@@ -484,16 +419,10 @@ pub async fn run_yt_dlp_with_progress(
                         if let Some(stage) = stage_message_from_output_line(l) {
                             if last_stage != Some(stage) {
                                 last_stage = Some(stage);
-                                (emitter)(DownloadEvent::Message {
-                                    id,
-                                    message: stage.into(),
-                                });
+                                (emitter)(DownloadEvent::Message {id, message: stage.into()});
                             }
                         }
-                        (emitter)(DownloadEvent::Message {
-                            id,
-                            message: l.to_string(),
-                        });
+                        (emitter)(DownloadEvent::Message {id, message: l.to_string()});
                     }
                 }
             }
@@ -512,12 +441,6 @@ fn parse_progress_percentage(line: &str) -> Option<f32> {
         return None;
     }
     let percent_idx = line.find('%')?;
-    let start = line[..percent_idx]
-        .rsplit_once(' ')
-        .map(|(_, tail)| tail)
-        .unwrap_or(line[..percent_idx].trim());
-    start
-        .parse::<f32>()
-        .ok()
-        .map(|p| (p / 100.0).clamp(0.0, 1.0))
+    let start = line[..percent_idx].rsplit_once(' ').map(|(_, tail)| tail).unwrap_or(line[..percent_idx].trim());
+    start.parse::<f32>().ok().map(|p| (p / 100.0).clamp(0.0, 1.0))
 }

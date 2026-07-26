@@ -123,12 +123,18 @@ pub fn set_status_bulk_conn(conn: &Connection, ids: &[i64], status: DownloadStat
     if ids.is_empty() {
         return Ok(0);
     }
-    let id_list = ids.iter().map(|id| id.to_string()).collect::<Vec<_>>().join(",");
     let token = status.as_str();
-    let updated = conn.execute(
-        &format!("UPDATE downloads SET status=?1, last_error=CASE WHEN ?1='error' THEN last_error ELSE NULL END WHERE id IN ({id_list}) AND status<>?1"),
-        [token],
-    )?;
+    // Chunk the id list so we never approach SQLite's expression-tree/variable
+    // limits on very large selections, and so the generated SQL text stays a
+    // handful of shapes the statement cache can reuse.
+    let mut updated = 0;
+    for chunk in ids.chunks(500) {
+        let id_list = chunk.iter().map(|id| id.to_string()).collect::<Vec<_>>().join(",");
+        updated += conn.execute(
+            &format!("UPDATE downloads SET status=?1, last_error=CASE WHEN ?1='error' THEN last_error ELSE NULL END WHERE id IN ({id_list}) AND status<>?1"),
+            [token],
+        )?;
+    }
     Ok(updated)
 }
 

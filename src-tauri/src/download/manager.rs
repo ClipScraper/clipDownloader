@@ -120,16 +120,19 @@ pub async fn run_download_manager(
         let db_clone = db.clone();
         let queued_ids = tauri::async_runtime::spawn_blocking(move || {
             let conn = db_clone.blocking_lock();
-            if let Ok(n) = reset_stale_downloading_to_queued_conn(&*conn) {
-                if n > 0 {
+            match reset_stale_downloading_to_queued_conn(&*conn) {
+                Ok(n) if n > 0 => {
                     tracing::info!("Recovered {n} rows from 'downloading' → 'queued' on startup");
                 }
+                Err(e) => tracing::warn!("startup stale-download reset failed: {e}"),
+                _ => {}
             }
             list_queued_ids_conn(&*conn)
         })
         .await
+        .map_err(|e| tracing::warn!("startup queued-ids join error: {e}"))
         .ok()
-        .and_then(Result::ok)
+        .and_then(|r| r.map_err(|e| tracing::warn!("startup list_queued_ids failed: {e}")).ok())
         .unwrap_or_default();
 
         for id in queued_ids {
@@ -233,10 +236,16 @@ pub async fn run_download_manager(
                     let db_clone = db.clone();
                     let error_ids = tauri::async_runtime::spawn_blocking(move || {
                         let conn = db_clone.blocking_lock();
-                        list_error_ids_conn(&*conn).unwrap_or_default()
+                        list_error_ids_conn(&*conn).unwrap_or_else(|e| {
+                            tracing::warn!("auto-retry list_error_ids failed: {e}");
+                            Vec::new()
+                        })
                     })
                     .await
-                    .unwrap_or_default();
+                    .unwrap_or_else(|e| {
+                        tracing::warn!("auto-retry join error: {e}");
+                        Vec::new()
+                    });
                     for eid in error_ids {
                         if !auto_retried.contains(&eid) {
                             auto_retried.insert(eid);
@@ -272,12 +281,21 @@ async fn reconcile_state(
     let db_clone = db.clone();
     let (queued_ids, downloading_ids) = tauri::async_runtime::spawn_blocking(move || {
         let conn = db_clone.blocking_lock();
-        let queued = list_queued_ids_conn(&*conn).unwrap_or_default();
-        let downloading = list_downloading_ids_conn(&*conn).unwrap_or_default();
+        let queued = list_queued_ids_conn(&*conn).unwrap_or_else(|e| {
+            tracing::warn!("reconcile list_queued_ids failed: {e}");
+            Vec::new()
+        });
+        let downloading = list_downloading_ids_conn(&*conn).unwrap_or_else(|e| {
+            tracing::warn!("reconcile list_downloading_ids failed: {e}");
+            Vec::new()
+        });
         (queued, downloading)
     })
     .await
-    .unwrap_or_default();
+    .unwrap_or_else(|e| {
+        tracing::warn!("reconcile join error: {e}");
+        (Vec::new(), Vec::new())
+    });
 
     for id in downloading_ids {
         if active.contains_key(&id) {
