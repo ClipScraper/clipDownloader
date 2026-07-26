@@ -8,10 +8,7 @@ pub async fn load_settings() -> Settings {
 }
 
 #[tauri::command]
-pub async fn save_settings(
-    manager: State<'_, DownloadManager>,
-    settings: Settings,
-) -> Result<(), String> {
+pub async fn save_settings(manager: State<'_, DownloadManager>, settings: Settings) -> Result<(), String> {
     // persist first
     crate::settings::save_settings(&settings)?;
 
@@ -20,10 +17,7 @@ pub async fn save_settings(
     tracing::info!("settings saved; debug_logs now {}", settings.debug_logs);
 
     // notify download manager to refresh runtime parameters
-    manager
-        .send(DownloadCommand::RefreshSettings)
-        .await
-        .map_err(|e| e.to_string())?;
+    manager.send(DownloadCommand::RefreshSettings).await.map_err(|e| e.to_string())?;
 
     Ok(())
 }

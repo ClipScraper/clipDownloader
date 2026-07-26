@@ -23,21 +23,9 @@ pub async fn check_sidecar_tools(app: tauri::AppHandle) -> Result<SidecarCheck, 
     }
     fn on_path(names: &[&str]) -> bool {
         use std::path::PathBuf;
-        let mut dirs: Vec<PathBuf> = std::env::var_os("PATH")
-            .map(|v| {
-                std::env::split_paths(&v)
-                    .filter(|p| !p.as_os_str().is_empty())
-                    .collect()
-            })
-            .unwrap_or_default();
+        let mut dirs: Vec<PathBuf> = std::env::var_os("PATH").map(|v| std::env::split_paths(&v).filter(|p| !p.as_os_str().is_empty()).collect()).unwrap_or_default();
         // Common extras on macOS/Homebrew + standard bins
-        for extra in [
-            "/opt/homebrew/bin",
-            "/usr/local/bin",
-            "/usr/bin",
-            "/bin",
-            "/usr/local/sbin",
-        ] {
+        for extra in ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/local/sbin"] {
             let pb = PathBuf::from(extra);
             if !dirs.iter().any(|d| d == &pb) {
                 dirs.push(pb);
@@ -57,9 +45,5 @@ pub async fn check_sidecar_tools(app: tauri::AppHandle) -> Result<SidecarCheck, 
     let gal_ok = on_path(&["gallery-dl", "gallery_dl"]);
     let ffmpeg_ok = on_path(&["ffmpeg"]);
 
-    Ok(SidecarCheck {
-        yt_dlp: yt_ok,
-        gallery_dl: gal_ok,
-        ffmpeg: ffmpeg_ok,
-    })
+    Ok(SidecarCheck {yt_dlp: yt_ok, gallery_dl: gal_ok, ffmpeg: ffmpeg_ok})
 }

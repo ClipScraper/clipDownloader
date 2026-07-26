@@ -2,75 +2,52 @@ use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection, Result};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::sync::Once;
+use std::time::Duration;
 
 pub struct Database {
     conn: Connection,
 }
 
-fn init_schema(conn: &Connection) -> Result<()> {
-    conn.execute("PRAGMA foreign_keys = ON", [])?;
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS downloads (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                platform TEXT NOT NULL,
-                name TEXT NOT NULL,
-                media TEXT NOT NULL,
-                user_handle TEXT NOT NULL,
-                origin TEXT NOT NULL,
-                link TEXT NOT NULL,
-                output_format TEXT NOT NULL DEFAULT 'default' CHECK (output_format IN ('default','audio','video')),
-                status TEXT NOT NULL,
-                path TEXT NOT NULL,
-                image_set_id TEXT,
-                date_added TEXT NOT NULL,
-                date_downloaded TEXT
-            )",
-        [],
-    )?;
+/// Schema creation + migrations are process-global work: they only need to run once against the shared database file, not on every connection open. Guard them so hot command paths that open short-lived connections don't repeatedly re-run `CREATE TABLE`/`ALTER TABLE`/`PRAGMA table_info` scans.
+static SCHEMA_INIT: Once = Once::new();
 
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS settings (
-                id INTEGER PRIMARY KEY CHECK (id = 1),
-                download_directory TEXT NOT NULL,
-                on_duplicate TEXT NOT NULL
-            )",
-        [],
-    )?;
-    conn.execute(
-        "INSERT OR IGNORE INTO settings (id, download_directory, on_duplicate)
-             VALUES (1, ?, ?)",
-        [
-            &dirs::download_dir()
-                .unwrap_or_else(|| dirs::home_dir().unwrap_or_default())
-                .to_string_lossy()
-                .to_string(),
-            "create_new",
-        ],
-    )?;
-
-    // Legacy builds persisted queued rows as "queue". Normalize them so
-    // frontend and backend codepaths do not disagree about visibility/mutations.
-    conn.execute(
-        "UPDATE downloads SET status='queued' WHERE status='queue'",
-        [],
-    )?;
-    // Older databases were created before these columns existed. `CREATE TABLE
-    // IF NOT EXISTS` above is a no-op for them, so migrate any missing columns.
-    ensure_column(
-        conn,
-        "output_format",
-        "ALTER TABLE downloads ADD COLUMN output_format TEXT NOT NULL DEFAULT 'default' CHECK (output_format IN ('default','audio','video'))",
-    )?;
-    ensure_column(
-        conn,
-        "last_error",
-        "ALTER TABLE downloads ADD COLUMN last_error TEXT",
-    )?;
+/// Per-connection configuration. These pragmas are cheap and must be applied to every connection (WAL is persistent at the DB level, but `busy_timeout` and `foreign_keys` are per-connection). WAL + a busy timeout let the manager's long-lived connection and the commands' short-lived connections write concurrently without immediate `SQLITE_BUSY` ("database is locked") errors.
+fn configure_connection(conn: &Connection) -> Result<()> {
+    conn.busy_timeout(Duration::from_secs(5))?;
+    // `execute_batch` tolerates the row that `PRAGMA journal_mode` returns.
+    conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA foreign_keys=ON;")?;
     Ok(())
 }
 
-/// Add a column via the provided `ALTER TABLE ... ADD COLUMN` DDL if it does
-/// not already exist on the `downloads` table.
+/// Run schema init/migrations at most once per process. The first caller (startup, via `open_connection` in `lib.rs`) performs the work and any error propagates; later callers are a no-op.
+fn init_schema_once(conn: &Connection) -> Result<()> {
+    let mut result = Ok(());
+    SCHEMA_INIT.call_once(|| {
+        result = init_schema(conn);
+    });
+    result
+}
+
+fn init_schema(conn: &Connection) -> Result<()> {
+    conn.execute("PRAGMA foreign_keys = ON", [])?;
+    conn.execute("CREATE TABLE IF NOT EXISTS downloads ( id INTEGER PRIMARY KEY AUTOINCREMENT, platform TEXT NOT NULL, name TEXT NOT NULL, media TEXT NOT NULL, user_handle TEXT NOT NULL, origin TEXT NOT NULL, link TEXT NOT NULL, output_format TEXT NOT NULL DEFAULT 'default' CHECK (output_format IN ('default','audio','video')), status TEXT NOT NULL, path TEXT NOT NULL, image_set_id TEXT, date_added TEXT NOT NULL, date_downloaded TEXT )", [])?;
+
+    conn.execute("CREATE TABLE IF NOT EXISTS settings ( id INTEGER PRIMARY KEY CHECK (id = 1), download_directory TEXT NOT NULL, on_duplicate TEXT NOT NULL )", [])?;
+    conn.execute("INSERT OR IGNORE INTO settings (id, download_directory, on_duplicate) VALUES (1, ?, ?)", [&dirs::download_dir().unwrap_or_else(|| dirs::home_dir().unwrap_or_default()).to_string_lossy().to_string(), "create_new"])?;
+
+    // Legacy builds persisted queued rows as "queue". Normalize them so frontend and backend codepaths do not disagree about visibility/mutations.
+    conn.execute("UPDATE downloads SET status='queued' WHERE status='queue'", [])?;
+    // Older databases were created before these columns existed. `CREATE TABLE IF NOT EXISTS` above is a no-op for them, so migrate any missing columns.
+    ensure_column(conn, "output_format", "ALTER TABLE downloads ADD COLUMN output_format TEXT NOT NULL DEFAULT 'default' CHECK (output_format IN ('default','audio','video'))")?;
+    ensure_column(conn, "last_error", "ALTER TABLE downloads ADD COLUMN last_error TEXT")?;
+
+    // Indexes for the columns the app filters/orders by. Without these every list/move/delete/lookup is a full table scan that degrades linearly as the library grows.
+    conn.execute_batch("CREATE INDEX IF NOT EXISTS idx_downloads_status ON downloads(status); CREATE INDEX IF NOT EXISTS idx_downloads_link ON downloads(link); CREATE INDEX IF NOT EXISTS idx_downloads_collection ON downloads(platform, user_handle, origin);")?;
+    Ok(())
+}
+
+/// Add a column via the provided `ALTER TABLE ... ADD COLUMN` DDL if it does not already exist on the `downloads` table.
 fn ensure_column(conn: &Connection, column: &str, add_column_ddl: &str) -> Result<()> {
     let mut stmt = conn.prepare("PRAGMA table_info(downloads)")?;
     let mut rows = stmt.query([])?;
@@ -87,33 +64,17 @@ fn ensure_column(conn: &Connection, column: &str, add_column_ddl: &str) -> Resul
 pub fn open_connection() -> Result<Connection> {
     let db_path = Database::get_db_path()?;
     let conn = Connection::open(&db_path)?;
-    init_schema(&conn)?;
+    configure_connection(&conn)?;
+    init_schema_once(&conn)?;
     Ok(conn)
 }
 
 pub fn find_download_by_id_conn(conn: &Connection, id: i64) -> Result<Option<DbDownloadRow>> {
-    let mut stmt = conn.prepare(
-        "SELECT id, platform, media, user_handle, origin, link, output_format, status, path, name, last_error
-           FROM downloads
-          WHERE id=?1
-          LIMIT 1",
-    )?;
+    let mut stmt = conn.prepare("SELECT id, platform, media, user_handle, origin, link, output_format, status, path, name, last_error FROM downloads WHERE id=?1 LIMIT 1")?;
     let mut rows = stmt.query([id])?;
     if let Some(row) = rows.next()? {
         let status_raw: String = row.get(7)?;
-        Ok(Some(DbDownloadRow {
-            id: row.get(0)?,
-            platform: row.get(1)?,
-            media: row.get(2)?,
-            user_handle: row.get(3)?,
-            origin: row.get(4)?,
-            link: row.get(5)?,
-            output_format: row.get(6)?,
-            status: DownloadStatus::from_db(status_raw),
-            path: row.get(8)?,
-            name: row.get(9)?,
-            last_error: row.get(10).ok(),
-        }))
+        Ok(Some(DbDownloadRow {id: row.get(0)?, platform: row.get(1)?, media: row.get(2)?, user_handle: row.get(3)?, origin: row.get(4)?, link: row.get(5)?, output_format: row.get(6)?, status: DownloadStatus::from_db(status_raw), path: row.get(8)?, name: row.get(9)?, last_error: row.get(10).ok()}))
     } else {
         Ok(None)
     }
@@ -121,66 +82,39 @@ pub fn find_download_by_id_conn(conn: &Connection, id: i64) -> Result<Option<DbD
 
 pub fn set_status_by_id_conn(conn: &Connection, id: i64, status: DownloadStatus) -> Result<usize> {
     let token = status.as_str();
-    let updated = conn.execute(
-        "UPDATE downloads
-            SET status=?1,
-                last_error=CASE WHEN ?1='error' THEN last_error ELSE NULL END,
-                date_downloaded=CASE WHEN ?1='done' THEN CURRENT_TIMESTAMP ELSE date_downloaded END
-          WHERE id=?2 AND status<>?1",
-        [token, &id.to_string()], // unchanged rows (same status) will not be updated
-    )?;
+    // Unchanged rows with the same status will not be updated.
+    let updated = conn.execute("UPDATE downloads SET status=?1, last_error=CASE WHEN ?1='error' THEN last_error ELSE NULL END, date_downloaded=CASE WHEN ?1='done' THEN CURRENT_TIMESTAMP ELSE date_downloaded END WHERE id=?2 AND status<>?1", [token, &id.to_string()])?;
     Ok(updated)
 }
 
-pub fn set_status_bulk_conn(
-    conn: &Connection,
-    ids: &[i64],
-    status: DownloadStatus,
-) -> Result<usize> {
+pub fn set_status_bulk_conn(conn: &Connection, ids: &[i64], status: DownloadStatus) -> Result<usize> {
     if ids.is_empty() {
         return Ok(0);
     }
-    let id_list = ids
-        .iter()
-        .map(|id| id.to_string())
-        .collect::<Vec<_>>()
-        .join(",");
     let token = status.as_str();
-    let updated = conn.execute(
-        &format!("UPDATE downloads SET status=?1, last_error=CASE WHEN ?1='error' THEN last_error ELSE NULL END WHERE id IN ({id_list}) AND status<>?1"),
-        [token],
-    )?;
+    // Chunk the id list so we never approach SQLite's expression-tree/variable
+    // limits on very large selections, and so the generated SQL text stays a
+    // handful of shapes the statement cache can reuse.
+    let mut updated = 0;
+    for chunk in ids.chunks(500) {
+        let id_list = chunk.iter().map(|id| id.to_string()).collect::<Vec<_>>().join(",");
+        updated += conn.execute(&format!("UPDATE downloads SET status=?1, last_error=CASE WHEN ?1='error' THEN last_error ELSE NULL END WHERE id IN ({id_list}) AND status<>?1"), [token])?;
+    }
     Ok(updated)
 }
 
-pub fn set_last_error_by_id_conn(
-    conn: &Connection,
-    id: i64,
-    last_error: Option<&str>,
-) -> Result<usize> {
-    conn.execute(
-        "UPDATE downloads SET last_error=?1 WHERE id=?2",
-        params![last_error, id],
-    )
+pub fn set_last_error_by_id_conn(conn: &Connection, id: i64, last_error: Option<&str>) -> Result<usize> {
+    conn.execute("UPDATE downloads SET last_error=?1 WHERE id=?2", params![last_error, id])
 }
 
-/// Reset any rows that were left in 'downloading' (e.g. after a crash) back to 'queued'.
-/// Returns the number of rows updated.
+/// Reset any rows that were left in 'downloading' (e.g. after a crash) back to 'queued'. Returns the number of rows updated.
 pub fn reset_stale_downloading_to_queued_conn(conn: &Connection) -> Result<usize> {
-    let updated = conn.execute(
-        "UPDATE downloads SET status='queued' WHERE status='downloading'",
-        [],
-    )?;
+    let updated = conn.execute("UPDATE downloads SET status='queued' WHERE status='downloading'", [])?;
     Ok(updated)
 }
 
 pub fn list_queued_ids_conn(conn: &Connection) -> Result<Vec<i64>> {
-    let mut stmt = conn.prepare(
-        "SELECT id
-           FROM downloads
-          WHERE status IN ('queued', 'queue')
-          ORDER BY id",
-    )?;
+    let mut stmt = conn.prepare("SELECT id FROM downloads WHERE status IN ('queued', 'queue') ORDER BY id")?;
     let rows = stmt.query_map([], |row| row.get(0))?;
     let mut out = Vec::new();
     for row in rows {
@@ -190,12 +124,7 @@ pub fn list_queued_ids_conn(conn: &Connection) -> Result<Vec<i64>> {
 }
 
 pub fn list_downloading_ids_conn(conn: &Connection) -> Result<Vec<i64>> {
-    let mut stmt = conn.prepare(
-        "SELECT id
-           FROM downloads
-          WHERE status = 'downloading'
-          ORDER BY id",
-    )?;
+    let mut stmt = conn.prepare("SELECT id FROM downloads WHERE status = 'downloading' ORDER BY id")?;
     let rows = stmt.query_map([], |row| row.get(0))?;
     let mut out = Vec::new();
     for row in rows {
@@ -221,34 +150,12 @@ pub fn mark_id_done_conn(conn: &Connection, id: i64, path: &str) -> Result<usize
         path.to_string()
     };
     let now = Utc::now().to_rfc3339();
-    let updated = conn.execute(
-        "UPDATE downloads
-            SET status='done',
-                path=?1,
-                last_error=NULL,
-                date_downloaded=?2
-          WHERE id=?3",
-        params![path_value, now, id],
-    )?;
+    let updated = conn.execute("UPDATE downloads SET status='done', path=?1, last_error=NULL, date_downloaded=?2 WHERE id=?3", params![path_value, now, id])?;
     Ok(updated)
 }
 
 pub fn list_all_ui_conn(conn: &Connection) -> Result<Vec<UiBacklogRow>> {
-    let mut stmt = conn.prepare(
-        "SELECT id, status, platform, user_handle, origin, media, link, name, output_format, last_error
-           FROM downloads
-          ORDER BY CASE status
-                     WHEN 'downloading' THEN 0
-                     WHEN 'queued' THEN 1
-                     WHEN 'queue' THEN 1
-                     WHEN 'backlog' THEN 2
-                     WHEN 'error' THEN 3
-                     WHEN 'done' THEN 4
-                     WHEN 'canceled' THEN 5
-                     ELSE 6
-                   END,
-                   id",
-    )?;
+    let mut stmt = conn.prepare("SELECT id, status, platform, user_handle, origin, media, link, name, output_format, last_error FROM downloads ORDER BY CASE status WHEN 'downloading' THEN 0 WHEN 'queued' THEN 1 WHEN 'queue' THEN 1 WHEN 'backlog' THEN 2 WHEN 'error' THEN 3 WHEN 'done' THEN 4 WHEN 'canceled' THEN 5 ELSE 6 END, id")?;
 
     let rows = stmt.query_map([], |row| {
         let id: i64 = row.get(0)?;
@@ -263,9 +170,7 @@ pub fn list_all_ui_conn(conn: &Connection) -> Result<Vec<UiBacklogRow>> {
         let last_error: Option<String> = row.get(9).ok();
 
         let content_type = match origin.as_str() {
-            "recommendation" | "playlist" | "profile" | "bookmarks" | "liked" | "reposts" => {
-                origin.clone()
-            }
+            "recommendation" | "playlist" | "profile" | "bookmarks" | "liked" | "reposts" => origin.clone(),
             _ => "recommendation".to_string(),
         };
         let media_token = if media == "image" || media == "images" {
@@ -274,17 +179,7 @@ pub fn list_all_ui_conn(conn: &Connection) -> Result<Vec<UiBacklogRow>> {
             "video".to_string()
         };
 
-        Ok(UiBacklogRow {
-            id,
-            platform,
-            content_type,
-            handle,
-            media: media_token,
-            link,
-            output_format,
-            status: DownloadStatus::from_db(status_raw),
-            last_error,
-        })
+        Ok(UiBacklogRow {id, platform, content_type, handle, media: media_token, link, output_format, status: DownloadStatus::from_db(status_raw), last_error})
     })?;
 
     let mut out = Vec::new();
@@ -381,8 +276,7 @@ pub struct Download {
     pub date_downloaded: Option<DateTime<Utc>>,
 }
 
-/// Row shape returned to the **frontend** for the Downloads page.
-/// Keys and value tokens match `src/types.rs` expectations.
+/// Row shape returned to the **frontend** for the Downloads page. Keys and value tokens match `src/types.rs` expectations.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UiBacklogRow {
     pub id: i64,
@@ -596,17 +490,12 @@ fn normalize_link(mut s: String) -> String {
 impl Database {
     pub fn new() -> Result<Self> {
         let conn = open_connection()?;
-        Ok(Database { conn })
+        Ok(Database {conn})
     }
 
     pub fn find_done_row_by_link(&self, link: &str) -> Result<Option<(i64, String)>> {
         let norm = normalize_link(link.to_string());
-        let mut stmt = self.conn.prepare(
-            "SELECT id, link, path
-               FROM downloads
-              WHERE status='done'
-              ORDER BY id",
-        )?;
+        let mut stmt = self.conn.prepare("SELECT id, link, path FROM downloads WHERE status='done' ORDER BY id")?;
         let mut rows = stmt.query([])?;
         while let Some(r) = rows.next()? {
             let id: i64 = r.get(0)?;
@@ -621,17 +510,36 @@ impl Database {
 
     /// Hard-delete a row by id.
     pub fn delete_row_by_id(&self, id: i64) -> Result<usize> {
-        let n = self
-            .conn
-            .execute("DELETE FROM downloads WHERE id=?1", [id])?;
+        let n = self.conn.execute("DELETE FROM downloads WHERE id=?1", [id])?;
         Ok(n)
+    }
+
+    /// Delete every row for a platform in a single statement.
+    pub fn delete_by_platform(&self, platform: &str) -> Result<usize> {
+        self.conn.execute("DELETE FROM downloads WHERE platform=?1", [platform])
+    }
+
+    /// Delete every row in a (platform, handle, origin) collection in one statement.
+    pub fn delete_by_collection(&self, platform: &str, handle: &str, origin: &str) -> Result<usize> {
+        self.conn.execute("DELETE FROM downloads WHERE platform=?1 AND user_handle=?2 AND origin=?3", [platform, handle, origin])
+    }
+
+    /// Delete every row matching a link in one statement.
+    pub fn delete_by_link(&self, link: &str) -> Result<usize> {
+        self.conn.execute("DELETE FROM downloads WHERE link=?1", [link])
+    }
+
+    /// Run `f` inside a single transaction. On `Ok` the transaction is committed; on `Err` (or panic) it is rolled back. Lets callers batch many writes into one fsync instead of paying the implicit-transaction cost per statement.
+    pub fn with_transaction<T>(&self, f: impl FnOnce() -> std::result::Result<T, String>) -> std::result::Result<T, String> {
+        let tx = self.conn.unchecked_transaction().map_err(|e| e.to_string())?;
+        let out = f()?;
+        tx.commit().map_err(|e| e.to_string())?;
+        Ok(out)
     }
 
     /// Utility: ids and paths for all rows under a platform.
     pub fn list_ids_and_paths_by_platform(&self, platform: &str) -> Result<Vec<(i64, String)>> {
-        let mut stmt = self
-            .conn
-            .prepare("SELECT id, path FROM downloads WHERE platform=?1")?;
+        let mut stmt = self.conn.prepare("SELECT id, path FROM downloads WHERE platform=?1")?;
         let mut rows = stmt.query([platform])?;
         let mut v = Vec::new();
         while let Some(r) = rows.next()? {
@@ -641,15 +549,8 @@ impl Database {
     }
 
     /// Utility: ids and paths for all rows in a collection.
-    pub fn list_ids_and_paths_by_collection(
-        &self,
-        platform: &str,
-        handle: &str,
-        origin: &str,
-    ) -> Result<Vec<(i64, String)>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, path FROM downloads WHERE platform=?1 AND user_handle=?2 AND origin=?3",
-        )?;
+    pub fn list_ids_and_paths_by_collection(&self, platform: &str, handle: &str, origin: &str) -> Result<Vec<(i64, String)>> {
+        let mut stmt = self.conn.prepare("SELECT id, path FROM downloads WHERE platform=?1 AND user_handle=?2 AND origin=?3")?;
         let mut rows = stmt.query([platform, handle, origin])?;
         let mut v = Vec::new();
         while let Some(r) = rows.next()? {
@@ -660,9 +561,7 @@ impl Database {
 
     /// Utility: ids and paths for all rows matching a link (any status).
     pub fn list_ids_and_paths_by_link(&self, link: &str) -> Result<Vec<(i64, String)>> {
-        let mut stmt = self
-            .conn
-            .prepare("SELECT id, path FROM downloads WHERE link=?1")?;
+        let mut stmt = self.conn.prepare("SELECT id, path FROM downloads WHERE link=?1")?;
         let mut rows = stmt.query([link])?;
         let mut v = Vec::new();
         while let Some(r) = rows.next()? {
@@ -673,9 +572,7 @@ impl Database {
 
     /// Read the preferred output format for a link (first matching, priority queue/backlog). Returns "audio" | "video" | "default".
     pub fn output_format_for_link(&self, link: &str) -> Result<String> {
-        let mut stmt = self.conn.prepare(
-            "SELECT output_format FROM downloads WHERE link=?1 ORDER BY CASE status WHEN 'queued' THEN 0 WHEN 'queue' THEN 0 WHEN 'backlog' THEN 1 ELSE 2 END, id LIMIT 1"
-        )?;
+        let mut stmt = self.conn.prepare("SELECT output_format FROM downloads WHERE link=?1 ORDER BY CASE status WHEN 'queued' THEN 0 WHEN 'queue' THEN 0 WHEN 'backlog' THEN 1 ELSE 2 END, id LIMIT 1")?;
         let mut rows = stmt.query([link])?;
         if let Some(r) = rows.next()? {
             let fmt: String = r.get(0)?;
@@ -688,9 +585,7 @@ impl Database {
     /// Toggle a row's output_format between 'audio' and 'video'. If currently 'default', set to 'audio'.
     pub fn toggle_output_format_for_link(&self, link: &str) -> Result<usize> {
         // Find first matching row (any status); prefer queue/backlog
-        let mut stmt = self.conn.prepare(
-            "SELECT id, output_format FROM downloads WHERE link=?1 ORDER BY CASE status WHEN 'queued' THEN 0 WHEN 'queue' THEN 0 WHEN 'backlog' THEN 1 ELSE 2 END, id LIMIT 1"
-        )?;
+        let mut stmt = self.conn.prepare("SELECT id, output_format FROM downloads WHERE link=?1 ORDER BY CASE status WHEN 'queued' THEN 0 WHEN 'queue' THEN 0 WHEN 'backlog' THEN 1 ELSE 2 END, id LIMIT 1")?;
         let mut rows = stmt.query([link])?;
         if let Some(r) = rows.next()? {
             let id: i64 = r.get(0)?;
@@ -700,10 +595,7 @@ impl Database {
                 "video" => "audio",
                 _ => "audio",
             };
-            let n = self.conn.execute(
-                "UPDATE downloads SET output_format=?1 WHERE id=?2",
-                [next, &id.to_string()],
-            )?;
+            let n = self.conn.execute("UPDATE downloads SET output_format=?1 WHERE id=?2", [next, &id.to_string()])?;
             Ok(n)
         } else {
             Ok(0)
@@ -712,16 +604,11 @@ impl Database {
 
     /// Explicitly set output_format for the row by link (first matching, priority queue/backlog).
     pub fn set_output_format_for_link(&self, link: &str, fmt: OutputFormat) -> Result<usize> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id FROM downloads WHERE link=?1 ORDER BY CASE status WHEN 'queued' THEN 0 WHEN 'queue' THEN 0 WHEN 'backlog' THEN 1 ELSE 2 END, id LIMIT 1"
-        )?;
+        let mut stmt = self.conn.prepare("SELECT id FROM downloads WHERE link=?1 ORDER BY CASE status WHEN 'queued' THEN 0 WHEN 'queue' THEN 0 WHEN 'backlog' THEN 1 ELSE 2 END, id LIMIT 1")?;
         let mut rows = stmt.query([link])?;
         if let Some(r) = rows.next()? {
             let id: i64 = r.get(0)?;
-            let n = self.conn.execute(
-                "UPDATE downloads SET output_format=?1 WHERE id=?2",
-                [format!("{:?}", fmt).to_lowercase(), id.to_string()],
-            )?;
+            let n = self.conn.execute("UPDATE downloads SET output_format=?1 WHERE id=?2", [format!("{:?}", fmt).to_lowercase(), id.to_string()])?;
             Ok(n)
         } else {
             Ok(0)
@@ -731,17 +618,11 @@ impl Database {
     fn get_db_path() -> Result<PathBuf> {
         let config_dir = match dirs::config_dir() {
             Some(dir) => dir,
-            None => {
-                return Err(rusqlite::Error::InvalidColumnName(
-                    "Could not find config directory".to_string(),
-                ))
-            }
+            None => return Err(rusqlite::Error::InvalidColumnName("Could not find config directory".to_string())),
         };
 
         let app_config_dir = config_dir.join("clip-downloader");
-        std::fs::create_dir_all(&app_config_dir).map_err(|_| {
-            rusqlite::Error::InvalidColumnName("Failed to create config directory".to_string())
-        })?;
+        std::fs::create_dir_all(&app_config_dir).map_err(|_| rusqlite::Error::InvalidColumnName("Failed to create config directory".to_string()))?;
 
         Ok(app_config_dir.join("downloads.db"))
     }
@@ -759,47 +640,11 @@ impl Database {
             download.path.clone()
         };
 
-        self.conn.execute(
-            "INSERT INTO downloads (
-                platform,
-                name,
-                media,
-                user_handle,
-                origin,
-                link,
-                output_format,
-                status,
-                path,
-                image_set_id,
-                last_error,
-                date_added,
-                date_downloaded
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
-            params![
-                format!("{:?}", download.platform).to_lowercase(),
-                download.name.clone(),
-                format!("{:?}", download.media).to_lowercase(),
-                download.user.clone(),
-                format!("{:?}", download.origin).to_lowercase(),
-                download.link.clone(),
-                format!("{:?}", download.output_format).to_lowercase(),
-                format!("{:?}", download.status).to_lowercase(),
-                path_value,
-                download.image_set_id.clone().unwrap_or_default(),
-                download.last_error.clone(),
-                download.date_added.to_rfc3339(),
-                download
-                    .date_downloaded
-                    .as_ref()
-                    .map(|dt| dt.to_rfc3339())
-                    .unwrap_or_default(),
-            ],
-        )?;
+        self.conn.execute("INSERT INTO downloads ( platform, name, media, user_handle, origin, link, output_format, status, path, image_set_id, last_error, date_added, date_downloaded ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)", params![format!("{:?}", download.platform).to_lowercase(), download.name.clone(), format!("{:?}", download.media).to_lowercase(), download.user.clone(), format!("{:?}", download.origin).to_lowercase(), download.link.clone(), format!("{:?}", download.output_format).to_lowercase(), format!("{:?}", download.status).to_lowercase(), path_value, download.image_set_id.clone().unwrap_or_default(), download.last_error.clone(), download.date_added.to_rfc3339(), download.date_downloaded.as_ref().map(|dt| dt.to_rfc3339()).unwrap_or_default(),])?;
         Ok(self.conn.last_insert_rowid())
     }
 
-    /// Mark the first queued row for this link as done; set its path and date_downloaded.
-    /// Uses a *loose* match (normalized URL) so minor URL differences (e.g. IG query params) still resolve.
+    /// Mark the first queued row for this link as done; set its path and date_downloaded. Uses a *loose* match (normalized URL) so minor URL differences (e.g. IG query params) still resolve.
     pub fn mark_link_done(&self, link: &str, path: &str) -> Result<usize> {
         let path_value = if path.is_empty() {
             "unknown_path".to_string()
@@ -810,11 +655,7 @@ impl Database {
         let norm = normalize_link(link.to_string());
 
         // find oldest queued row (or backlog) whose normalized link matches
-        let mut stmt = self.conn.prepare(
-            "SELECT id, link FROM downloads 
-              WHERE status IN ('queued', 'queue', 'backlog') 
-              ORDER BY CASE status WHEN 'queued' THEN 0 WHEN 'queue' THEN 0 ELSE 1 END, id",
-        )?;
+        let mut stmt = self.conn.prepare("SELECT id, link FROM downloads WHERE status IN ('queued', 'queue', 'backlog') ORDER BY CASE status WHEN 'queued' THEN 0 WHEN 'queue' THEN 0 ELSE 1 END, id")?;
         let mut rows = stmt.query([])?;
         let mut target_id: Option<i64> = None;
         while let Some(row) = rows.next()? {
@@ -827,21 +668,12 @@ impl Database {
         }
 
         let n = if let Some(id) = target_id {
-            self.conn.execute(
-                "UPDATE downloads SET status='done', path=?1, date_downloaded=?2 WHERE id=?3",
-                params![path_value, now, id],
-            )?
+            self.conn.execute("UPDATE downloads SET status='done', path=?1, date_downloaded=?2 WHERE id=?3", params![path_value, now, id])?
         } else {
             // fallback: strict equality
-            let n = self.conn.execute(
-                "UPDATE downloads SET status='done', path=?2, date_downloaded=?3 WHERE link=?1 AND status IN ('queued', 'queue') LIMIT 1",
-                [&link.to_string(), &path_value, &now],
-            )?;
+            let n = self.conn.execute("UPDATE downloads SET status='done', path=?2, date_downloaded=?3 WHERE link=?1 AND status IN ('queued', 'queue') LIMIT 1", [&link.to_string(), &path_value, &now])?;
             if n == 0 {
-                self.conn.execute(
-                    "UPDATE downloads SET status='done', path=?2, date_downloaded=?3 WHERE link=?1 AND status='backlog' LIMIT 1",
-                    [&link.to_string(), &path_value, &now],
-                )?
+                self.conn.execute("UPDATE downloads SET status='done', path=?2, date_downloaded=?3 WHERE link=?1 AND status='backlog' LIMIT 1", [&link.to_string(), &path_value, &now])?
             } else {
                 n
             }
@@ -854,20 +686,9 @@ impl Database {
         mark_id_done_conn(&self.conn, id, path)
     }
 
-    pub fn link_exists_in_collection(
-        &self,
-        link: &str,
-        platform: &str,
-        user_handle: &str,
-        origin: &str,
-    ) -> Result<bool> {
+    pub fn link_exists_in_collection(&self, link: &str, platform: &str, user_handle: &str, origin: &str) -> Result<bool> {
         let norm = normalize_link(link.to_string());
-        let mut stmt = self.conn.prepare(
-            "SELECT link FROM downloads
-              WHERE platform  = ?1 COLLATE NOCASE
-                AND (user_handle = ?2 COLLATE NOCASE OR (?2 = 'Unknown' AND (user_handle = '' OR user_handle IS NULL)))
-                AND origin    = ?3 COLLATE NOCASE",
-        )?;
+        let mut stmt = self.conn.prepare("SELECT link FROM downloads WHERE platform = ?1 COLLATE NOCASE AND (user_handle = ?2 COLLATE NOCASE OR (?2 = 'Unknown' AND (user_handle = '' OR user_handle IS NULL))) AND origin = ?3 COLLATE NOCASE")?;
         let mut rows = stmt.query([platform, user_handle, origin])?;
         while let Some(row) = rows.next()? {
             let db_link: String = row.get(0)?;
@@ -879,9 +700,7 @@ impl Database {
     }
 
     pub fn find_id_by_link(&self, link: &str) -> Result<Option<i64>> {
-        let mut stmt = self
-            .conn
-            .prepare("SELECT id FROM downloads WHERE link=?1 ORDER BY id LIMIT 1")?;
+        let mut stmt = self.conn.prepare("SELECT id FROM downloads WHERE link=?1 ORDER BY id LIMIT 1")?;
         let mut rows = stmt.query([link])?;
         if let Some(row) = rows.next()? {
             Ok(Some(row.get(0)?))
@@ -892,21 +711,10 @@ impl Database {
 
     /* ------------------------------ read helpers ----------------------------- */
 
-    /// Preferred collection (platform, origin, user_handle) for a given link.
-    /// Priority: queue → backlog → done (oldest id first). Uses normalized-link matching.
+    /// Preferred collection (platform, origin, user_handle) for a given link. Priority: queue → backlog → done (oldest id first). Uses normalized-link matching.
     pub fn collection_for_link(&self, link: &str) -> Result<Option<CollectionInfo>> {
         let norm = normalize_link(link.to_string());
-        let mut stmt = self.conn.prepare(
-            "SELECT platform, origin, user_handle, link, status, id
-               FROM downloads
-              ORDER BY CASE status
-                         WHEN 'queued' THEN 0
-                         WHEN 'queue' THEN 0
-                         WHEN 'backlog' THEN 1
-                         ELSE 2
-                       END,
-                       id",
-        )?;
+        let mut stmt = self.conn.prepare("SELECT platform, origin, user_handle, link, status, id FROM downloads ORDER BY CASE status WHEN 'queued' THEN 0 WHEN 'queue' THEN 0 WHEN 'backlog' THEN 1 ELSE 2 END, id")?;
         let mut rows = stmt.query([])?;
         while let Some(r) = rows.next()? {
             let platform: String = r.get(0)?;
@@ -914,22 +722,21 @@ impl Database {
             let user_handle: String = r.get(2)?;
             let db_link: String = r.get(3)?;
             if normalize_link(db_link) == norm {
-                return Ok(Some(CollectionInfo {
-                    platform,
-                    origin,
-                    user_handle,
-                }));
+                return Ok(Some(CollectionInfo {platform, origin, user_handle}));
             }
         }
         Ok(None)
     }
 
-    /// Compute a display-ready folder label: "{origin} - {user_handle}"
-    /// Ensures both parts are non-empty (falls back to tokens if needed).
+    /// Compute a display-ready folder label: "{origin} - {user_handle}" Ensures both parts are non-empty (falls back to tokens if needed).
     pub fn collection_folder_label(origin: &str, user_handle: &str) -> String {
         let o = origin.trim();
         let u = user_handle.trim();
-        let o = if o.is_empty() { "manual" } else { o };
+        let o = if o.is_empty() {
+            "manual"
+        } else {
+            o
+        };
         let u = if u.is_empty() || u.eq_ignore_ascii_case("unknown") {
             "Unknown"
         } else {
@@ -948,18 +755,9 @@ impl Database {
 
     /* -------------------------- UI-normalized listings -------------------------- */
 
-    /// Fetch rows with `status = 'backlog'`, normalized for the UI.
-    /// Ordered by platform → handle → type → name (case-insensitive).
+    /// Fetch rows with `status = 'backlog'`, normalized for the UI. Ordered by platform → handle → type → name (case-insensitive).
     pub fn list_backlog_ui(&self) -> Result<Vec<UiBacklogRow>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, status, platform, user_handle, origin, media, link, name, output_format, last_error
-             FROM downloads
-             WHERE status = 'backlog'
-             ORDER BY platform COLLATE NOCASE,
-                      user_handle COLLATE NOCASE,
-                      origin COLLATE NOCASE,
-                      name COLLATE NOCASE",
-        )?;
+        let mut stmt = self.conn.prepare("SELECT id, status, platform, user_handle, origin, media, link, name, output_format, last_error FROM downloads WHERE status = 'backlog' ORDER BY platform COLLATE NOCASE, user_handle COLLATE NOCASE, origin COLLATE NOCASE, name COLLATE NOCASE")?;
 
         let rows = stmt.query_map([], |row| {
             let id: i64 = row.get(0)?;
@@ -980,17 +778,7 @@ impl Database {
                 "video".to_string()
             };
 
-            Ok(UiBacklogRow {
-                id,
-                platform,
-                content_type,
-                handle,
-                media: media_token,
-                link,
-                output_format,
-                status: DownloadStatus::from_db(status_raw),
-                last_error,
-            })
+            Ok(UiBacklogRow {id, platform, content_type, handle, media: media_token, link, output_format, status: DownloadStatus::from_db(status_raw), last_error})
         })?;
 
         let mut out = Vec::new();
@@ -1002,15 +790,7 @@ impl Database {
 
     /// Fetch rows with `status = 'queued'`, normalized for the UI.
     pub fn list_queue_ui(&self) -> Result<Vec<UiBacklogRow>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, status, platform, user_handle, origin, media, link, name, output_format, last_error
-             FROM downloads
-             WHERE status IN ('queued', 'queue')
-             ORDER BY platform COLLATE NOCASE,
-                      user_handle COLLATE NOCASE,
-                      origin COLLATE NOCASE,
-                      name COLLATE NOCASE",
-        )?;
+        let mut stmt = self.conn.prepare("SELECT id, status, platform, user_handle, origin, media, link, name, output_format, last_error FROM downloads WHERE status IN ('queued', 'queue') ORDER BY platform COLLATE NOCASE, user_handle COLLATE NOCASE, origin COLLATE NOCASE, name COLLATE NOCASE")?;
 
         let rows = stmt.query_map([], |row| {
             let id: i64 = row.get(0)?;
@@ -1025,9 +805,7 @@ impl Database {
             let last_error: Option<String> = row.get(9).ok();
 
             let content_type = match origin.as_str() {
-                "recommendation" | "playlist" | "profile" | "bookmarks" | "liked" | "reposts" => {
-                    origin.clone()
-                }
+                "recommendation" | "playlist" | "profile" | "bookmarks" | "liked" | "reposts" => origin.clone(),
                 _ => "recommendation".to_string(),
             };
             let media_token = if media == "image" || media == "images" {
@@ -1036,17 +814,7 @@ impl Database {
                 "video".to_string()
             };
 
-            Ok(UiBacklogRow {
-                id,
-                platform,
-                content_type,
-                handle,
-                media: media_token,
-                link,
-                output_format,
-                status: DownloadStatus::from_db(status_raw),
-                last_error,
-            })
+            Ok(UiBacklogRow {id, platform, content_type, handle, media: media_token, link, output_format, status: DownloadStatus::from_db(status_raw), last_error})
         })?;
 
         let mut out = Vec::new();
@@ -1057,15 +825,7 @@ impl Database {
     }
 
     pub fn list_done_ui(&self) -> Result<Vec<UiBacklogRow>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, status, platform, user_handle, origin, media, link, name, output_format, last_error
-             FROM downloads
-             WHERE status = 'done'
-             ORDER BY platform COLLATE NOCASE,
-                      user_handle COLLATE NOCASE,
-                      origin COLLATE NOCASE,
-                      name COLLATE NOCASE",
-        )?;
+        let mut stmt = self.conn.prepare("SELECT id, status, platform, user_handle, origin, media, link, name, output_format, last_error FROM downloads WHERE status = 'done' ORDER BY platform COLLATE NOCASE, user_handle COLLATE NOCASE, origin COLLATE NOCASE, name COLLATE NOCASE")?;
 
         let rows = stmt.query_map([], |row| {
             let id: i64 = row.get(0)?;
@@ -1080,9 +840,7 @@ impl Database {
             let last_error: Option<String> = row.get(9).ok();
 
             let content_type = match origin.as_str() {
-                "recommendation" | "playlist" | "profile" | "bookmarks" | "liked" | "reposts" => {
-                    origin.clone()
-                }
+                "recommendation" | "playlist" | "profile" | "bookmarks" | "liked" | "reposts" => origin.clone(),
                 _ => "recommendation".to_string(),
             };
             let media_token = if media == "image" || media == "images" {
@@ -1091,17 +849,7 @@ impl Database {
                 "video".to_string()
             };
 
-            Ok(UiBacklogRow {
-                id,
-                platform,
-                content_type,
-                handle,
-                media: media_token,
-                link,
-                output_format,
-                status: DownloadStatus::from_db(status_raw),
-                last_error,
-            })
+            Ok(UiBacklogRow {id, platform, content_type, handle, media: media_token, link, output_format, status: DownloadStatus::from_db(status_raw), last_error})
         })?;
 
         let mut out = Vec::new();
@@ -1120,41 +868,19 @@ impl Database {
 
     /// Move a single link from backlog to queue.
     pub fn move_link_to_queue(&self, link: &str) -> Result<usize> {
-        let n = self.conn.execute(
-            "UPDATE downloads SET status='queued' WHERE link=?1 AND status='backlog'",
-            [link],
-        )?;
+        let n = self.conn.execute("UPDATE downloads SET status='queued' WHERE link=?1 AND status='backlog'", [link])?;
         Ok(n)
     }
 
     /// Move all rows of a (platform, handle, origin) collection from backlog to queue.
-    pub fn move_collection_to_queue(
-        &self,
-        platform: &str,
-        handle: &str,
-        origin: &str,
-    ) -> Result<usize> {
-        let n = self.conn.execute(
-            "UPDATE downloads
-               SET status='queued'
-             WHERE platform    = ?1 COLLATE NOCASE
-               AND (user_handle = ?2 COLLATE NOCASE OR (?2 = 'Unknown' AND (user_handle = '' OR user_handle IS NULL)))
-               AND origin      = ?3 COLLATE NOCASE
-               AND status      = 'backlog'",
-            [platform, handle, origin],
-        )?;
+    pub fn move_collection_to_queue(&self, platform: &str, handle: &str, origin: &str) -> Result<usize> {
+        let n = self.conn.execute("UPDATE downloads SET status='queued' WHERE platform = ?1 COLLATE NOCASE AND (user_handle = ?2 COLLATE NOCASE OR (?2 = 'Unknown' AND (user_handle = '' OR user_handle IS NULL))) AND origin = ?3 COLLATE NOCASE AND status = 'backlog'", [platform, handle, origin])?;
         Ok(n)
     }
 
     /// Move all rows of a platform from backlog to queue.
     pub fn move_platform_to_queue(&self, platform: &str) -> Result<usize> {
-        let n = self.conn.execute(
-            "UPDATE downloads
-               SET status='queued'
-             WHERE platform = ?1 COLLATE NOCASE
-               AND status   = 'backlog'",
-            [platform],
-        )?;
+        let n = self.conn.execute("UPDATE downloads SET status='queued' WHERE platform = ?1 COLLATE NOCASE AND status = 'backlog'", [platform])?;
         Ok(n)
     }
 
@@ -1162,41 +888,19 @@ impl Database {
 
     /// Move a single link from queue back to backlog.
     pub fn move_link_to_backlog(&self, link: &str) -> Result<usize> {
-        let n = self.conn.execute(
-            "UPDATE downloads SET status='backlog' WHERE link=?1 AND status IN ('queued', 'queue')",
-            [link],
-        )?;
+        let n = self.conn.execute("UPDATE downloads SET status='backlog' WHERE link=?1 AND status IN ('queued', 'queue')", [link])?;
         Ok(n)
     }
 
     /// Move all rows of a (platform, handle, origin) collection from queue back to backlog.
-    pub fn move_collection_to_backlog(
-        &self,
-        platform: &str,
-        handle: &str,
-        origin: &str,
-    ) -> Result<usize> {
-        let n = self.conn.execute(
-            "UPDATE downloads
-               SET status='backlog'
-             WHERE platform    = ?1 COLLATE NOCASE
-               AND (user_handle = ?2 COLLATE NOCASE OR (?2 = 'Unknown' AND (user_handle = '' OR user_handle IS NULL)))
-               AND origin      = ?3 COLLATE NOCASE
-               AND status IN ('queued', 'queue')",
-            [platform, handle, origin],
-        )?;
+    pub fn move_collection_to_backlog(&self, platform: &str, handle: &str, origin: &str) -> Result<usize> {
+        let n = self.conn.execute("UPDATE downloads SET status='backlog' WHERE platform = ?1 COLLATE NOCASE AND (user_handle = ?2 COLLATE NOCASE OR (?2 = 'Unknown' AND (user_handle = '' OR user_handle IS NULL))) AND origin = ?3 COLLATE NOCASE AND status IN ('queued', 'queue')", [platform, handle, origin])?;
         Ok(n)
     }
 
     /// Move all rows of a platform from queue back to backlog.
     pub fn move_platform_to_backlog(&self, platform: &str) -> Result<usize> {
-        let n = self.conn.execute(
-            "UPDATE downloads
-               SET status='backlog'
-             WHERE platform = ?1 COLLATE NOCASE
-               AND status IN ('queued', 'queue')",
-            [platform],
-        )?;
+        let n = self.conn.execute("UPDATE downloads SET status='backlog' WHERE platform = ?1 COLLATE NOCASE AND status IN ('queued', 'queue')", [platform])?;
         Ok(n)
     }
 }

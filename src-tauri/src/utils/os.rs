@@ -138,10 +138,7 @@ fn firefox_profile_args(root: &Path, browser_keyword: &str, browser_label: &str)
             continue;
         }
         let profile_name = entry.file_name().to_string_lossy().to_string();
-        out.push((
-            format!("{browser_label} ({profile_name})"),
-            format!("{browser_keyword}:{}", profile_dir.display()),
-        ));
+        out.push((format!("{browser_label} ({profile_name})"), format!("{browser_keyword}:{}", profile_dir.display())));
     }
     out
 }

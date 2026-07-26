@@ -118,22 +118,12 @@ pub fn library_page() -> Html {
         let plat = platform_str(&r.platform).to_string();
         let typ = content_type_str(&r.content_type).to_string();
 
-        let key = format!(
-            "{}|{}|{}|{}",
-            plat,
-            r.handle.to_lowercase().trim(),
-            typ,
-            r.link.trim()
-        );
+        let key = format!("{}|{}|{}|{}", plat, r.handle.to_lowercase().trim(), typ, r.link.trim());
         if !seen.insert(key) {
             continue;
         }
 
-        map.entry(plat)
-            .or_default()
-            .entry((r.handle.clone(), typ))
-            .or_default()
-            .push(r);
+        map.entry(plat).or_default().entry((r.handle.clone(), typ)).or_default().push(r);
     }
 
     // sort each collection by label for stability
@@ -158,7 +148,9 @@ pub fn library_page() -> Html {
                             let k = platform_key.clone();
                             Callback::from(move |_| {
                                 let mut set = (*expanded_platforms).clone();
-                                if !set.insert(k.clone()) { set.remove(&k); }
+                                if !set.insert(k.clone()) {
+                                    set.remove(&k);
+                                }
                                 expanded_platforms.set(set);
                             })
                         };
@@ -176,16 +168,12 @@ pub fn library_page() -> Html {
                                 e.prevent_default();
                                 e.stop_propagation();
                                 // optimistic UI update
-                                let filtered: Vec<ClipRow> = (*done_rows)
-                                    .clone()
-                                    .into_iter()
-                                    .filter(|r| !links.contains(&r.link))
-                                    .collect();
+                                let filtered: Vec<ClipRow> = (*done_rows).clone().into_iter().filter(|r| !links.contains(&r.link)).collect();
                                 done_rows.set(filtered);
                                 // backend delete honoring delete mode (clone so handler stays Fn)
                                 let p = plat_for_backend.clone();
                                 spawn_local(async move {
-                                    let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "platform": p })).unwrap();
+                                    let args = serde_wasm_bindgen::to_value(&serde_json::json!({"platform": p})).unwrap();
                                     let _ = invoke("delete_rows_by_platform", args).await;
                                 });
                             })
@@ -198,7 +186,7 @@ pub fn library_page() -> Html {
                                 e.stop_propagation();
                                 let p = platform.clone();
                                 spawn_local(async move {
-                                    let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "platform": p })).unwrap();
+                                    let args = serde_wasm_bindgen::to_value(&serde_json::json!({"platform": p})).unwrap();
                                     let _ = invoke("open_platform_folder", args).await;
                                 });
                             })
@@ -216,7 +204,9 @@ pub fn library_page() -> Html {
                                                 let k = col_key.clone();
                                                 Callback::from(move |_| {
                                                     let mut set = (*expanded_collections).clone();
-                                                    if !set.insert(k.clone()) { set.remove(&k); }
+                                                    if !set.insert(k.clone()) {
+                                                        set.remove(&k);
+                                                    }
                                                     expanded_collections.set(set);
                                                 })
                                             };
@@ -231,11 +221,7 @@ pub fn library_page() -> Html {
                                                 Callback::from(move |e: MouseEvent| {
                                                     e.prevent_default();
                                                     e.stop_propagation();
-                                                    let filtered: Vec<ClipRow> = (*done_rows)
-                                                        .clone()
-                                                        .into_iter()
-                                                        .filter(|r| !links.contains(&r.link))
-                                                        .collect();
+                                                    let filtered: Vec<ClipRow> = (*done_rows).clone().into_iter().filter(|r| !links.contains(&r.link)).collect();
                                                     done_rows.set(filtered);
                                                     // backend delete honoring delete mode
                                                     let p = plat_for_backend.clone();
@@ -277,10 +263,10 @@ pub fn library_page() -> Html {
                                                 <div class="collection-block" key={col_key.clone()}>
                                                     <div class="collection-item" onclick={on_col_click}>
                                                         <div class="item-left">
-                                                            <span class="item-title">{ format!("{} | {}", handle, typ_str) }</span>
+                                                            <span class="item-title">{format!("{} | {}", handle, typ_str)}</span>
                                                         </div>
                                                         <div class="item-right">
-                                                            <span>{ format!("{} items", rows.len()) }</span>
+                                                            <span>{format!("{} items", rows.len())}</span>
                                                             <button class="icon-btn" type_="button" title="Show in folder" onclick={on_open_collection_folder}>
                                                                 <Icon icon_id={IconId::LucideFolder} width={"18"} height={"18"} />
                                                             </button>
@@ -305,16 +291,13 @@ pub fn library_page() -> Html {
                                                                                         e.stop_propagation();
 
                                                                                         // Optimistic UI removal
-                                                                                        let filtered: Vec<ClipRow> = (*done_rows).clone()
-                                                                                            .into_iter()
-                                                                                            .filter(|r| r.link != link)
-                                                                                            .collect();
+                                                                                        let filtered: Vec<ClipRow> = (*done_rows).clone().into_iter().filter(|r| r.link != link).collect();
                                                                                         done_rows.set(filtered);
 
                                                                                         // Backend delete honoring delete mode
                                                                                         let link_for_backend = link.clone();
                                                                                         spawn_local(async move {
-                                                                                            let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "link": link_for_backend })).unwrap();
+                                                                                            let args = serde_wasm_bindgen::to_value(&serde_json::json!({"link": link_for_backend})).unwrap();
                                                                                             let _ = invoke("delete_rows_by_link", args).await;
                                                                                         });
                                                                                     })
@@ -328,7 +311,7 @@ pub fn library_page() -> Html {
                                                                                         e.stop_propagation();
                                                                                         let l = link.clone();
                                                                                         spawn_local(async move {
-                                                                                            let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "link": l })).unwrap();
+                                                                                            let args = serde_wasm_bindgen::to_value(&serde_json::json!({"link": l})).unwrap();
                                                                                             let _ = invoke("open_file_for_link", args).await;
                                                                                         });
                                                                                     })
@@ -342,7 +325,7 @@ pub fn library_page() -> Html {
                                                                                         e.stop_propagation();
                                                                                         let l = link.clone();
                                                                                         spawn_local(async move {
-                                                                                            let args = serde_wasm_bindgen::to_value(&serde_json::json!({ "link": l })).unwrap();
+                                                                                            let args = serde_wasm_bindgen::to_value(&serde_json::json!({"link": l})).unwrap();
                                                                                             let _ = invoke("open_folder_for_link", args).await;
                                                                                         });
                                                                                     })
@@ -352,12 +335,12 @@ pub fn library_page() -> Html {
                                                                                     <li class="row-line" key={row.link.clone()}>
                                                                                         {
                                                                                             match row.media {
-                                                                                                MediaKind::Pictures => html!{ <Icon icon_id={IconId::LucideImage} width={"16"} height={"16"} /> },
-                                                                                                MediaKind::Video    => html!{ <Icon icon_id={IconId::LucideVideo} width={"16"} height={"16"} /> },
+                                                                                                MediaKind::Pictures => html!{<Icon icon_id={IconId::LucideImage} width={"16"} height={"16"} />},
+                                                                                                MediaKind::Video    => html!{<Icon icon_id={IconId::LucideVideo} width={"16"} height={"16"} />},
                                                                                             }
                                                                                         }
                                                                                         <a class="link-text" href={row.link.clone()} target="_blank">
-                                                                                            { collection_title(&row) }{" - "}{ item_label_for_row(&row) }
+                                                                                            {collection_title(&row)}{" - "}{item_label_for_row(&row)}
                                                                                         </a>
                                                                                         <div class="row-actions">
                                                                                             <button class="icon-btn" type_="button" title="Play" onclick={on_open_file}>
@@ -377,7 +360,9 @@ pub fn library_page() -> Html {
                                                                     </ul>
                                                                 </div>
                                                             }
-                                                        } else { html!{} }
+                                                        } else {
+                                                            html!{}
+                                                        }
                                                     }
                                                 </div>
                                             }
@@ -385,17 +370,19 @@ pub fn library_page() -> Html {
                                     }
                                 </div>
                             }
-                        } else { html!{} };
+                        } else {
+                            html!{}
+                        };
 
                         html!{
                             <div class="platform-block" key={platform_key.clone()}>
                                 <div class="platform-item" onclick={on_platform_click}>
                                     <div class="item-left">
                                         <img class="brand-icon" src={platform_icon_src(&plat_label)} />
-                                        <span class="item-title">{ plat_label.clone() }</span>
+                                        <span class="item-title">{plat_label.clone()}</span>
                                     </div>
                                     <div class="item-right">
-                                        <span>{ format!("{} collections | {} items", collections_count, items_count) }</span>
+                                        <span>{format!("{} collections | {} items", collections_count, items_count)}</span>
                                         <button class="icon-btn" type_="button" title="Show in folder" onclick={on_platform_open_folder}>
                                             <Icon icon_id={IconId::LucideFolder} width={"18"} height={"18"} />
                                         </button>
@@ -404,7 +391,7 @@ pub fn library_page() -> Html {
                                         </button>
                                     </div>
                                 </div>
-                                { platform_rows }
+                                {platform_rows}
                             </div>
                         }
                     })

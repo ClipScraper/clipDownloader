@@ -30,59 +30,28 @@ fn path_sep() -> &'static str {
 }
 
 /// Run gallery-dl (sidecar) into a temp dir; return (ok, output, tmp_path).
-pub async fn run_gallery_dl_to_temp(
-    app: &tauri::AppHandle,
-    _base_download_dir: &std::path::Path,
-    url: &str,
-    cookie_arg: &str,
-    id: i64,
-    emitter: Arc<dyn Fn(DownloadEvent) + Send + Sync>,
-) -> io::Result<(bool, String, PathBuf)> {
+pub async fn run_gallery_dl_to_temp(app: &tauri::AppHandle, _base_download_dir: &std::path::Path, url: &str, cookie_arg: &str, id: i64, emitter: Arc<dyn Fn(DownloadEvent) + Send + Sync>) -> io::Result<(bool, String, PathBuf)> {
     let tmp = tempdir()?;
     #[allow(deprecated)]
     let tmp_path = tmp.into_path(); // keep the directory; caller cleans up
 
-    let res_dir = app.path().resource_dir().unwrap_or_else(|_| {
-        std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
-    });
+    let res_dir = app.path().resource_dir().unwrap_or_else(|_| std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")));
     let settings = crate::settings::load_settings();
     let new_path = if settings.use_system_binaries {
         std::env::var("PATH").unwrap_or_default()
     } else {
-        format!(
-            "{}{}{}",
-            res_dir.to_string_lossy(),
-            path_sep(),
-            std::env::var("PATH").unwrap_or_default()
-        )
+        format!("{}{}{}", res_dir.to_string_lossy(), path_sep(), std::env::var("PATH").unwrap_or_default())
     };
 
-    let args = vec![
-        "--verbose".into(),
-        "--cookies-from-browser".into(),
-        cookie_arg.into(),
-        "-d".into(),
-        tmp_path.display().to_string(),
-        url.into(),
-    ];
+    let args = vec!["--verbose".into(), "--cookies-from-browser".into(), cookie_arg.into(), "-d".into(), tmp_path.display().to_string(), url.into()];
 
     let cmd = if settings.use_system_binaries {
         app.shell().command("gallery-dl")
     } else {
-        app.shell().sidecar("gallery-dl").map_err(|e| {
-            io::Error::new(
-                io::ErrorKind::Other,
-                format!("sidecar(gallery-dl) error: {e}"),
-            )
-        })?
+        app.shell().sidecar("gallery-dl").map_err(|e| io::Error::new(io::ErrorKind::Other, format!("sidecar(gallery-dl) error: {e}")))?
     };
 
-    let (mut rx, child) = cmd.args(args).env("PATH", new_path).spawn().map_err(|e| {
-        io::Error::new(
-            io::ErrorKind::Other,
-            format!("spawn gallery-dl failed: {e}"),
-        )
-    })?;
+    let (mut rx, child) = cmd.args(args).env("PATH", new_path).spawn().map_err(|e| io::Error::new(io::ErrorKind::Other, format!("spawn gallery-dl failed: {e}")))?;
 
     let _guard = KillGuard(Some(child));
 
@@ -90,18 +59,12 @@ pub async fn run_gallery_dl_to_temp(
     let mut ok = false;
 
     loop {
-        // Yield to allow other tasks (like event emission) to run
-        tokio::task::yield_now().await;
-
         let ev = match timeout(Duration::from_secs(180), rx.recv()).await {
             Ok(Some(e)) => e,
             Ok(None) => break,
             Err(_) => {
                 eprintln!("[tauri] gallery-dl timed out (no output for 180s)");
-                return Err(io::Error::new(
-                    io::ErrorKind::TimedOut,
-                    "gallery-dl timed out",
-                ));
+                return Err(io::Error::new(io::ErrorKind::TimedOut, "gallery-dl timed out"));
             }
         };
 
@@ -113,10 +76,7 @@ pub async fn run_gallery_dl_to_temp(
                     if !l.is_empty() {
                         all_output.push_str(l);
                         all_output.push('\n');
-                        (emitter)(DownloadEvent::Message {
-                            id,
-                            message: l.to_string(),
-                        });
+                        (emitter)(DownloadEvent::Message {id, message: l.to_string()});
                     }
                 }
             }
