@@ -106,35 +106,19 @@ fn describe_element(element: &Element) -> String {
         parts.push(class_name);
     }
 
-    parts
-        .into_iter()
-        .map(|part| truncate_chars(&part, 48))
-        .collect::<Vec<_>>()
-        .join(" ")
+    parts.into_iter().map(|part| truncate_chars(&part, 48)).collect::<Vec<_>>().join(" ")
 }
 
 fn first_non_empty_attribute(element: &Element, names: &[&str]) -> Option<String> {
-    names
-        .iter()
-        .find_map(|name| element.get_attribute(name))
-        .map(|value| simplify_value(&value))
-        .filter(|value| !value.is_empty())
+    names.iter().find_map(|name| element.get_attribute(name)).map(|value| simplify_value(&value)).filter(|value| !value.is_empty())
 }
 
 fn first_class_name(element: &Element) -> Option<String> {
-    element
-        .get_attribute("class")
-        .and_then(|value| value.split_whitespace().next().map(ToString::to_string))
-        .map(|value| simplify_value(&value))
-        .filter(|value| !value.is_empty())
+    element.get_attribute("class").and_then(|value| value.split_whitespace().next().map(ToString::to_string)).map(|value| simplify_value(&value)).filter(|value| !value.is_empty())
 }
 
 fn meaningful_text(element: &Element) -> Option<String> {
-    element
-        .text_content()
-        .map(|value| value.split_whitespace().collect::<Vec<_>>().join(" "))
-        .map(|value| simplify_value(&value))
-        .filter(|value| !value.is_empty())
+    element.text_content().map(|value| value.split_whitespace().collect::<Vec<_>>().join(" ")).map(|value| simplify_value(&value)).filter(|value| !value.is_empty())
 }
 
 fn simplify_value(value: &str) -> String {
@@ -144,21 +128,11 @@ fn simplify_value(value: &str) -> String {
     }
 
     if trimmed.contains('/') || trimmed.contains('#') || trimmed.contains('?') {
-        let parts: Vec<&str> = trimmed
-            .split(&['/', '#', '?'][..])
-            .filter(|part| !part.trim().is_empty())
-            .collect();
+        let parts: Vec<&str> = trimmed.split(&['/', '#', '?'][..]).filter(|part| !part.trim().is_empty()).collect();
         if parts.is_empty() {
             trimmed.to_string()
         } else {
-            parts
-                .iter()
-                .rev()
-                .take(2)
-                .rev()
-                .copied()
-                .collect::<Vec<_>>()
-                .join(" ")
+            parts.iter().rev().take(2).rev().copied().collect::<Vec<_>>().join(" ")
         }
     } else {
         trimmed.to_string()

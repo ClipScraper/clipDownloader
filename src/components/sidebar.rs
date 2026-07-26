@@ -28,7 +28,7 @@ pub fn sidebar(props: &SidebarProps) -> Html {
         .to_string();
 
         Callback::from(move |_| {
-            log::info("navigate", serde_json::json!({ "to": label }));
+            log::info("navigate", serde_json::json!({"to": label}));
             page_handle.set(p);
         })
     };

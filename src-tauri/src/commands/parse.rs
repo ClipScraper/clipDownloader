@@ -55,10 +55,7 @@ pub fn youtube_id_from_url(url: &str) -> Option<String> {
 /// Fallback last path segment without trailing slash/query
 pub fn last_segment(url: &str) -> Option<String> {
     let base = url.split('?').next().unwrap_or(url).trim_end_matches('/');
-    base.rsplit('/')
-        .next()
-        .map(|s| s.to_string())
-        .filter(|s| !s.is_empty())
+    base.rsplit('/').next().map(|s| s.to_string()).filter(|s| !s.is_empty())
 }
 
 /// Parse multiple user_handle, clean_name, and file_path from tool output
@@ -70,9 +67,7 @@ pub fn parse_multiple_filenames_from_output(output: &str, processed_url: &str, y
     let mut results = Vec::new();
     let mut candidate_paths: Vec<String> = Vec::new();
 
-    let dir_hint_str = yt_out_dir_hint
-        .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_default();
+    let dir_hint_str = yt_out_dir_hint.map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
 
     for line in output.lines() {
         let trimmed = line.trim();
@@ -102,9 +97,7 @@ pub fn parse_multiple_filenames_from_output(output: &str, processed_url: &str, y
         }
         // explicit printed paths or joined from hint on "Skipping …"
         let looks_abs_unix = trimmed.starts_with('/');
-        let looks_abs_win = trimmed.len() > 2
-            && trimmed.as_bytes()[1] == b':'
-            && (trimmed.as_bytes()[2] == b'\\' || trimmed.as_bytes()[2] == b'/');
+        let looks_abs_win = trimmed.len() > 2 && trimmed.as_bytes()[1] == b':' && (trimmed.as_bytes()[2] == b'\\' || trimmed.as_bytes()[2] == b'/');
         if looks_abs_unix || looks_abs_win || (!dir_hint_str.is_empty() && trimmed.starts_with(&dir_hint_str)) {
             if trimmed.contains('.') {
                 candidate_paths.push(trimmed.to_string());
@@ -112,12 +105,7 @@ pub fn parse_multiple_filenames_from_output(output: &str, processed_url: &str, y
             }
         }
         if trimmed.starts_with("[download] ") && trimmed.contains(" has already been downloaded") {
-            let name_part = trimmed
-                .trim_start_matches("[download] ")
-                .split(" has already been downloaded")
-                .next()
-                .unwrap_or("")
-                .trim();
+            let name_part = trimmed.trim_start_matches("[download] ").split(" has already been downloaded").next().unwrap_or("").trim();
             if !name_part.is_empty() && !dir_hint_str.is_empty() {
                 candidate_paths.push(format!("{}/{}", dir_hint_str, name_part));
             }

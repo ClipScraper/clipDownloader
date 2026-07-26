@@ -37,28 +37,13 @@ fn settings_json_path() -> PathBuf {
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings {
-            id: None,
-            download_directory: default_download_dir().to_string_lossy().to_string(),
-            on_duplicate: OnDuplicate::CreateNew,
-            delete_mode: DeleteMode::Soft,
-            debug_logs: false,
-            default_output: DefaultOutput::Video,
-            download_automatically: true,
-            keep_downloading_on_other_pages: true,
-            parallel_downloads: 3,
-            use_system_binaries: false,
-            cooldown_secs: 0,
-            retry_on_queue_empty: false,
-        }
+        Settings {id: None, download_directory: default_download_dir().to_string_lossy().to_string(), on_duplicate: OnDuplicate::CreateNew, delete_mode: DeleteMode::Soft, debug_logs: false, default_output: DefaultOutput::Video, download_automatically: true, keep_downloading_on_other_pages: true, parallel_downloads: 3, use_system_binaries: false, cooldown_secs: 0, retry_on_queue_empty: false}
     }
 }
 
 fn default_download_dir() -> PathBuf {
     // Cross-platform Downloads folder (dirs::download_dir handles win/mac/linux)
-    dirs::download_dir()
-        .or_else(|| dirs::home_dir())
-        .unwrap_or_else(|| PathBuf::from("/"))
+    dirs::download_dir().or_else(|| dirs::home_dir()).unwrap_or_else(|| PathBuf::from("/"))
 }
 
 fn dir_is_writable(p: &Path) -> bool {
@@ -66,12 +51,7 @@ fn dir_is_writable(p: &Path) -> bool {
         return false;
     }
     let test = p.join(format!(".writecheck-{}.tmp", Uuid::new_v4()));
-    match fs::OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(true)
-        .open(&test)
-    {
+    match fs::OpenOptions::new().create(true).write(true).truncate(true).open(&test) {
         Ok(_) => {
             let _ = fs::remove_file(test);
             true
@@ -142,10 +122,7 @@ fn load_settings_from_disk() -> Settings {
     }
 
     // Persist the clean copy (also migrates any old/invalid file)
-    let _ = fs::write(
-        &path,
-        serde_json::to_string_pretty(&settings).unwrap_or_else(|_| "{}".into()),
-    );
+    let _ = fs::write(&path, serde_json::to_string_pretty(&settings).unwrap_or_else(|_| "{}".into()));
 
     settings
 }
@@ -160,23 +137,9 @@ pub fn save_settings(settings: &Settings) -> Result<(), String> {
     }
 
     let final_dir = validated_download_dir(&settings.download_directory);
-    let to_write = Settings {
-        id: settings.id,
-        download_directory: final_dir,
-        on_duplicate: settings.on_duplicate.clone(),
-        delete_mode: settings.delete_mode.clone(),
-        debug_logs: settings.debug_logs,
-        default_output: settings.default_output.clone(),
-        download_automatically: settings.download_automatically,
-        keep_downloading_on_other_pages: settings.keep_downloading_on_other_pages,
-        parallel_downloads: settings.parallel_downloads,
-        use_system_binaries: settings.use_system_binaries,
-        cooldown_secs: settings.cooldown_secs,
-        retry_on_queue_empty: settings.retry_on_queue_empty,
-    };
+    let to_write = Settings {id: settings.id, download_directory: final_dir, on_duplicate: settings.on_duplicate.clone(), delete_mode: settings.delete_mode.clone(), debug_logs: settings.debug_logs, default_output: settings.default_output.clone(), download_automatically: settings.download_automatically, keep_downloading_on_other_pages: settings.keep_downloading_on_other_pages, parallel_downloads: settings.parallel_downloads, use_system_binaries: settings.use_system_binaries, cooldown_secs: settings.cooldown_secs, retry_on_queue_empty: settings.retry_on_queue_empty};
 
-    let body = serde_json::to_string_pretty(&to_write)
-        .map_err(|e| format!("Failed to serialize settings: {e}"))?;
+    let body = serde_json::to_string_pretty(&to_write).map_err(|e| format!("Failed to serialize settings: {e}"))?;
     fs::write(&path, body).map_err(|e| format!("Failed to write settings.json: {e}"))?;
 
     // Keep the cache in sync so readers see the update without touching disk.

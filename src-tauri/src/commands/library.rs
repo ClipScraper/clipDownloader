@@ -5,24 +5,15 @@ fn open_with_default_app(path: &str) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
         // Use PowerShell to avoid `start` quoting quirks
-        Command::new("powershell")
-            .args(&["-NoProfile", "-Command", "Start-Process", path])
-            .spawn()
-            .map_err(|e| format!("failed to open file: {e}"))?;
+        Command::new("powershell").args(&["-NoProfile", "-Command", "Start-Process", path]).spawn().map_err(|e| format!("failed to open file: {e}"))?;
     }
     #[cfg(target_os = "macos")]
     {
-        Command::new("open")
-            .arg(path)
-            .spawn()
-            .map_err(|e| format!("failed to open file: {e}"))?;
+        Command::new("open").arg(path).spawn().map_err(|e| format!("failed to open file: {e}"))?;
     }
     #[cfg(target_os = "linux")]
     {
-        Command::new("xdg-open")
-            .arg(path)
-            .spawn()
-            .map_err(|e| format!("failed to open file: {e}"))?;
+        Command::new("xdg-open").arg(path).spawn().map_err(|e| format!("failed to open file: {e}"))?;
     }
     Ok(())
 }
@@ -31,24 +22,15 @@ fn open_with_default_app(path: &str) -> Result<(), String> {
 fn reveal_dir(dir: &str) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
-        Command::new("explorer")
-            .arg(dir)
-            .spawn()
-            .map_err(|e| format!("failed to open folder: {e}"))?;
+        Command::new("explorer").arg(dir).spawn().map_err(|e| format!("failed to open folder: {e}"))?;
     }
     #[cfg(target_os = "macos")]
     {
-        Command::new("open")
-            .arg(dir)
-            .spawn()
-            .map_err(|e| format!("failed to open folder: {e}"))?;
+        Command::new("open").arg(dir).spawn().map_err(|e| format!("failed to open folder: {e}"))?;
     }
     #[cfg(target_os = "linux")]
     {
-        Command::new("xdg-open")
-            .arg(dir)
-            .spawn()
-            .map_err(|e| format!("failed to open folder: {e}"))?;
+        Command::new("xdg-open").arg(dir).spawn().map_err(|e| format!("failed to open folder: {e}"))?;
     }
     Ok(())
 }
@@ -108,9 +90,9 @@ pub async fn open_folder_for_link(link: String) -> Result<(), String> {
         // Prefer the folder containing the resolved file; otherwise fall back to
         // the configured download root so the user still lands somewhere useful.
         let dir = resolve_stored_path(&path).and_then(|p| p.parent().map(|d| d.to_path_buf())).filter(|d| d.exists()).or_else(|| {
-                let root = PathBuf::from(&s.download_directory);
-                root.exists().then_some(root)
-            });
+            let root = PathBuf::from(&s.download_directory);
+            root.exists().then_some(root)
+        });
 
         match dir {
             Some(d) => reveal_dir(&d.to_string_lossy()),
@@ -171,5 +153,7 @@ pub async fn delete_library_item(link: String) -> Result<(), String> {
         // Remove DB row
         let _ = db.delete_row_by_id(id).map_err(|e| e.to_string())?;
         Ok(())
-    }).await.map_err(|e| format!("Join error: {e}"))?
+    })
+    .await
+    .map_err(|e| format!("Join error: {e}"))?
 }

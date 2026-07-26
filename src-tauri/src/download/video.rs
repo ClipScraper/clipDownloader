@@ -32,32 +32,13 @@ fn path_sep() -> &'static str {
 }
 
 fn base_ytdlp_args(cookie_arg: &str, is_ig_images: bool, audio_only: bool) -> Vec<String> {
-    let mut args: Vec<String> = vec![
-        "--newline".into(),
-        "-N".into(),
-        "8".into(),
-        "--cookies-from-browser".into(),
-        cookie_arg.into(),
-        "--ignore-config".into(),
-        "--no-cache-dir".into(),
-    ];
+    let mut args: Vec<String> = vec!["--newline".into(), "-N".into(), "8".into(), "--cookies-from-browser".into(), cookie_arg.into(), "--ignore-config".into(), "--no-cache-dir".into()];
     if is_ig_images {
         args.push("--ignore-no-formats-error".into());
     } else if audio_only {
-        args.extend(vec![
-            "-x".into(),
-            "--audio-format".into(),
-            "mp3".into(),
-            "--audio-quality".into(),
-            "0".into(),
-        ]);
+        args.extend(vec!["-x".into(), "--audio-format".into(), "mp3".into(), "--audio-quality".into(), "0".into()]);
     } else {
-        args.extend(vec![
-            "-f".into(),
-            "bestvideo+bestaudio/best".into(),
-            "--merge-output-format".into(),
-            "mp4".into(),
-        ]);
+        args.extend(vec!["-f".into(), "bestvideo+bestaudio/best".into(), "--merge-output-format".into(), "mp4".into()]);
     }
     args
 }
@@ -123,10 +104,7 @@ fn rest_token_from_url(url: &str) -> String {
 }
 
 fn sanitize<S: Into<String>>(s: S) -> String {
-    let t = s
-        .into()
-        .replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|'], "_")
-        .replace(['\n', '\r', '\t'], " ");
+    let t = s.into().replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|'], "_").replace(['\n', '\r', '\t'], " ");
     t.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
@@ -163,11 +141,7 @@ fn stage_message_from_output_line(line: &str) -> Option<&'static str> {
 async fn probe_uploader(app: &tauri::AppHandle, cookie_arg: &str, processed_url: &str, is_ig_images: bool) -> Option<String> {
     let mut args = base_ytdlp_args(cookie_arg, is_ig_images, false);
     args.push("--simulate".into());
-    args.extend(vec![
-        "--print".into(),
-        "uploader".into(),
-        processed_url.into(),
-    ]);
+    args.extend(vec!["--print".into(), "uploader".into(), processed_url.into()]);
 
     let settings = crate::settings::load_settings();
     let cmd = if settings.use_system_binaries {
@@ -181,10 +155,7 @@ async fn probe_uploader(app: &tauri::AppHandle, cookie_arg: &str, processed_url:
 
     // Ensure PATH contains the resources dir so ffmpeg is discoverable if needed
     use tauri::path::BaseDirectory;
-    let res_dir = app
-        .path()
-        .resolve("", BaseDirectory::Resource)
-        .unwrap_or_else(|_| std::env::current_dir().unwrap_or_else(|_| ".".into()));
+    let res_dir = app.path().resolve("", BaseDirectory::Resource).unwrap_or_else(|_| std::env::current_dir().unwrap_or_else(|_| ".".into()));
     let new_path = if settings.use_system_binaries {
         std::env::var("PATH").unwrap_or_default()
     } else {
@@ -208,9 +179,7 @@ async fn probe_uploader(app: &tauri::AppHandle, cookie_arg: &str, processed_url:
         }
     }
 
-    first_line
-        .filter(|s| !s.eq_ignore_ascii_case("na") && !s.eq_ignore_ascii_case("n/a"))
-        .map(sanitize)
+    first_line.filter(|s| !s.eq_ignore_ascii_case("na") && !s.eq_ignore_ascii_case("n/a")).map(sanitize)
 }
 
 /* ---------- output template selection ---------- */
@@ -229,14 +198,16 @@ async fn choose_output_template(app: &tauri::AppHandle, out_dir: &Path, cookie_a
     let mut author_real = if let Some(author) = url_author {
         author
     } else {
-        probe_uploader(app, cookie_arg, processed_url, is_ig_images)
-            .await
-            .unwrap_or_else(|| "unknown".into())
+        probe_uploader(app, cookie_arg, processed_url, is_ig_images).await.unwrap_or_else(|| "unknown".into())
     };
     author_real = sanitize(author_real);
 
     let base_stem = format!("{author_real} [{rest_id}]");
-    let ext = if audio_only { "mp3" } else { "mp4" };
+    let ext = if audio_only {
+        "mp3"
+    } else {
+        "mp4"
+    };
 
     let mut chosen_stem = base_stem.clone();
     let chosen_path = out_dir.join(format!("{chosen_stem}.{ext}"));
@@ -275,14 +246,7 @@ pub async fn run_yt_dlp_with_progress(app: &tauri::AppHandle, out_dir: &Path, co
     args.extend(crate::settings::get_yt_dlp_duplicate_flags(on_duplicate));
 
     // Prints used by parse_multiple_filenames_from_output
-    args.extend(vec![
-        "--print".into(),
-        "after_move:filepath".into(),
-        "--print".into(),
-        "filepath".into(),
-        "--print".into(),
-        "filename".into(),
-    ]);
+    args.extend(vec!["--print".into(), "after_move:filepath".into(), "--print".into(), "filepath".into(), "--print".into(), "filename".into()]);
 
     // Destination directory (avoid spills)
     args.push("-P".into());
@@ -310,14 +274,21 @@ pub async fn run_yt_dlp_with_progress(app: &tauri::AppHandle, out_dir: &Path, co
     // URL last
     args.push(real_url.to_string());
 
-    let planned_path = out_dir.join(output_template.replace("%(ext)s", if audio_only { "mp3" } else { "mp4" }));
+    let planned_path = out_dir.join(output_template.replace(
+        "%(ext)s",
+        if audio_only {
+            "mp3"
+        } else {
+            "mp4"
+        },
+    ));
     println!("[YT-DLP][sidecar] policy={:?} dir='{}'\nurl='{}'\nout='{}'", on_duplicate, out_dir.display(), real_url, planned_path.display());
     (emitter)(DownloadEvent::Message {id, message: format!("Prepared output file {}", planned_path.display())});
 
     let cmd = if settings.use_system_binaries {
         app.shell().command("yt-dlp")
     } else {
-        app.shell().sidecar("yt-dlp").map_err(|e| {io::Error::new(io::ErrorKind::Other, format!("sidecar(yt-dlp) error: {e}"))})?
+        app.shell().sidecar("yt-dlp").map_err(|e| io::Error::new(io::ErrorKind::Other, format!("sidecar(yt-dlp) error: {e}")))?
     };
 
     let new_path = if settings.use_system_binaries {
@@ -328,8 +299,7 @@ pub async fn run_yt_dlp_with_progress(app: &tauri::AppHandle, out_dir: &Path, co
         format!("{}{}{}", res_dir.to_string_lossy(), path_sep(), std::env::var("PATH").unwrap_or_default())
     };
 
-    let (mut rx, child) =
-        cmd.args(args).env("PATH", new_path).spawn().map_err(|e| {io::Error::new(io::ErrorKind::Other, format!("spawn yt-dlp failed: {e}"))})?;
+    let (mut rx, child) = cmd.args(args).env("PATH", new_path).spawn().map_err(|e| io::Error::new(io::ErrorKind::Other, format!("spawn yt-dlp failed: {e}")))?;
 
     (emitter)(DownloadEvent::Message {id, message: "Launching downloader".into()});
 

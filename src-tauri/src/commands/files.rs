@@ -11,9 +11,7 @@ pub async fn pick_csv_and_read(app: tauri::AppHandle) -> Result<String, String> 
         file_builder = file_builder.set_directory(home);
     }
 
-    let picked = file_builder
-        .add_filter("CSV", &["csv"])
-        .blocking_pick_file();
+    let picked = file_builder.add_filter("CSV", &["csv"]).blocking_pick_file();
 
     let Some(file_path) = picked else {
         return Err("No file selected".into());
@@ -76,24 +74,15 @@ pub async fn open_directory(path: String) -> Result<(), String> {
     use std::process::Command;
     #[cfg(target_os = "windows")]
     {
-        Command::new("explorer")
-            .arg(path)
-            .spawn()
-            .map_err(|e| e.to_string())?;
+        Command::new("explorer").arg(path).spawn().map_err(|e| e.to_string())?;
     }
     #[cfg(target_os = "macos")]
     {
-        Command::new("open")
-            .arg(path)
-            .spawn()
-            .map_err(|e| e.to_string())?;
+        Command::new("open").arg(path).spawn().map_err(|e| e.to_string())?;
     }
     #[cfg(target_os = "linux")]
     {
-        Command::new("xdg-open")
-            .arg(path)
-            .spawn()
-            .map_err(|e| e.to_string())?;
+        Command::new("xdg-open").arg(path).spawn().map_err(|e| e.to_string())?;
     }
     Ok(())
 }

@@ -6,12 +6,7 @@ use tokio::sync::{mpsc, oneshot};
 
 use tauri::{AppHandle, Emitter};
 
-use crate::database::{
-    find_download_by_id_conn, list_all_ui_conn, list_downloading_ids_conn, list_error_ids_conn,
-    list_queued_ids_conn, mark_id_done_conn, reset_stale_downloading_to_queued_conn,
-    set_last_error_by_id_conn, set_status_bulk_conn, set_status_by_id_conn, DownloadStatus,
-    UiBacklogRow,
-};
+use crate::database::{find_download_by_id_conn, list_all_ui_conn, list_downloading_ids_conn, list_error_ids_conn, list_queued_ids_conn, mark_id_done_conn, reset_stale_downloading_to_queued_conn, set_last_error_by_id_conn, set_status_bulk_conn, set_status_by_id_conn, DownloadStatus, UiBacklogRow};
 use crate::download::pipeline;
 use crate::settings;
 use rusqlite::Connection;
@@ -19,50 +14,23 @@ use rusqlite::Connection;
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(tag = "type")]
 pub enum DownloadEvent {
-    StatusChanged {
-        id: i64,
-        status: DownloadStatus,
-    },
-    BulkStatusChanged {
-        ids: Vec<i64>,
-        status: DownloadStatus,
-    },
-    Progress {
-        id: i64,
-        progress: f32,
-        downloaded_bytes: u64,
-        total_bytes: Option<u64>,
-    },
-    Message {
-        id: i64,
-        message: String,
-    },
+    StatusChanged {id: i64, status: DownloadStatus},
+    BulkStatusChanged {ids: Vec<i64>, status: DownloadStatus},
+    Progress {id: i64, progress: f32, downloaded_bytes: u64, total_bytes: Option<u64>},
+    Message {id: i64, message: String},
 }
 
 #[derive(Debug)]
 pub enum DownloadCommand {
-    Enqueue {
-        ids: Vec<i64>,
-    },
-    MoveToBacklog {
-        ids: Vec<i64>,
-    },
-    Cancel {
-        id: i64,
-    },
-    StartNow {
-        id: i64,
-        overrides: Option<DownloadOverrides>,
-    },
+    Enqueue {ids: Vec<i64>},
+    MoveToBacklog {ids: Vec<i64>},
+    Cancel {id: i64},
+    StartNow {id: i64, overrides: Option<DownloadOverrides>},
     RefreshSettings,
     SetPaused(bool),
     ReconcileState,
-    RefreshSnapshot {
-        reply: oneshot::Sender<Result<Vec<UiBacklogRow>, String>>,
-    },
-    TaskFinished {
-        id: i64,
-    },
+    RefreshSnapshot {reply: oneshot::Sender<Result<Vec<UiBacklogRow>, String>>},
+    TaskFinished {id: i64},
 }
 
 #[derive(Debug, Clone)]
@@ -78,14 +46,11 @@ pub struct DownloadManager {
 
 impl DownloadManager {
     pub fn new(cmd_tx: mpsc::Sender<DownloadCommand>) -> Self {
-        Self { cmd_tx }
+        Self {cmd_tx}
     }
 
     pub async fn send(&self, cmd: DownloadCommand) -> Result<(), String> {
-        self.cmd_tx
-            .send(cmd)
-            .await
-            .map_err(|e| format!("failed to send command: {e}"))
+        self.cmd_tx.send(cmd).await.map_err(|e| format!("failed to send command: {e}"))
     }
 }
 
@@ -137,70 +102,26 @@ pub async fn run_download_manager(app: AppHandle, db: Arc<tokio::sync::Mutex<Con
         }
     }
 
-    maybe_start_next(
-        &app,
-        db.clone(),
-        &mut queue,
-        &mut active,
-        &mut overrides,
-        paused,
-        max_parallel,
-        cooldown_secs,
-        &cmd_tx,
-        false,
-    )
-    .await;
+    maybe_start_next(&app, db.clone(), &mut queue, &mut active, &mut overrides, paused, max_parallel, cooldown_secs, &cmd_tx, false).await;
 
     while let Some(cmd) = cmd_rx.recv().await {
         let mut force_start = false;
         match cmd {
-            DownloadCommand::Enqueue { ids } => {
+            DownloadCommand::Enqueue {ids} => {
                 auto_retried.clear();
-                enqueue_ids(
-                    &app,
-                    db.clone(),
-                    &ids,
-                    &mut queue,
-                    &active,
-                    DownloadStatus::Queued,
-                )
-                .await;
+                enqueue_ids(&app, db.clone(), &ids, &mut queue, &active, DownloadStatus::Queued).await;
             }
-            DownloadCommand::MoveToBacklog { ids } => {
-                move_to_backlog(
-                    &app,
-                    db.clone(),
-                    &ids,
-                    &mut queue,
-                    &mut active,
-                    &mut overrides,
-                )
-                .await;
+            DownloadCommand::MoveToBacklog {ids} => {
+                move_to_backlog(&app, db.clone(), &ids, &mut queue, &mut active, &mut overrides).await;
             }
-            DownloadCommand::Cancel { id } => {
-                cancel_active(
-                    &app,
-                    db.clone(),
-                    id,
-                    &mut queue,
-                    &mut active,
-                    &mut overrides,
-                )
-                .await;
+            DownloadCommand::Cancel {id} => {
+                cancel_active(&app, db.clone(), id, &mut queue, &mut active, &mut overrides).await;
             }
-            DownloadCommand::StartNow { id, overrides: ov } => {
+            DownloadCommand::StartNow {id, overrides: ov} => {
                 if let Some(custom) = ov {
                     overrides.insert(id, custom);
                 }
-                enqueue_ids(
-                    &app,
-                    db.clone(),
-                    &[id],
-                    &mut queue,
-                    &active,
-                    DownloadStatus::Queued,
-                )
-                .await;
+                enqueue_ids(&app, db.clone(), &[id], &mut queue, &active, DownloadStatus::Queued).await;
                 force_start = true;
             }
             DownloadCommand::RefreshSettings => {
@@ -208,12 +129,7 @@ pub async fn run_download_manager(app: AppHandle, db: Arc<tokio::sync::Mutex<Con
                 max_parallel = s.parallel_downloads.max(1) as usize;
                 cooldown_secs = s.cooldown_secs;
                 retry_on_queue_empty = s.retry_on_queue_empty;
-                tracing::info!(
-                    "Updated max_parallel={} cooldown={}s retry_on_empty={}",
-                    max_parallel,
-                    cooldown_secs,
-                    retry_on_queue_empty
-                );
+                tracing::info!("Updated max_parallel={} cooldown={}s retry_on_empty={}", max_parallel, cooldown_secs, retry_on_queue_empty);
             }
             DownloadCommand::SetPaused(next) => {
                 paused = next;
@@ -221,11 +137,11 @@ pub async fn run_download_manager(app: AppHandle, db: Arc<tokio::sync::Mutex<Con
             DownloadCommand::ReconcileState => {
                 reconcile_state(&app, db.clone(), &mut queue, &active).await;
             }
-            DownloadCommand::RefreshSnapshot { reply } => {
+            DownloadCommand::RefreshSnapshot {reply} => {
                 reconcile_state(&app, db.clone(), &mut queue, &active).await;
                 let _ = reply.send(snapshot_downloads(db.clone()).await);
             }
-            DownloadCommand::TaskFinished { id } => {
+            DownloadCommand::TaskFinished {id} => {
                 active.remove(&id);
                 if retry_on_queue_empty && !paused && queue.is_empty() && active.is_empty() {
                     let db_clone = db.clone();
@@ -251,19 +167,7 @@ pub async fn run_download_manager(app: AppHandle, db: Arc<tokio::sync::Mutex<Con
             }
         }
 
-        maybe_start_next(
-            &app,
-            db.clone(),
-            &mut queue,
-            &mut active,
-            &mut overrides,
-            paused,
-            max_parallel,
-            cooldown_secs,
-            &cmd_tx,
-            force_start,
-        )
-        .await;
+        maybe_start_next(&app, db.clone(), &mut queue, &mut active, &mut overrides, paused, max_parallel, cooldown_secs, &cmd_tx, force_start).await;
     }
 }
 
@@ -293,13 +197,7 @@ async fn reconcile_state(app: &AppHandle, db: Arc<tokio::sync::Mutex<Connection>
         }
         if let Ok(changed) = set_status(db.clone(), id, DownloadStatus::Queued).await {
             if changed {
-                emit_event(
-                    app,
-                    DownloadEvent::StatusChanged {
-                        id,
-                        status: DownloadStatus::Queued,
-                    },
-                );
+                emit_event(app, DownloadEvent::StatusChanged {id, status: DownloadStatus::Queued});
             }
         }
         if !queue.contains(&id) {
@@ -333,28 +231,18 @@ async fn enqueue_ids(app: &AppHandle, db: Arc<tokio::sync::Mutex<Connection>>, i
         let changed = match set_status(db.clone(), id, status).await {
             Ok(c) => c,
             Err(err) => {
-                emit_event(
-                    app,
-                    DownloadEvent::Message {
-                        id,
-                        message: format!("Failed to set status: {err}"),
-                    },
-                );
+                emit_event(app, DownloadEvent::Message {id, message: format!("Failed to set status: {err}")});
                 return;
             }
         };
         if changed {
-            emit_event(app, DownloadEvent::StatusChanged { id, status });
+            emit_event(app, DownloadEvent::StatusChanged {id, status});
         }
         queue.push_back(id);
         return;
     }
 
-    let to_enqueue: Vec<i64> = ids
-        .iter()
-        .copied()
-        .filter(|id| !active.contains_key(id) && !queue.contains(id))
-        .collect();
+    let to_enqueue: Vec<i64> = ids.iter().copied().filter(|id| !active.contains_key(id) && !queue.contains(id)).collect();
     if to_enqueue.is_empty() {
         return;
     }
@@ -379,13 +267,7 @@ async fn enqueue_ids(app: &AppHandle, db: Arc<tokio::sync::Mutex<Connection>>, i
     };
 
     if changed > 0 {
-        emit_event(
-            app,
-            DownloadEvent::BulkStatusChanged {
-                ids: to_enqueue.clone(),
-                status,
-            },
-        );
+        emit_event(app, DownloadEvent::BulkStatusChanged {ids: to_enqueue.clone(), status});
     }
     for id in to_enqueue {
         queue.push_back(id);
@@ -402,24 +284,12 @@ async fn move_to_backlog(app: &AppHandle, db: Arc<tokio::sync::Mutex<Connection>
         let changed = match set_status(db.clone(), *id, DownloadStatus::Backlog).await {
             Ok(c) => c,
             Err(err) => {
-                emit_event(
-                    app,
-                    DownloadEvent::Message {
-                        id: *id,
-                        message: format!("Failed to move to backlog: {err}"),
-                    },
-                );
+                emit_event(app, DownloadEvent::Message {id: *id, message: format!("Failed to move to backlog: {err}")});
                 continue;
             }
         };
         if changed {
-            emit_event(
-                app,
-                DownloadEvent::StatusChanged {
-                    id: *id,
-                    status: DownloadStatus::Backlog,
-                },
-            );
+            emit_event(app, DownloadEvent::StatusChanged {id: *id, status: DownloadStatus::Backlog});
         }
     }
 }
@@ -433,25 +303,13 @@ async fn cancel_active(app: &AppHandle, db: Arc<tokio::sync::Mutex<Connection>>,
     let changed = match set_status(db.clone(), id, DownloadStatus::Canceled).await {
         Ok(c) => c,
         Err(err) => {
-            emit_event(
-                app,
-                DownloadEvent::Message {
-                    id,
-                    message: format!("Failed to cancel: {err}"),
-                },
-            );
+            emit_event(app, DownloadEvent::Message {id, message: format!("Failed to cancel: {err}")});
             return;
         }
     };
     // If status actually changed, emit it
     if changed {
-        emit_event(
-            app,
-            DownloadEvent::StatusChanged {
-                id,
-                status: DownloadStatus::Canceled,
-            },
-        );
+        emit_event(app, DownloadEvent::StatusChanged {id, status: DownloadStatus::Canceled});
     }
 }
 
@@ -470,24 +328,12 @@ async fn maybe_start_next(app: &AppHandle, db: Arc<tokio::sync::Mutex<Connection
         let changed = match set_status(db.clone(), id, DownloadStatus::Downloading).await {
             Ok(c) => c,
             Err(err) => {
-                emit_event(
-                    app,
-                    DownloadEvent::Message {
-                        id,
-                        message: format!("Failed to mark downloading: {err}"),
-                    },
-                );
+                emit_event(app, DownloadEvent::Message {id, message: format!("Failed to mark downloading: {err}")});
                 continue;
             }
         };
         if changed {
-            emit_event(
-                app,
-                DownloadEvent::StatusChanged {
-                    id,
-                    status: DownloadStatus::Downloading,
-                },
-            );
+            emit_event(app, DownloadEvent::StatusChanged {id, status: DownloadStatus::Downloading});
         }
 
         let app_clone = app.clone();
@@ -504,37 +350,19 @@ async fn maybe_start_next(app: &AppHandle, db: Arc<tokio::sync::Mutex<Connection
                     let _ = set_last_error(db_clone.clone(), id, None).await;
                     let final_path = path.unwrap_or_default();
                     let _ = mark_download_done(db_clone.clone(), id, &final_path).await;
-                    emit_event(
-                        &app_clone,
-                        DownloadEvent::StatusChanged {
-                            id,
-                            status: DownloadStatus::Done,
-                        },
-                    );
+                    emit_event(&app_clone, DownloadEvent::StatusChanged {id, status: DownloadStatus::Done});
                 }
                 Err(err_msg) => {
                     let _ = set_last_error(db_clone.clone(), id, Some(err_msg.clone())).await;
                     let _ = set_status(db_clone.clone(), id, DownloadStatus::Error).await;
-                    emit_event(
-                        &app_clone,
-                        DownloadEvent::Message {
-                            id,
-                            message: err_msg.clone(),
-                        },
-                    );
-                    emit_event(
-                        &app_clone,
-                        DownloadEvent::StatusChanged {
-                            id,
-                            status: DownloadStatus::Error,
-                        },
-                    );
+                    emit_event(&app_clone, DownloadEvent::Message {id, message: err_msg.clone()});
+                    emit_event(&app_clone, DownloadEvent::StatusChanged {id, status: DownloadStatus::Error});
                 }
             }
-            let _ = tx_clone.send(DownloadCommand::TaskFinished { id }).await;
+            let _ = tx_clone.send(DownloadCommand::TaskFinished {id}).await;
         });
 
-        active.insert(id, ActiveTask { handle });
+        active.insert(id, ActiveTask {handle});
     }
 }
 
@@ -551,9 +379,7 @@ async fn set_status(db: Arc<tokio::sync::Mutex<Connection>>, id: i64, status: Do
 async fn set_last_error(db: Arc<tokio::sync::Mutex<Connection>>, id: i64, last_error: Option<String>) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         let conn = db.blocking_lock();
-        set_last_error_by_id_conn(&*conn, id, last_error.as_deref())
-            .map(|_| ())
-            .map_err(|e| e.to_string())
+        set_last_error_by_id_conn(&*conn, id, last_error.as_deref()).map(|_| ()).map_err(|e| e.to_string())
     })
     .await
     .map_err(|e| format!("Join error: {e}"))??;
@@ -572,9 +398,7 @@ async fn mark_download_done(db: Arc<tokio::sync::Mutex<Connection>>, id: i64, pa
     let path = path.to_string();
     tauri::async_runtime::spawn_blocking(move || {
         let conn = db.blocking_lock();
-        mark_id_done_conn(&*conn, id, &path)
-            .map(|_| ())
-            .map_err(|e| e.to_string())
+        mark_id_done_conn(&*conn, id, &path).map(|_| ()).map_err(|e| e.to_string())
     })
     .await
     .map_err(|e| format!("Join error: {e}"))??;
@@ -585,9 +409,7 @@ async fn run_download_with_progress(app: &AppHandle, db: Arc<tokio::sync::Mutex<
     let db_clone = db.clone();
     let row = tauri::async_runtime::spawn_blocking(move || {
         let conn = db_clone.blocking_lock();
-        find_download_by_id_conn(&*conn, id)
-            .map_err(|e| e.to_string())
-            .and_then(|row| row.ok_or_else(|| "Download not found".to_string()))
+        find_download_by_id_conn(&*conn, id).map_err(|e| e.to_string()).and_then(|row| row.ok_or_else(|| "Download not found".to_string()))
     })
     .await
     .map_err(|e| format!("Join error: {e}"))??;

@@ -17,10 +17,7 @@ pub async fn save_settings(manager: State<'_, DownloadManager>, settings: Settin
     tracing::info!("settings saved; debug_logs now {}", settings.debug_logs);
 
     // notify download manager to refresh runtime parameters
-    manager
-        .send(DownloadCommand::RefreshSettings)
-        .await
-        .map_err(|e| e.to_string())?;
+    manager.send(DownloadCommand::RefreshSettings).await.map_err(|e| e.to_string())?;
 
     Ok(())
 }

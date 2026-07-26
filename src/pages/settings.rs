@@ -110,11 +110,7 @@ pub fn settings_page() -> Html {
         Callback::from(move |_| {
             let path = settings.download_directory.clone();
             spawn_local(async move {
-                let result = invoke(
-                    "open_directory",
-                    serde_wasm_bindgen::to_value(&serde_json::json!({ "path": path })).unwrap(),
-                )
-                .await;
+                let result = invoke("open_directory", serde_wasm_bindgen::to_value(&serde_json::json!({"path": path})).unwrap()).await;
                 if !result.is_null() {
                     web_sys::console::error_1(&"Failed to open directory:".into());
                     web_sys::console::error_1(&result);
@@ -126,9 +122,7 @@ pub fn settings_page() -> Html {
     let on_duplicate_change = {
         let settings = settings.clone();
         Callback::from(move |e: Event| {
-            let value = e
-                .target_unchecked_into::<web_sys::HtmlSelectElement>()
-                .value();
+            let value = e.target_unchecked_into::<web_sys::HtmlSelectElement>().value();
             let mut s = (*settings).clone();
             s.on_duplicate = match value.as_str() {
                 "overwrite" => OnDuplicate::Overwrite,
@@ -142,18 +136,13 @@ pub fn settings_page() -> Html {
     let on_debug_logs_change = {
         let settings = settings.clone();
         Callback::from(move |e: Event| {
-            let checked = e
-                .target_unchecked_into::<web_sys::HtmlInputElement>()
-                .checked();
+            let checked = e.target_unchecked_into::<web_sys::HtmlInputElement>().checked();
             let mut s = (*settings).clone();
             s.debug_logs = checked;
             let settings_to_save = s.clone();
             settings.set(s);
             spawn_local(async move {
-                let args = serde_wasm_bindgen::to_value(
-                    &serde_json::json!({ "settings": settings_to_save }),
-                )
-                .unwrap();
+                let args = serde_wasm_bindgen::to_value(&serde_json::json!({"settings": settings_to_save})).unwrap();
                 let result = invoke("save_settings", args).await;
                 if !result.is_null() {
                     web_sys::console::error_1(&"Failed to save debug log setting:".into());
@@ -166,9 +155,7 @@ pub fn settings_page() -> Html {
     let on_download_automatically_change = {
         let settings = settings.clone();
         Callback::from(move |e: Event| {
-            let checked = e
-                .target_unchecked_into::<web_sys::HtmlInputElement>()
-                .checked();
+            let checked = e.target_unchecked_into::<web_sys::HtmlInputElement>().checked();
             let mut s = (*settings).clone();
             s.download_automatically = checked;
             settings.set(s);
@@ -178,9 +165,7 @@ pub fn settings_page() -> Html {
     let on_keep_downloading_change = {
         let settings = settings.clone();
         Callback::from(move |e: Event| {
-            let checked = e
-                .target_unchecked_into::<web_sys::HtmlInputElement>()
-                .checked();
+            let checked = e.target_unchecked_into::<web_sys::HtmlInputElement>().checked();
             let mut s = (*settings).clone();
             s.keep_downloading_on_other_pages = checked;
             settings.set(s);
@@ -190,9 +175,7 @@ pub fn settings_page() -> Html {
     let on_parallel_downloads_change = {
         let settings = settings.clone();
         Callback::from(move |e: web_sys::InputEvent| {
-            let value = e
-                .target_unchecked_into::<web_sys::HtmlInputElement>()
-                .value_as_number() as u8;
+            let value = e.target_unchecked_into::<web_sys::HtmlInputElement>().value_as_number() as u8;
             let mut s = (*settings).clone();
             s.parallel_downloads = value.max(1);
             settings.set(s);
@@ -202,9 +185,7 @@ pub fn settings_page() -> Html {
     let on_use_system_binaries_change = {
         let settings = settings.clone();
         Callback::from(move |e: Event| {
-            let checked = e
-                .target_unchecked_into::<web_sys::HtmlInputElement>()
-                .checked();
+            let checked = e.target_unchecked_into::<web_sys::HtmlInputElement>().checked();
             let mut s = (*settings).clone();
             s.use_system_binaries = checked;
             settings.set(s);
@@ -214,9 +195,7 @@ pub fn settings_page() -> Html {
     let on_cooldown_change = {
         let settings = settings.clone();
         Callback::from(move |e: web_sys::InputEvent| {
-            let value = e
-                .target_unchecked_into::<web_sys::HtmlInputElement>()
-                .value_as_number() as u32;
+            let value = e.target_unchecked_into::<web_sys::HtmlInputElement>().value_as_number() as u32;
             let mut s = (*settings).clone();
             s.cooldown_secs = value;
             settings.set(s);
@@ -226,9 +205,7 @@ pub fn settings_page() -> Html {
     let on_retry_on_queue_empty_change = {
         let settings = settings.clone();
         Callback::from(move |e: Event| {
-            let checked = e
-                .target_unchecked_into::<web_sys::HtmlInputElement>()
-                .checked();
+            let checked = e.target_unchecked_into::<web_sys::HtmlInputElement>().checked();
             let mut s = (*settings).clone();
             s.retry_on_queue_empty = checked;
             settings.set(s);
@@ -238,9 +215,7 @@ pub fn settings_page() -> Html {
     let on_delete_mode_change = {
         let settings = settings.clone();
         Callback::from(move |e: Event| {
-            let value = e
-                .target_unchecked_into::<web_sys::HtmlSelectElement>()
-                .value();
+            let value = e.target_unchecked_into::<web_sys::HtmlSelectElement>().value();
             let mut s = (*settings).clone();
             s.delete_mode = if value == "hard" {
                 DeleteMode::Hard
@@ -256,10 +231,7 @@ pub fn settings_page() -> Html {
         Callback::from(move |_| {
             let settings_to_save = (*settings).clone();
             spawn_local(async move {
-                let args = serde_wasm_bindgen::to_value(
-                    &serde_json::json!({ "settings": settings_to_save }),
-                )
-                .unwrap();
+                let args = serde_wasm_bindgen::to_value(&serde_json::json!({"settings": settings_to_save})).unwrap();
                 let result = invoke("save_settings", args).await;
                 if result.is_null() {
                     web_sys::console::log_1(&"Settings saved successfully.".into());
@@ -274,9 +246,7 @@ pub fn settings_page() -> Html {
     let on_default_output_change = {
         let settings = settings.clone();
         Callback::from(move |e: Event| {
-            let value = e
-                .target_unchecked_into::<web_sys::HtmlInputElement>()
-                .value();
+            let value = e.target_unchecked_into::<web_sys::HtmlInputElement>().value();
             let mut s = (*settings).clone();
             s.default_output = if value == "audio" {
                 DefaultOutput::Audio
@@ -389,20 +359,52 @@ pub fn settings_page() -> Html {
                             if let Some(stats) = (*libs).clone() {
                                 let ok_color = "#22c55e";
                                 let bad_color = "#ef4444";
+                                let yt_dlp_color = if stats.yt_dlp {
+                                    ok_color
+                                } else {
+                                    bad_color
+                                };
+                                let gallery_dl_color = if stats.gallery_dl {
+                                    ok_color
+                                } else {
+                                    bad_color
+                                };
+                                let ffmpeg_color = if stats.ffmpeg {
+                                    ok_color
+                                } else {
+                                    bad_color
+                                };
+                                let yt_dlp_status = if stats.yt_dlp {
+                                    "✓"
+                                } else {
+                                    "✗"
+                                };
+                                let gallery_dl_status = if stats.gallery_dl {
+                                    "✓"
+                                } else {
+                                    "✗"
+                                };
+                                let ffmpeg_status = if stats.ffmpeg {
+                                    "✓"
+                                } else {
+                                    "✗"
+                                };
                                 html!{
                                     <div id="settings-tool-status-summary" style="display:flex; gap: 16px; align-items:center; font-weight: 600;">
-                                        <span id="settings-yt-dlp-status" style={format!("display:inline-flex; gap:6px; align-items:center; color:{};", if stats.yt_dlp { ok_color } else { bad_color })}>
-                                            { if stats.yt_dlp { "✓" } else { "✗" } }{" yt-dlp"}
+                                        <span id="settings-yt-dlp-status" style={format!("display:inline-flex; gap:6px; align-items:center; color:{};", yt_dlp_color)}>
+                                            {yt_dlp_status}{" yt-dlp"}
                                         </span>
-                                        <span id="settings-gallery-dl-status" style={format!("display:inline-flex; gap:6px; align-items:center; color:{};", if stats.gallery_dl { ok_color } else { bad_color })}>
-                                            { if stats.gallery_dl { "✓" } else { "✗" } }{" gallery-dl"}
+                                        <span id="settings-gallery-dl-status" style={format!("display:inline-flex; gap:6px; align-items:center; color:{};", gallery_dl_color)}>
+                                            {gallery_dl_status}{" gallery-dl"}
                                         </span>
-                                        <span id="settings-ffmpeg-status" style={format!("display:inline-flex; gap:6px; align-items:center; color:{};", if stats.ffmpeg { ok_color } else { bad_color })}>
-                                            { if stats.ffmpeg { "✓" } else { "✗" } }{" ffmpeg"}
+                                        <span id="settings-ffmpeg-status" style={format!("display:inline-flex; gap:6px; align-items:center; color:{};", ffmpeg_color)}>
+                                            {ffmpeg_status}{" ffmpeg"}
                                         </span>
                                     </div>
                                 }
-                            } else { html!{} }
+                            } else {
+                                html!{}
+                            }
                         }
                     </div>
                 </div>
@@ -421,8 +423,12 @@ pub fn settings_page() -> Html {
                                     />
                                 </div>
                             }
-                        } else { html!{} }
-                    } else { html!{} }
+                        } else {
+                            html!{}
+                        }
+                    } else {
+                        html!{}
+                    }
                 }
 
                 <div id="settings-save-group" class="form-group center">
@@ -435,19 +441,6 @@ pub fn settings_page() -> Html {
 
 impl Default for Settings {
     fn default() -> Self {
-        Self {
-            id: None,
-            download_directory: String::from(""),
-            on_duplicate: OnDuplicate::CreateNew,
-            delete_mode: DeleteMode::Soft,
-            debug_logs: false,
-            default_output: DefaultOutput::Video,
-            download_automatically: true,
-            keep_downloading_on_other_pages: true,
-            parallel_downloads: 3,
-            use_system_binaries: false,
-            cooldown_secs: 0,
-            retry_on_queue_empty: false,
-        }
+        Self {id: None, download_directory: String::from(""), on_duplicate: OnDuplicate::CreateNew, delete_mode: DeleteMode::Soft, debug_logs: false, default_output: DefaultOutput::Video, download_automatically: true, keep_downloading_on_other_pages: true, parallel_downloads: 3, use_system_binaries: false, cooldown_secs: 0, retry_on_queue_empty: false}
     }
 }
