@@ -91,8 +91,7 @@ pub fn home_page(props: &Props) -> Html {
                 let closure = Closure::wrap(Box::new(move |event: JsValue| {
                     let payload = js_sys::Reflect::get(&event, &JsValue::from_str("payload"))
                         .unwrap_or(event.clone());
-                    if let Ok(evt) = serde_wasm_bindgen::from_value::<DownloadEventPayload>(payload)
-                    {
+                    if let Ok(evt) = serde_wasm_bindgen::from_value::<DownloadEventPayload>(payload) {
                         if let Some(active_id) = *active_download_id {
                             match evt {
                                 DownloadEventPayload::Progress { id, progress, .. } => {
@@ -154,11 +153,7 @@ pub fn home_page(props: &Props) -> Html {
                 let val = invoke("load_settings", JsValue::NULL).await;
                 if let Ok(js) = val {
                     if let Ok(s) = serde_wasm_bindgen::from_value::<LoadedSettings>(js) {
-                        if s.default_output
-                            .as_deref()
-                            .map(|v| v.eq_ignore_ascii_case("audio"))
-                            .unwrap_or(false)
-                        {
+                        if s.default_output.as_deref().map(|v| v.eq_ignore_ascii_case("audio")).unwrap_or(false) {
                             output_icon_is_music.set(true);
                         }
                     }

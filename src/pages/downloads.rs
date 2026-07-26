@@ -131,9 +131,7 @@ fn icon_for_row(row: &ClipRow) -> IconId {
     if plat == "pinterest" {
         return IconId::LucideImage;
     }
-    if (plat == "instagram" && is_instagram_photo(link))
-        || (plat == "tiktok" && is_tiktok_photo(link))
-    {
+    if (plat == "instagram" && is_instagram_photo(link)) || (plat == "tiktok" && is_tiktok_photo(link)) {
         IconId::LucideImage
     } else {
         match row.media {
@@ -207,13 +205,7 @@ pub fn downloads_page(props: &Props) -> Html {
                 let plat = platform_str(&r.platform).to_string();
                 let typ = content_type_str(&r.content_type).to_string();
 
-                let dedup_key = format!(
-                    "{}|{}|{}|{}",
-                    plat,
-                    r.handle.to_lowercase().trim(),
-                    typ,
-                    r.link.trim()
-                );
+                let dedup_key = format!("{}|{}|{}|{}", plat, r.handle.to_lowercase().trim(), typ, r.link.trim());
                 if !seen.insert(dedup_key) {
                     continue;
                 }

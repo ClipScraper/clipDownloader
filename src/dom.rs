@@ -66,11 +66,7 @@ fn assign_child_ids(element: &Element, root_id: &str, path: &str, used_ids: &mut
             let child_path = format!("{path}-{}", index + 1);
             if child.id().is_empty() {
                 let descriptor = describe_element(&child);
-                let base_id = format!(
-                    "{root_id}-{}-{}",
-                    slug_fragment(&descriptor),
-                    hash_fragment(&format!("{root_id}|{child_path}|{descriptor}"))
-                );
+                let base_id = format!("{root_id}-{}-{}", slug_fragment(&descriptor), hash_fragment(&format!("{root_id}|{child_path}|{descriptor}")));
                 let id = ensure_unique_id(base_id, used_ids);
                 child.set_id(&id);
                 used_ids.insert(id);
@@ -100,19 +96,7 @@ fn ensure_unique_id(mut candidate: String, used_ids: &HashSet<String>) -> String
 fn describe_element(element: &Element) -> String {
     let mut parts = vec![element.tag_name().to_ascii_lowercase()];
 
-    if let Some(value) = first_non_empty_attribute(
-        element,
-        &[
-            "title",
-            "aria-label",
-            "placeholder",
-            "name",
-            "type",
-            "for",
-            "href",
-            "src",
-        ],
-    ) {
+    if let Some(value) = first_non_empty_attribute(element, &["title", "aria-label", "placeholder", "name", "type", "for", "href", "src"]) {
         parts.push(value);
     }
 

@@ -107,10 +107,7 @@ pub async fn open_folder_for_link(link: String) -> Result<(), String> {
 
         // Prefer the folder containing the resolved file; otherwise fall back to
         // the configured download root so the user still lands somewhere useful.
-        let dir = resolve_stored_path(&path)
-            .and_then(|p| p.parent().map(|d| d.to_path_buf()))
-            .filter(|d| d.exists())
-            .or_else(|| {
+        let dir = resolve_stored_path(&path).and_then(|p| p.parent().map(|d| d.to_path_buf())).filter(|d| d.exists()).or_else(|| {
                 let root = PathBuf::from(&s.download_directory);
                 root.exists().then_some(root)
             });
@@ -136,11 +133,7 @@ pub async fn open_platform_folder(platform: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn open_collection_folder(
-    platform: String,
-    handle: String,
-    content_type: String,
-) -> Result<(), String> {
+pub async fn open_collection_folder(platform: String, handle: String, content_type: String) -> Result<(), String> {
     let s = crate::settings::load_settings();
     let base = std::path::PathBuf::from(s.download_directory);
     let label = crate::database::Database::collection_folder_label(&content_type, &handle);
@@ -178,7 +171,5 @@ pub async fn delete_library_item(link: String) -> Result<(), String> {
         // Remove DB row
         let _ = db.delete_row_by_id(id).map_err(|e| e.to_string())?;
         Ok(())
-    })
-    .await
-    .map_err(|e| format!("Join error: {e}"))?
+    }).await.map_err(|e| format!("Join error: {e}"))?
 }

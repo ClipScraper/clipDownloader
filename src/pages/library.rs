@@ -118,13 +118,7 @@ pub fn library_page() -> Html {
         let plat = platform_str(&r.platform).to_string();
         let typ = content_type_str(&r.content_type).to_string();
 
-        let key = format!(
-            "{}|{}|{}|{}",
-            plat,
-            r.handle.to_lowercase().trim(),
-            typ,
-            r.link.trim()
-        );
+        let key = format!("{}|{}|{}|{}", plat, r.handle.to_lowercase().trim(), typ, r.link.trim());
         if !seen.insert(key) {
             continue;
         }

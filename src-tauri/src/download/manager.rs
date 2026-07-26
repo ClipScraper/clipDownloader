@@ -99,12 +99,7 @@ struct ActiveTask {
     handle: tauri::async_runtime::JoinHandle<()>,
 }
 
-pub async fn run_download_manager(
-    app: AppHandle,
-    db: Arc<tokio::sync::Mutex<Connection>>,
-    mut cmd_rx: mpsc::Receiver<DownloadCommand>,
-    cmd_tx: mpsc::Sender<DownloadCommand>,
-) {
+pub async fn run_download_manager(app: AppHandle, db: Arc<tokio::sync::Mutex<Connection>>, mut cmd_rx: mpsc::Receiver<DownloadCommand>, cmd_tx: mpsc::Sender<DownloadCommand>) {
     let mut queue: VecDeque<i64> = VecDeque::new();
     let mut active: HashMap<i64, ActiveTask> = HashMap::new();
     let mut overrides: HashMap<i64, DownloadOverrides> = HashMap::new();
@@ -272,12 +267,7 @@ pub async fn run_download_manager(
     }
 }
 
-async fn reconcile_state(
-    app: &AppHandle,
-    db: Arc<tokio::sync::Mutex<Connection>>,
-    queue: &mut VecDeque<i64>,
-    active: &HashMap<i64, ActiveTask>,
-) {
+async fn reconcile_state(app: &AppHandle, db: Arc<tokio::sync::Mutex<Connection>>, queue: &mut VecDeque<i64>, active: &HashMap<i64, ActiveTask>) {
     let db_clone = db.clone();
     let (queued_ids, downloading_ids) = tauri::async_runtime::spawn_blocking(move || {
         let conn = db_clone.blocking_lock();
@@ -325,9 +315,7 @@ async fn reconcile_state(
     }
 }
 
-async fn snapshot_downloads(
-    db: Arc<tokio::sync::Mutex<Connection>>,
-) -> Result<Vec<UiBacklogRow>, String> {
+async fn snapshot_downloads(db: Arc<tokio::sync::Mutex<Connection>>) -> Result<Vec<UiBacklogRow>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let conn = db.blocking_lock();
         list_all_ui_conn(&*conn).map_err(|e| e.to_string())
@@ -336,14 +324,7 @@ async fn snapshot_downloads(
     .map_err(|e| format!("Join error: {e}"))?
 }
 
-async fn enqueue_ids(
-    app: &AppHandle,
-    db: Arc<tokio::sync::Mutex<Connection>>,
-    ids: &[i64],
-    queue: &mut VecDeque<i64>,
-    active: &HashMap<i64, ActiveTask>,
-    status: DownloadStatus,
-) {
+async fn enqueue_ids(app: &AppHandle, db: Arc<tokio::sync::Mutex<Connection>>, ids: &[i64], queue: &mut VecDeque<i64>, active: &HashMap<i64, ActiveTask>, status: DownloadStatus) {
     if ids.len() == 1 {
         let id = ids[0];
         if active.contains_key(&id) || queue.contains(&id) {
@@ -411,14 +392,7 @@ async fn enqueue_ids(
     }
 }
 
-async fn move_to_backlog(
-    app: &AppHandle,
-    db: Arc<tokio::sync::Mutex<Connection>>,
-    ids: &[i64],
-    queue: &mut VecDeque<i64>,
-    active: &mut HashMap<i64, ActiveTask>,
-    overrides: &mut HashMap<i64, DownloadOverrides>,
-) {
+async fn move_to_backlog(app: &AppHandle, db: Arc<tokio::sync::Mutex<Connection>>, ids: &[i64], queue: &mut VecDeque<i64>, active: &mut HashMap<i64, ActiveTask>, overrides: &mut HashMap<i64, DownloadOverrides>) {
     for id in ids {
         queue.retain(|queued| queued != id);
         if let Some(task) = active.remove(id) {
@@ -450,14 +424,7 @@ async fn move_to_backlog(
     }
 }
 
-async fn cancel_active(
-    app: &AppHandle,
-    db: Arc<tokio::sync::Mutex<Connection>>,
-    id: i64,
-    queue: &mut VecDeque<i64>,
-    active: &mut HashMap<i64, ActiveTask>,
-    overrides: &mut HashMap<i64, DownloadOverrides>,
-) {
+async fn cancel_active(app: &AppHandle, db: Arc<tokio::sync::Mutex<Connection>>, id: i64, queue: &mut VecDeque<i64>, active: &mut HashMap<i64, ActiveTask>, overrides: &mut HashMap<i64, DownloadOverrides>) {
     queue.retain(|queued| *queued != id);
     overrides.remove(&id);
     if let Some(task) = active.remove(&id) {
@@ -488,18 +455,7 @@ async fn cancel_active(
     }
 }
 
-async fn maybe_start_next(
-    app: &AppHandle,
-    db: Arc<tokio::sync::Mutex<Connection>>,
-    queue: &mut VecDeque<i64>,
-    active: &mut HashMap<i64, ActiveTask>,
-    overrides: &mut HashMap<i64, DownloadOverrides>,
-    paused: bool,
-    max_parallel: usize,
-    cooldown_secs: u32,
-    cmd_tx: &mpsc::Sender<DownloadCommand>,
-    force: bool,
-) {
+async fn maybe_start_next(app: &AppHandle, db: Arc<tokio::sync::Mutex<Connection>>, queue: &mut VecDeque<i64>, active: &mut HashMap<i64, ActiveTask>, overrides: &mut HashMap<i64, DownloadOverrides>, paused: bool, max_parallel: usize, cooldown_secs: u32, cmd_tx: &mpsc::Sender<DownloadCommand>, force: bool) {
     if paused && !force {
         return;
     }
@@ -582,11 +538,7 @@ async fn maybe_start_next(
     }
 }
 
-async fn set_status(
-    db: Arc<tokio::sync::Mutex<Connection>>,
-    id: i64,
-    status: DownloadStatus,
-) -> Result<bool, String> {
+async fn set_status(db: Arc<tokio::sync::Mutex<Connection>>, id: i64, status: DownloadStatus) -> Result<bool, String> {
     let changed = tauri::async_runtime::spawn_blocking(move || {
         let conn = db.blocking_lock();
         set_status_by_id_conn(&*conn, id, status).map_err(|e| e.to_string())
@@ -596,11 +548,7 @@ async fn set_status(
     Ok(changed > 0)
 }
 
-async fn set_last_error(
-    db: Arc<tokio::sync::Mutex<Connection>>,
-    id: i64,
-    last_error: Option<String>,
-) -> Result<(), String> {
+async fn set_last_error(db: Arc<tokio::sync::Mutex<Connection>>, id: i64, last_error: Option<String>) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         let conn = db.blocking_lock();
         set_last_error_by_id_conn(&*conn, id, last_error.as_deref())
@@ -620,11 +568,7 @@ fn emit_event(app: &AppHandle, event: DownloadEvent) {
     }
 }
 
-async fn mark_download_done(
-    db: Arc<tokio::sync::Mutex<Connection>>,
-    id: i64,
-    path: &str,
-) -> Result<(), String> {
+async fn mark_download_done(db: Arc<tokio::sync::Mutex<Connection>>, id: i64, path: &str) -> Result<(), String> {
     let path = path.to_string();
     tauri::async_runtime::spawn_blocking(move || {
         let conn = db.blocking_lock();
@@ -637,12 +581,7 @@ async fn mark_download_done(
     Ok(())
 }
 
-async fn run_download_with_progress(
-    app: &AppHandle,
-    db: Arc<tokio::sync::Mutex<Connection>>,
-    id: i64,
-    overrides: Option<DownloadOverrides>,
-) -> Result<Option<String>, String> {
+async fn run_download_with_progress(app: &AppHandle, db: Arc<tokio::sync::Mutex<Connection>>, id: i64, overrides: Option<DownloadOverrides>) -> Result<Option<String>, String> {
     let db_clone = db.clone();
     let row = tauri::async_runtime::spawn_blocking(move || {
         let conn = db_clone.blocking_lock();

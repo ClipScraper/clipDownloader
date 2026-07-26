@@ -8,10 +8,7 @@ pub async fn load_settings() -> Settings {
 }
 
 #[tauri::command]
-pub async fn save_settings(
-    manager: State<'_, DownloadManager>,
-    settings: Settings,
-) -> Result<(), String> {
+pub async fn save_settings(manager: State<'_, DownloadManager>, settings: Settings) -> Result<(), String> {
     // persist first
     crate::settings::save_settings(&settings)?;
 

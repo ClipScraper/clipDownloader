@@ -63,11 +63,7 @@ pub fn last_segment(url: &str) -> Option<String> {
 
 /// Parse multiple user_handle, clean_name, and file_path from tool output
 /// Returns Vec<(user_handle, clean_name, full_file_path)>
-pub fn parse_multiple_filenames_from_output(
-    output: &str,
-    processed_url: &str,
-    yt_out_dir_hint: Option<&Path>,
-) -> Vec<(String, String, String)> {
+pub fn parse_multiple_filenames_from_output(output: &str, processed_url: &str, yt_out_dir_hint: Option<&Path>) -> Vec<(String, String, String)> {
     use std::collections::HashSet;
     use std::path::Path as StdPath;
 
@@ -109,10 +105,7 @@ pub fn parse_multiple_filenames_from_output(
         let looks_abs_win = trimmed.len() > 2
             && trimmed.as_bytes()[1] == b':'
             && (trimmed.as_bytes()[2] == b'\\' || trimmed.as_bytes()[2] == b'/');
-        if looks_abs_unix
-            || looks_abs_win
-            || (!dir_hint_str.is_empty() && trimmed.starts_with(&dir_hint_str))
-        {
+        if looks_abs_unix || looks_abs_win || (!dir_hint_str.is_empty() && trimmed.starts_with(&dir_hint_str)) {
             if trimmed.contains('.') {
                 candidate_paths.push(trimmed.to_string());
                 continue;
@@ -130,9 +123,7 @@ pub fn parse_multiple_filenames_from_output(
             }
             continue;
         }
-        if trimmed.starts_with("[download] Skipping")
-            && trimmed.contains("has already been recorded in the archive")
-        {
+        if trimmed.starts_with("[download] Skipping") && trimmed.contains("has already been recorded in the archive") {
             if let Some(after) = trimmed.strip_prefix("[download] Skipping ") {
                 let fname = after.split(':').next().unwrap_or("").trim();
                 if !fname.is_empty() && !dir_hint_str.is_empty() {

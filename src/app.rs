@@ -76,10 +76,7 @@ fn default_stage_text(row: &ClipRow) -> String {
     }
 }
 
-fn merge_download_entries(
-    previous: &HashMap<i64, DownloadEntry>,
-    rows: Vec<ClipRow>,
-) -> HashMap<i64, DownloadEntry> {
+fn merge_download_entries(previous: &HashMap<i64, DownloadEntry>, rows: Vec<ClipRow>) -> HashMap<i64, DownloadEntry> {
     let mut map = HashMap::new();
 
     for row in rows {
@@ -163,20 +160,12 @@ fn summarize_download_message(message: &str) -> String {
     trimmed.to_string()
 }
 
-fn commit_download_map(
-    downloads: &UseStateHandle<HashMap<i64, DownloadEntry>>,
-    downloads_ref: &Rc<RefCell<HashMap<i64, DownloadEntry>>>,
-    next: HashMap<i64, DownloadEntry>,
-) {
+fn commit_download_map(downloads: &UseStateHandle<HashMap<i64, DownloadEntry>>, downloads_ref: &Rc<RefCell<HashMap<i64, DownloadEntry>>>, next: HashMap<i64, DownloadEntry>) {
     *downloads_ref.borrow_mut() = next.clone();
     downloads.set(next);
 }
 
-fn spawn_refresh_downloads(
-    downloads: UseStateHandle<HashMap<i64, DownloadEntry>>,
-    downloads_ref: Rc<RefCell<HashMap<i64, DownloadEntry>>>,
-    ready: UseStateHandle<bool>,
-) {
+fn spawn_refresh_downloads(downloads: UseStateHandle<HashMap<i64, DownloadEntry>>, downloads_ref: Rc<RefCell<HashMap<i64, DownloadEntry>>>, ready: UseStateHandle<bool>) {
     spawn_local(async move {
         match invoke("refresh_downloads_snapshot", JsValue::NULL).await {
             Ok(js) => match serde_wasm_bindgen::from_value::<Vec<ClipRow>>(js) {
@@ -198,12 +187,7 @@ fn spawn_refresh_downloads(
     });
 }
 
-fn schedule_download_refresh(
-    refresh_pending: Rc<Cell<bool>>,
-    downloads: UseStateHandle<HashMap<i64, DownloadEntry>>,
-    downloads_ref: Rc<RefCell<HashMap<i64, DownloadEntry>>>,
-    ready: UseStateHandle<bool>,
-) {
+fn schedule_download_refresh(refresh_pending: Rc<Cell<bool>>, downloads: UseStateHandle<HashMap<i64, DownloadEntry>>, downloads_ref: Rc<RefCell<HashMap<i64, DownloadEntry>>>, ready: UseStateHandle<bool>) {
     if refresh_pending.get() {
         return;
     }
@@ -280,9 +264,7 @@ async fn start_dragdrop_listener() {
                         .and_then(|v| v.as_string())
                         .unwrap_or_default();
                     if typ == "drop" {
-                        if let Ok(paths) =
-                            js_sys::Reflect::get(&payload, &JsValue::from_str("paths"))
-                        {
+                        if let Ok(paths) = js_sys::Reflect::get(&payload, &JsValue::from_str("paths")) {
                             let arr = js_sys::Array::from(&paths);
                             if arr.length() > 0 {
                                 if let Some(path) = arr.get(0).as_string() {
@@ -446,8 +428,7 @@ pub fn app() -> Html {
                     let payload = js_sys::Reflect::get(&event, &JsValue::from_str("payload"))
                         .unwrap_or(event.clone());
 
-                    if let Ok(evt) = serde_wasm_bindgen::from_value::<DownloadEventPayload>(payload)
-                    {
+                    if let Ok(evt) = serde_wasm_bindgen::from_value::<DownloadEventPayload>(payload) {
                         let mut map = downloads_ref.borrow().clone();
                         let mut commit = false;
                         let mut should_refresh = false;

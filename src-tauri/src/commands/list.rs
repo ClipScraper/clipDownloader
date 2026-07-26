@@ -4,11 +4,7 @@ use crate::database::{Database, DeleteMode, OutputFormat, UiBacklogRow};
 
 /// Run blocking rusqlite/fs work off the async runtime so it can't stall other
 /// commands or the download manager.
-async fn run_blocking<T, F>(f: F) -> Result<T, String>
-where
-    T: Send + 'static,
-    F: FnOnce() -> Result<T, String> + Send + 'static,
-{
+async fn run_blocking<T, F>(f: F) -> Result<T, String> where T: Send + 'static, F: FnOnce() -> Result<T, String> + Send + 'static {
     tauri::async_runtime::spawn_blocking(f)
         .await
         .map_err(|e| format!("Join error: {e}"))?
@@ -48,11 +44,7 @@ pub async fn move_link_to_queue(link: String) -> Result<u64, String> {
 }
 
 #[command]
-pub async fn move_collection_to_queue(
-    platform: String,
-    handle: String,
-    content_type: String,
-) -> Result<u64, String> {
+pub async fn move_collection_to_queue(platform: String, handle: String, content_type: String) -> Result<u64, String> {
     run_blocking(move || {
         let db = Database::new().map_err(|e| e.to_string())?;
         // DB stores origin in lowercase already; UI provides lowercase tokens too.
@@ -88,11 +80,7 @@ pub async fn move_link_to_backlog(link: String) -> Result<u64, String> {
 }
 
 #[command]
-pub async fn move_collection_to_backlog(
-    platform: String,
-    handle: String,
-    content_type: String,
-) -> Result<u64, String> {
+pub async fn move_collection_to_backlog(platform: String, handle: String, content_type: String) -> Result<u64, String> {
     run_blocking(move || {
         let db = Database::new().map_err(|e| e.to_string())?;
         db.move_collection_to_backlog(&platform, &handle, &content_type)
@@ -184,11 +172,7 @@ pub async fn delete_rows_by_platform(platform: String) -> Result<u64, String> {
 }
 
 #[tauri::command]
-pub async fn delete_rows_by_collection(
-    platform: String,
-    handle: String,
-    origin: String,
-) -> Result<u64, String> {
+pub async fn delete_rows_by_collection(platform: String, handle: String, origin: String) -> Result<u64, String> {
     run_blocking(move || {
         use std::fs;
         let db = Database::new().map_err(|e| e.to_string())?;

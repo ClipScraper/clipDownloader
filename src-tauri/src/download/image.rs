@@ -30,14 +30,7 @@ fn path_sep() -> &'static str {
 }
 
 /// Run gallery-dl (sidecar) into a temp dir; return (ok, output, tmp_path).
-pub async fn run_gallery_dl_to_temp(
-    app: &tauri::AppHandle,
-    _base_download_dir: &std::path::Path,
-    url: &str,
-    cookie_arg: &str,
-    id: i64,
-    emitter: Arc<dyn Fn(DownloadEvent) + Send + Sync>,
-) -> io::Result<(bool, String, PathBuf)> {
+pub async fn run_gallery_dl_to_temp(app: &tauri::AppHandle, _base_download_dir: &std::path::Path, url: &str, cookie_arg: &str, id: i64, emitter: Arc<dyn Fn(DownloadEvent) + Send + Sync>) -> io::Result<(bool, String, PathBuf)> {
     let tmp = tempdir()?;
     #[allow(deprecated)]
     let tmp_path = tmp.into_path(); // keep the directory; caller cleans up
@@ -49,12 +42,7 @@ pub async fn run_gallery_dl_to_temp(
     let new_path = if settings.use_system_binaries {
         std::env::var("PATH").unwrap_or_default()
     } else {
-        format!(
-            "{}{}{}",
-            res_dir.to_string_lossy(),
-            path_sep(),
-            std::env::var("PATH").unwrap_or_default()
-        )
+        format!("{}{}{}", res_dir.to_string_lossy(), path_sep(), std::env::var("PATH").unwrap_or_default())
     };
 
     let args = vec![

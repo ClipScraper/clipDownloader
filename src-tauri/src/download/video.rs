@@ -140,17 +140,11 @@ fn stage_message_from_output_line(line: &str) -> Option<&'static str> {
         Some("Extracting media info")
     } else if trimmed.contains("Downloading webpage") {
         Some("Fetching webpage")
-    } else if trimmed.contains("Downloading JSON metadata")
-        || trimmed.contains("Downloading API JSON")
-    {
+    } else if trimmed.contains("Downloading JSON metadata") || trimmed.contains("Downloading API JSON") {
         Some("Fetching metadata")
-    } else if trimmed.contains("Downloading m3u8 information")
-        || trimmed.contains("Downloading MPD manifest")
-    {
+    } else if trimmed.contains("Downloading m3u8 information") || trimmed.contains("Downloading MPD manifest") {
         Some("Fetching stream manifest")
-    } else if trimmed.contains("[download] Destination:")
-        || trimmed.contains("[download] Resuming download at")
-    {
+    } else if trimmed.contains("[download] Destination:") || trimmed.contains("[download] Resuming download at") {
         Some("Downloading media")
     } else if trimmed.contains("Merging formats into") {
         Some("Merging audio and video")
@@ -166,12 +160,7 @@ fn stage_message_from_output_line(line: &str) -> Option<&'static str> {
 }
 
 // Probe uploader using yt-dlp sidecar (simulate + print)
-async fn probe_uploader(
-    app: &tauri::AppHandle,
-    cookie_arg: &str,
-    processed_url: &str,
-    is_ig_images: bool,
-) -> Option<String> {
+async fn probe_uploader(app: &tauri::AppHandle, cookie_arg: &str, processed_url: &str, is_ig_images: bool) -> Option<String> {
     let mut args = base_ytdlp_args(cookie_arg, is_ig_images, false);
     args.push("--simulate".into());
     args.extend(vec![
@@ -199,12 +188,7 @@ async fn probe_uploader(
     let new_path = if settings.use_system_binaries {
         std::env::var("PATH").unwrap_or_default()
     } else {
-        format!(
-            "{}{}{}",
-            res_dir.to_string_lossy(),
-            path_sep(),
-            std::env::var("PATH").unwrap_or_default()
-        )
+        format!("{}{}{}", res_dir.to_string_lossy(), path_sep(), std::env::var("PATH").unwrap_or_default())
     };
 
     let Ok((mut rx, _child)) = cmd.args(args).env("PATH", new_path).spawn() else {
@@ -231,15 +215,7 @@ async fn probe_uploader(
 
 /* ---------- output template selection ---------- */
 
-async fn choose_output_template(
-    app: &tauri::AppHandle,
-    out_dir: &Path,
-    cookie_arg: &str,
-    processed_url: &str,
-    is_ig_images: bool,
-    audio_only: bool,
-    on_duplicate: &OnDuplicate,
-) -> io::Result<String> {
+async fn choose_output_template(app: &tauri::AppHandle, out_dir: &Path, cookie_arg: &str, processed_url: &str, is_ig_images: bool, audio_only: bool, on_duplicate: &OnDuplicate) -> io::Result<String> {
     let rest_id = sanitize(rest_token_from_url(processed_url));
 
     let url_author = if processed_url.contains("instagram.com/") {

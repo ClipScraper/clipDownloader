@@ -6,14 +6,7 @@ use chrono::Utc;
 use tauri::State;
 
 #[tauri::command]
-pub async fn download_url(
-    manager: State<'_, DownloadManager>,
-    url: String,
-    output_format: Option<String>,
-    outputFormat: Option<String>,
-    flat_destination: Option<bool>,
-    flatDestination: Option<bool>,
-) -> Result<i64, String> {
+pub async fn download_url(manager: State<'_, DownloadManager>, url: String, output_format: Option<String>, outputFormat: Option<String>, flat_destination: Option<bool>, flatDestination: Option<bool>) -> Result<i64, String> {
     let force_audio =
         output_format
             .or(outputFormat)
@@ -34,10 +27,7 @@ pub async fn download_url(
     .map_err(|e| format!("Join error: {e}"))??;
 
     if created {
-        println!(
-            "[DOWNLOADER] inserted new manual row {} for {}",
-            row_id, cleaned_url
-        );
+        println!("[DOWNLOADER] inserted new manual row {} for {}", row_id, cleaned_url);
     }
 
     manager
@@ -62,10 +52,7 @@ pub async fn cancel_download(manager: State<'_, DownloadManager>, id: i64) -> Re
 }
 
 #[tauri::command]
-pub async fn enqueue_downloads(
-    manager: State<'_, DownloadManager>,
-    ids: Vec<i64>,
-) -> Result<(), String> {
+pub async fn enqueue_downloads(manager: State<'_, DownloadManager>, ids: Vec<i64>) -> Result<(), String> {
     manager
         .send(DownloadCommand::Enqueue { ids })
         .await
@@ -73,10 +60,7 @@ pub async fn enqueue_downloads(
 }
 
 #[tauri::command]
-pub async fn move_downloads_to_backlog(
-    manager: State<'_, DownloadManager>,
-    ids: Vec<i64>,
-) -> Result<(), String> {
+pub async fn move_downloads_to_backlog(manager: State<'_, DownloadManager>, ids: Vec<i64>) -> Result<(), String> {
     manager
         .send(DownloadCommand::MoveToBacklog { ids })
         .await
@@ -84,10 +68,7 @@ pub async fn move_downloads_to_backlog(
 }
 
 #[tauri::command]
-pub async fn set_download_paused(
-    manager: State<'_, DownloadManager>,
-    paused: bool,
-) -> Result<(), String> {
+pub async fn set_download_paused(manager: State<'_, DownloadManager>, paused: bool) -> Result<(), String> {
     manager
         .send(DownloadCommand::SetPaused(paused))
         .await
@@ -111,9 +92,7 @@ pub async fn reconcile_downloads(manager: State<'_, DownloadManager>) -> Result<
 }
 
 #[tauri::command]
-pub async fn refresh_downloads_snapshot(
-    manager: State<'_, DownloadManager>,
-) -> Result<Vec<crate::database::UiBacklogRow>, String> {
+pub async fn refresh_downloads_snapshot(manager: State<'_, DownloadManager>) -> Result<Vec<crate::database::UiBacklogRow>, String> {
     let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
     manager
         .send(DownloadCommand::RefreshSnapshot { reply: reply_tx })
