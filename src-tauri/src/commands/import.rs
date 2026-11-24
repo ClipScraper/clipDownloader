@@ -2,7 +2,7 @@ use crate::utils::resource::{classify_url, Resource};
 
 /// Import downloadable items and browser-only references from a CSV.
 /// This is the core function that processes CSV files imported via "Import list" button or drag-and-drop.
-/// Expected CSV header format: Platform,Type,Handle,Media,link
+/// CSV columns: Platform,Type,Handle,Media,link, with an optional Creator column.
 /// - Platform: "patreon", "pinterest", "instagram", "tiktok", or "youtube"
 /// - Type: content source like "recommendation", "playlist", "profile", "bookmarks", etc.
 /// - Handle: username or channel name
@@ -37,6 +37,8 @@ fn import_csv_text_blocking(csv_text: String) -> Result<u64, String> {
 
 pub(crate) fn import_into(db: &crate::database::Database, csv_text: &str) -> Result<u64, String> {
     let mut rdr = csv::ReaderBuilder::new().trim(csv::Trim::All).has_headers(true).from_reader(csv_text.as_bytes());
+
+    let creator_column = rdr.headers().map_err(|e| e.to_string())?.iter().position(|header| header.eq_ignore_ascii_case("Creator"));
 
     // Batch every insert into one transaction: N implicit transactions (one
     // fsync each) collapse into a single commit. The duplicate check reads the
@@ -125,7 +127,7 @@ pub(crate) fn import_into(db: &crate::database::Database, csv_text: &str) -> Res
             }
 
             if platform == crate::database::Platform::Patreon && origin == crate::database::Origin::Collection {
-                handle = db.patreon_import_handle(&handle, &parsed).map_err(|e| e.to_string())?;
+                handle = db.patreon_import_handle(&handle, &parsed, creator_column.and_then(|column| rec.get(column)).unwrap_or("")).map_err(|e| e.to_string())?;
             }
             let platform_token = format!("{:?}", platform).to_lowercase();
             let origin_token = format!("{:?}", origin).to_lowercase();

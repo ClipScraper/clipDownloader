@@ -40,13 +40,18 @@ fn init_schema(conn: &Connection) -> Result<()> {
     // Legacy builds persisted queued rows as "queue". Normalize them so frontend and backend codepaths do not disagree about visibility/mutations.
     conn.execute("UPDATE downloads SET status='queued' WHERE status='queue'", [])?;
     // Older databases were created before these columns existed. `CREATE TABLE IF NOT EXISTS` above is a no-op for them, so migrate any missing columns.
-    ensure_column(conn, "output_format", "ALTER TABLE downloads ADD COLUMN output_format TEXT NOT NULL DEFAULT 'default' CHECK (output_format IN ('default','audio','video'))")?;
-    ensure_column(conn, "last_error", "ALTER TABLE downloads ADD COLUMN last_error TEXT")?;
+    ensure_column(conn, "downloads", "output_format", "ALTER TABLE downloads ADD COLUMN output_format TEXT NOT NULL DEFAULT 'default' CHECK (output_format IN ('default','audio','video'))")?;
+    ensure_column(conn, "downloads", "last_error", "ALTER TABLE downloads ADD COLUMN last_error TEXT")?;
 
     conn.execute("CREATE TABLE IF NOT EXISTS patreon_collection_names (id TEXT PRIMARY KEY, name TEXT NOT NULL)", [])?;
-    ensure_column(conn, "body_links", "ALTER TABLE downloads ADD COLUMN body_links TEXT")?;
+    ensure_column(conn, "patreon_collection_names", "creator", "ALTER TABLE patreon_collection_names ADD COLUMN creator TEXT NOT NULL DEFAULT ''")?;
+    conn.execute_batch("CREATE INDEX IF NOT EXISTS idx_patreon_collection_name ON patreon_collection_names(name);
+        CREATE VIEW IF NOT EXISTS downloads_with_creator AS
+        SELECT d.*, COALESCE(c.creator, '') AS creator FROM downloads d
+        LEFT JOIN patreon_collection_names c ON d.platform='patreon' AND d.origin='collection' AND d.user_handle=c.name;")?;
+    ensure_column(conn, "downloads", "body_links", "ALTER TABLE downloads ADD COLUMN body_links TEXT")?;
 
-    ensure_column(conn, "shortcuts_indexed", "ALTER TABLE downloads ADD COLUMN shortcuts_indexed INTEGER NOT NULL DEFAULT 0")?;
+    ensure_column(conn, "downloads", "shortcuts_indexed", "ALTER TABLE downloads ADD COLUMN shortcuts_indexed INTEGER NOT NULL DEFAULT 0")?;
 
     // Indexes for the columns the app filters/orders by. Without these every list/move/delete/lookup is a full table scan that degrades linearly as the library grows.
     conn.execute_batch("CREATE INDEX IF NOT EXISTS idx_downloads_status ON downloads(status); CREATE INDEX IF NOT EXISTS idx_downloads_link ON downloads(link); CREATE INDEX IF NOT EXISTS idx_downloads_collection ON downloads(platform, user_handle, origin);")?;
@@ -54,8 +59,8 @@ fn init_schema(conn: &Connection) -> Result<()> {
 }
 
 /// Add a column via the provided `ALTER TABLE ... ADD COLUMN` DDL if it does not already exist on the `downloads` table.
-fn ensure_column(conn: &Connection, column: &str, add_column_ddl: &str) -> Result<()> {
-    let mut stmt = conn.prepare("PRAGMA table_info(downloads)")?;
+fn ensure_column(conn: &Connection, table: &str, column: &str, add_column_ddl: &str) -> Result<()> {
+    let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
     let mut rows = stmt.query([])?;
     while let Some(row) = rows.next()? {
         let column_name: String = row.get(1)?;
@@ -76,11 +81,11 @@ pub fn open_connection() -> Result<Connection> {
 }
 
 pub fn find_download_by_id_conn(conn: &Connection, id: i64) -> Result<Option<DbDownloadRow>> {
-    let mut stmt = conn.prepare("SELECT id, platform, media, user_handle, origin, link, output_format, status, path, name, last_error FROM downloads WHERE id=?1 LIMIT 1")?;
+    let mut stmt = conn.prepare("SELECT id, platform, media, user_handle, origin, link, output_format, status, path, name, last_error, creator FROM downloads_with_creator WHERE id=?1 LIMIT 1")?;
     let mut rows = stmt.query([id])?;
     if let Some(row) = rows.next()? {
         let status_raw: String = row.get(7)?;
-        Ok(Some(DbDownloadRow {id: row.get(0)?, platform: row.get(1)?, media: row.get(2)?, user_handle: row.get(3)?, origin: row.get(4)?, link: row.get(5)?, output_format: row.get(6)?, status: DownloadStatus::from_db(status_raw), path: row.get(8)?, name: row.get(9)?, last_error: row.get(10).ok()}))
+        Ok(Some(DbDownloadRow {id: row.get(0)?, platform: row.get(1)?, media: row.get(2)?, user_handle: row.get(3)?, origin: row.get(4)?, link: row.get(5)?, output_format: row.get(6)?, status: DownloadStatus::from_db(status_raw), path: row.get(8)?, name: row.get(9)?, last_error: row.get(10).ok(), creator: row.get(11)?}))
     } else {
         Ok(None)
     }
@@ -161,7 +166,7 @@ pub fn mark_id_done_conn(conn: &Connection, id: i64, path: &str) -> Result<usize
 }
 
 pub fn list_all_ui_conn(conn: &Connection) -> Result<Vec<UiBacklogRow>> {
-    let mut stmt = conn.prepare("SELECT id, status, platform, user_handle, origin, media, link, name, output_format, last_error FROM downloads WHERE status<>'reference' ORDER BY CASE status WHEN 'downloading' THEN 0 WHEN 'queued' THEN 1 WHEN 'queue' THEN 1 WHEN 'backlog' THEN 2 WHEN 'error' THEN 3 WHEN 'done' THEN 4 WHEN 'canceled' THEN 5 ELSE 6 END, id")?;
+    let mut stmt = conn.prepare("SELECT id, status, platform, user_handle, origin, media, link, name, output_format, last_error, creator FROM downloads_with_creator WHERE status<>'reference' ORDER BY CASE status WHEN 'downloading' THEN 0 WHEN 'queued' THEN 1 WHEN 'queue' THEN 1 WHEN 'backlog' THEN 2 WHEN 'error' THEN 3 WHEN 'done' THEN 4 WHEN 'canceled' THEN 5 ELSE 6 END, id")?;
 
     let rows = stmt.query_map([], |row| {
         let id: i64 = row.get(0)?;
@@ -181,7 +186,7 @@ pub fn list_all_ui_conn(conn: &Connection) -> Result<Vec<UiBacklogRow>> {
         };
         let media_token = ui_media_token(&media);
 
-        Ok(UiBacklogRow {id, platform, content_type, handle, media: media_token, link, output_format, status: DownloadStatus::from_db(status_raw), last_error})
+        Ok(UiBacklogRow {id, platform, content_type, handle, media: media_token, link, output_format, creator: row.get(10)?, status: DownloadStatus::from_db(status_raw), last_error})
     })?;
 
     let mut out = Vec::new();
@@ -302,6 +307,7 @@ pub struct Download {
 /// Row shape returned to the **frontend** for the Downloads page. Keys and value tokens match `src/types.rs` expectations.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UiBacklogRow {
+    pub creator: String,
     pub id: i64,
     #[serde(rename = "Platform")]
     /// "instagram" | "tiktok" | "youtube"
@@ -335,6 +341,7 @@ pub struct CollectionInfo {
 
 #[derive(Debug, Clone)]
 pub struct DbDownloadRow {
+    pub creator: String,
     pub id: i64,
     pub platform: String,
     pub media: String,
@@ -745,7 +752,7 @@ impl Database {
 
     /// Resolve a collection label inside the CSV import transaction. Only a post URL
     /// carrying the matching collection ID can supply a new title.
-    pub fn patreon_import_handle(&self, handle: &str, url: &tauri::Url) -> Result<String> {
+    pub fn patreon_import_handle(&self, handle: &str, url: &tauri::Url, creator: &str) -> Result<String> {
         let numbered = handle.strip_prefix("Collection ").filter(|id| numeric_id(id));
         let Some(id) = numbered.or_else(|| titled_collection_id(handle)) else {
             return Ok(handle.to_owned());
@@ -753,22 +760,24 @@ impl Database {
         let previous: Option<String> = self.conn.query_row(
             "SELECT name FROM patreon_collection_names WHERE id=?1", [id], |r| r.get(0),
         ).optional()?;
-        if numbered.is_some() {
-            return Ok(previous.unwrap_or_else(|| handle.to_owned()));
-        }
+        let name = if numbered.is_some() { previous.as_deref().unwrap_or(handle) } else { handle };
         let from_url = url.query_pairs().find(|(key, _)| key == "collection" || key == "collection_id").map(|(_, value)| value);
-        if from_url.as_deref() == Some(id) && crate::utils::url::patreon_post_id(url.as_str()).is_some()
-            && previous.as_deref() != Some(handle) {
+        if from_url.as_deref() == Some(id) && crate::utils::url::patreon_post_id(url.as_str()).is_some() {
             self.conn.execute(
-                "INSERT INTO patreon_collection_names(id,name) VALUES(?1,?2) ON CONFLICT(id) DO UPDATE SET name=excluded.name",
-                params![id, handle],
+                "INSERT INTO patreon_collection_names(id,name,creator) VALUES(?1,?2,?3)
+                 ON CONFLICT(id) DO UPDATE SET name=excluded.name,
+                   creator=COALESCE(NULLIF(excluded.creator,''), patreon_collection_names.creator)
+                 WHERE name<>excluded.name OR (excluded.creator<>'' AND creator<>excluded.creator)",
+                params![id, name, creator.trim()],
             )?;
-            self.conn.execute(
-                "UPDATE downloads SET user_handle=?1 WHERE platform='patreon' AND origin='collection' AND user_handle IN (?2,?3)",
-                params![handle, format!("Collection {id}"), previous],
-            )?;
+            if numbered.is_none() && previous.as_deref() != Some(name) {
+                self.conn.execute(
+                    "UPDATE downloads SET user_handle=?1 WHERE platform='patreon' AND origin='collection' AND user_handle IN (?2,?3)",
+                    params![name, format!("Collection {id}"), previous],
+                )?;
+            }
         }
-        Ok(handle.to_owned())
+        Ok(name.to_owned())
     }
 
     pub fn existing_collection_item(&self, link: &str, platform: &str, user_handle: &str, origin: &str, is_link: bool) -> Result<Option<(i64, String, String)>> {
@@ -815,6 +824,22 @@ impl Database {
         Ok(None)
     }
 
+    pub fn patreon_collection_creator(&self, name: &str) -> Result<String> {
+        self.conn.query_row("SELECT creator FROM patreon_collection_names WHERE name=?1", [name], |row| row.get(0))
+            .optional().map(Option::unwrap_or_default)
+    }
+
+    pub fn collection_directory(root: &std::path::Path, platform: &str, origin: &str, handle: &str, creator: &str) -> PathBuf {
+        let mut directory = root.join(platform);
+        if platform == "patreon" && origin == "collection" && !creator.trim().is_empty() {
+            let profile = Self::collection_folder_label("profile", creator);
+            let mut end = profile.len().min(160);
+            while !profile.is_char_boundary(end) { end -= 1; }
+            directory.push(profile[..end].trim_end_matches(['.', ' ']));
+        }
+        directory.join(Self::collection_folder_label(origin, handle))
+    }
+
     /// Compute a display-ready folder label: "{origin} - {user_handle}" Ensures both parts are non-empty (falls back to tokens if needed).
     pub fn collection_folder_label(origin: &str, user_handle: &str) -> String {
         let o = origin.trim();
@@ -855,7 +880,7 @@ impl Database {
 
     /// Fetch rows with `status = 'backlog'`, normalized for the UI. Ordered by platform → handle → type → name (case-insensitive).
     pub fn list_backlog_ui(&self) -> Result<Vec<UiBacklogRow>> {
-        let mut stmt = self.conn.prepare("SELECT id, status, platform, user_handle, origin, media, link, name, output_format, last_error FROM downloads WHERE status = 'backlog' ORDER BY platform COLLATE NOCASE, user_handle COLLATE NOCASE, origin COLLATE NOCASE, name COLLATE NOCASE")?;
+        let mut stmt = self.conn.prepare("SELECT id, status, platform, user_handle, origin, media, link, name, output_format, last_error, creator FROM downloads_with_creator WHERE status = 'backlog' ORDER BY platform COLLATE NOCASE, user_handle COLLATE NOCASE, origin COLLATE NOCASE, name COLLATE NOCASE")?;
 
         let rows = stmt.query_map([], |row| {
             let id: i64 = row.get(0)?;
@@ -872,7 +897,7 @@ impl Database {
             let content_type = origin.clone();
             let media_token = ui_media_token(&media);
 
-            Ok(UiBacklogRow {id, platform, content_type, handle, media: media_token, link, output_format, status: DownloadStatus::from_db(status_raw), last_error})
+            Ok(UiBacklogRow {id, platform, content_type, handle, media: media_token, link, output_format, creator: row.get(10)?, status: DownloadStatus::from_db(status_raw), last_error})
         })?;
 
         let mut out = Vec::new();
@@ -884,7 +909,7 @@ impl Database {
 
     /// Fetch rows with `status = 'queued'`, normalized for the UI.
     pub fn list_queue_ui(&self) -> Result<Vec<UiBacklogRow>> {
-        let mut stmt = self.conn.prepare("SELECT id, status, platform, user_handle, origin, media, link, name, output_format, last_error FROM downloads WHERE status IN ('queued', 'queue') ORDER BY platform COLLATE NOCASE, user_handle COLLATE NOCASE, origin COLLATE NOCASE, name COLLATE NOCASE")?;
+        let mut stmt = self.conn.prepare("SELECT id, status, platform, user_handle, origin, media, link, name, output_format, last_error, creator FROM downloads_with_creator WHERE status IN ('queued', 'queue') ORDER BY platform COLLATE NOCASE, user_handle COLLATE NOCASE, origin COLLATE NOCASE, name COLLATE NOCASE")?;
 
         let rows = stmt.query_map([], |row| {
             let id: i64 = row.get(0)?;
@@ -904,7 +929,7 @@ impl Database {
             };
             let media_token = ui_media_token(&media);
 
-            Ok(UiBacklogRow {id, platform, content_type, handle, media: media_token, link, output_format, status: DownloadStatus::from_db(status_raw), last_error})
+            Ok(UiBacklogRow {id, platform, content_type, handle, media: media_token, link, output_format, creator: row.get(10)?, status: DownloadStatus::from_db(status_raw), last_error})
         })?;
 
         let mut out = Vec::new();
@@ -915,7 +940,7 @@ impl Database {
     }
 
     pub fn list_done_ui(&self) -> Result<Vec<UiBacklogRow>> {
-        let mut stmt = self.conn.prepare("SELECT id, status, platform, user_handle, origin, media, link, name, output_format, last_error FROM downloads WHERE status = 'done' ORDER BY platform COLLATE NOCASE, user_handle COLLATE NOCASE, origin COLLATE NOCASE, name COLLATE NOCASE")?;
+        let mut stmt = self.conn.prepare("SELECT id, status, platform, user_handle, origin, media, link, name, output_format, last_error, creator FROM downloads_with_creator WHERE status = 'done' ORDER BY platform COLLATE NOCASE, user_handle COLLATE NOCASE, origin COLLATE NOCASE, name COLLATE NOCASE")?;
 
         let rows = stmt.query_map([], |row| {
             let id: i64 = row.get(0)?;
@@ -935,7 +960,7 @@ impl Database {
             };
             let media_token = ui_media_token(&media);
 
-            Ok(UiBacklogRow {id, platform, content_type, handle, media: media_token, link, output_format, status: DownloadStatus::from_db(status_raw), last_error})
+            Ok(UiBacklogRow {id, platform, content_type, handle, media: media_token, link, output_format, creator: row.get(10)?, status: DownloadStatus::from_db(status_raw), last_error})
         })?;
 
         let mut out = Vec::new();
@@ -994,6 +1019,48 @@ impl Database {
 #[cfg(test)]
 mod patreon_tests {
     use super::*;
+
+    #[test]
+    fn reimport_nests_collections_under_their_verified_creator() {
+        let conn = Connection::open_in_memory().unwrap();
+        // Upgrade a database created by the earlier title-only importer.
+        conn.execute("CREATE TABLE patreon_collection_names (id TEXT PRIMARY KEY, name TEXT NOT NULL)", []).unwrap();
+        init_schema(&conn).unwrap();
+        let db = Database {conn};
+        let legacy = "Platform,Type,Handle,Media,link\npatreon,collection,Collection 77,link,https://www.patreon.com/posts/101?collection=77";
+        let named = "Platform,Type,Handle,Media,link,Creator\npatreon,collection,After Prom (77),link,https://www.patreon.com/posts/101?collection=77,Jazzon";
+        let import = |csv| crate::commands::import::import_into(&db, csv).unwrap();
+        assert_eq!(import(legacy), 1);
+        let post = db.list_backlog_ui().unwrap().remove(0);
+        assert!(post.creator.is_empty());
+        db.mark_id_done(post.id, "/original/path.zip").unwrap();
+        assert_eq!(import(named), 0);
+        assert_eq!(import(legacy), 0);
+        let row = db.find_download_by_id(post.id).unwrap().unwrap();
+        assert_eq!(row.creator, "Jazzon");
+        assert_eq!(row.path, "/original/path.zip");
+        assert_eq!(db.list_done_ui().unwrap()[0].creator, "Jazzon");
+
+        // A discovered child inherits the collection's profile, including on the Links page.
+        db.record_post_links(post.id, &["https://t.me/example".to_owned(), "https://www.instagram.com/reel/demo".to_owned()].into_iter().collect()).unwrap();
+        assert!(db.list_all_ui().unwrap().iter().all(|row| row.creator == "Jazzon"));
+        assert_eq!(db.list_backlog_ui().unwrap()[0].creator, "Jazzon");
+        assert_eq!(serde_json::to_value(db.collected_links().unwrap()).unwrap()[0]["creator"], "Jazzon");
+        assert_eq!(db.move_collection_to_queue("patreon", "After Prom (77)", "collection").unwrap(), 1);
+        assert_eq!(db.list_queue_ui().unwrap()[0].creator, "Jazzon");
+
+        let root = std::path::Path::new("downloads");
+        assert_eq!(Database::collection_directory(root, "patreon", "collection", "After Prom (77)", &row.creator),
+            root.join("patreon").join("profile - Jazzon").join("collection - After Prom (77)"));
+        let path = Database::collection_directory(root, "patreon", "collection", "After Prom (77)", "../../elsewhere");
+        assert_eq!(path.strip_prefix(root.join("patreon")).unwrap().components().count(), 2);
+        assert_eq!(Database::collection_directory(root, "instagram", "profile", "artist", "Jazzon"), root.join("instagram").join("profile - artist"));
+
+        assert_eq!(import("Platform,Type,Handle,Media,link,Creator\npatreon,collection,After Prom (77),link,https://www.patreon.com/posts/999?collection=88,Wrong"), 1);
+        assert_eq!(db.patreon_collection_creator("After Prom (77)").unwrap(), "Jazzon");
+        assert_eq!(import("Platform,Type,Handle,Media,link,Creator\npatreon,collection,After Prom (88),link,https://www.patreon.com/posts/101?collection=88,Another Creator"), 1);
+        assert_eq!(db.patreon_collection_creator("After Prom (88)").unwrap(), "Another Creator");
+    }
 
     #[test]
     fn titled_collections_upgrade_by_verified_id_across_imports() {

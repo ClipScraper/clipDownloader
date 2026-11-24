@@ -1,3 +1,4 @@
+use crate::components::creator_collections::by_creator;
 use std::cell::Cell;
 use std::collections::BTreeSet;
 use std::rc::Rc;
@@ -130,14 +131,15 @@ fn groups(links: &[CollectedLink], open: &Callback<String>, delete: &Callback<Li
                 </div>
                 <div id={format!("{group}-collections")} hidden={!expanded.contains(&group)}>
                     if expanded.contains(&group) {
-                        {for collections.into_iter().map(|((collection, origin, platform), mut entries)| {
+                        {by_creator(&group, collections.into_iter().map(|((collection, origin, platform), mut entries)| {
+                            let creator = entries.first().map(|row| row.creator.clone()).unwrap_or_default();
                             entries.sort_by_key(|link| &link.url);
                             let key = format!("{group}-collection-{}", hash_fragment(&format!("{platform}\0{collection}\0{origin}")));
                             let selection = LinkSelection::Collection {
                                 service: service.into(), platform: platform.into(), collection: collection.into(), origin: origin.into(),
                             };
                             let source = service_name(platform);
-                            html! {
+                            (creator, html! {
                                 <section key={key.clone()} id={key.clone()} class="collection-block">
                                     <div id={format!("{key}-header")} class="collection-item">
                                         <button type="button" id={format!("{key}-toggle")} class="link-group-toggle" aria-expanded={expanded.contains(&key).to_string()} aria-controls={format!("{key}-items")} onclick={toggle_group(expanded, &key)}>
@@ -154,8 +156,8 @@ fn groups(links: &[CollectedLink], open: &Callback<String>, delete: &Callback<Li
                                         }
                                     </div>
                                 </section>
-                            }
-                        })}
+                            })
+                        }))}
                     }
                 </div>
             </section>

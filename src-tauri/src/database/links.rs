@@ -18,7 +18,8 @@ impl LinkSelection {
                 service == &candidate.service && platform == &candidate.platform
                     && collection == &candidate.collection && origin == &candidate.origin
             }
-            Self::Link { link } => link == candidate,
+            Self::Link { link } => link.url == candidate.url && link.platform == candidate.platform
+                && link.origin == candidate.origin && link.collection == candidate.collection && link.service == candidate.service,
         }
     }
 }
@@ -174,12 +175,12 @@ impl Database {
 // filtering so deleting a deduplicated link can remove every copy in that collection.
 fn visit_links(conn: &Connection, mut visit: impl FnMut(i64, bool, CollectedLink)) -> Result<()> {
     let mut stmt = conn.prepare(
-        "WITH candidates(id, platform, user_handle, origin, url, standalone) AS (
-            SELECT id, platform, user_handle, origin, link, 1 FROM downloads WHERE status='reference'
+        "WITH candidates(id, platform, user_handle, origin, url, standalone, creator) AS (
+            SELECT id, platform, user_handle, origin, link, 1, creator FROM downloads_with_creator WHERE status='reference'
             UNION ALL
-            SELECT d.id, d.platform, d.user_handle, d.origin, j.value, 0 FROM downloads d, json_each(d.body_links) j
+            SELECT d.id, d.platform, d.user_handle, d.origin, j.value, 0, d.creator FROM downloads_with_creator d, json_each(d.body_links) j
          ) SELECT id, platform, user_handle, origin, url, standalone,
-                  MAX(standalone) OVER (PARTITION BY platform, user_handle, origin, url)
+                  MAX(standalone) OVER (PARTITION BY platform, user_handle, origin, url), creator
            FROM candidates c WHERE NOT EXISTS (
                SELECT 1 FROM downloads media WHERE media.link=c.url AND media.status<>'reference'
            )",
@@ -201,7 +202,7 @@ fn visit_links(conn: &Connection, mut visit: impl FnMut(i64, bool, CollectedLink
         }
         visit(row.get(0)?, row.get(5)?, CollectedLink {
             platform, collection: if collection.is_empty() { "Unknown".into() } else { collection },
-            origin, url, service: service.into(),
+            origin, url, service: service.into(), creator: row.get(7)?,
         });
     }
     Ok(())

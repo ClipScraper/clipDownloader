@@ -1,3 +1,4 @@
+use crate::components::creator_collections::{by_creator, collection_title};
 use crate::components::service_icon::service_icon;
 use crate::app::{DeleteItem, MoveItem};
 use crate::dom::assign_missing_descriptive_ids;
@@ -67,16 +68,6 @@ fn last_two_path_segments(url: &str) -> String {
     }
 }
 
-/// Collection display name: "{handle} | {type}"
-fn collection_title(row: &ClipRow) -> String {
-    let handle = if row.handle.trim().is_empty() {
-        "Unknown"
-    } else {
-        &row.handle
-    };
-    let typ = content_type_str(&row.content_type);
-    format!("{handle} | {typ}")
-}
 
 fn item_label_for_row(row: &ClipRow) -> String {
     let link = row.link.trim();
@@ -273,7 +264,8 @@ pub fn downloads_page(props: &Props) -> Html {
                                     html! {
                                         <div id={format!("{platform_dom}-collections")}>
                                             {
-                                                for col_map.into_iter().map(|((handle, typ_str, ctype), rows)| {
+                                                by_creator(&platform_dom, col_map.into_iter().map(|((handle, typ_str, ctype), rows)| {
+                                                    let creator = rows.first().map(|row| row.creator.clone()).unwrap_or_default();
                                                     /* ---- collection open state (namespaced) ---- */
                                                     let col_key = format!("{}::{}::{}::{}", section_id, plat_label, handle, typ_str);
                                                     let collection_dom = format!("{platform_dom}-collection-{}", crate::dom::hash_fragment(&col_key));
@@ -346,7 +338,7 @@ pub fn downloads_page(props: &Props) -> Html {
                                                         })
                                                     };
 
-                                                    html!{
+                                                    (creator, html!{
                                                         <div id={format!("{collection_dom}-group")} class="collection-block" key={col_key.clone()}>
                                                             <div id={format!("{collection_dom}-toggle")} class="collection-item" onclick={on_col_click}>
                                                                 <div id={format!("{collection_dom}-identity")} class="item-left">
@@ -490,8 +482,8 @@ pub fn downloads_page(props: &Props) -> Html {
                                                                 }
                                                             }
                                                         </div>
-                                                    }
-                                                })
+                                                    })
+                                                }))
                                             }
                                         </div>
                                     }
@@ -603,7 +595,8 @@ pub fn downloads_page(props: &Props) -> Html {
                                     html! {
                                         <div id={format!("{platform_dom}-collections")}>
                                             {
-                                                for col_map.into_iter().map(|((handle, typ_str, ctype), rows)| {
+                                                by_creator(&platform_dom, col_map.into_iter().map(|((handle, typ_str, ctype), rows)| {
+                                                    let creator = rows.first().map(|row| row.creator.clone()).unwrap_or_default();
                                                     let col_key = format!("issues::{}::{}::{}", plat_label, handle, typ_str);
                                                     let collection_dom = format!("{platform_dom}-collection-{}", crate::dom::hash_fragment(&col_key));
                                                     let col_open = expanded_collections.contains(&col_key);
@@ -644,7 +637,7 @@ pub fn downloads_page(props: &Props) -> Html {
                                                         })
                                                     };
 
-                                                    html! {
+                                                    (creator, html! {
                                                         <div id={format!("{collection_dom}-group")} class="collection-block" key={col_key.clone()}>
                                                             <div id={format!("{collection_dom}-toggle")} class="collection-item" onclick={on_col_click}>
                                                                 <div id={format!("{collection_dom}-identity")} class="item-left">
@@ -729,8 +722,8 @@ pub fn downloads_page(props: &Props) -> Html {
                                                                 }
                                                             }
                                                         </div>
-                                                    }
-                                                })
+                                                    })
+                                                }))
                                             }
                                         </div>
                                     }

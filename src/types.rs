@@ -46,6 +46,8 @@ pub enum MediaKind {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ClipRow {
     #[serde(default)]
+    pub creator: String,
+    #[serde(default)]
     pub id: i64,
     #[serde(rename = "Platform")]
     pub platform: Platform,

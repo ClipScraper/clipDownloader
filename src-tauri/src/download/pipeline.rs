@@ -164,11 +164,10 @@ pub async fn execute_download_job(app: AppHandle, row: DbDownloadRow, overrides:
         platform @ ("mega" | "telegram" | "dropbox" | "twitter") => platform,
         _ => infer_site(&cleaned_url),
     };
-    let collection_dir_label = Database::collection_folder_label(&row.origin, &row.user_handle);
     let dest_dir = if use_flat {
         download_root.clone()
     } else {
-        download_root.join(site).join(collection_dir_label)
+        Database::collection_directory(&download_root, site, &row.origin, &row.user_handle, &row.creator)
     };
     let _ = fs::create_dir_all(&dest_dir);
 

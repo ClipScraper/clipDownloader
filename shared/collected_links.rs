@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 pub struct CollectedLink {
+    #[serde(default)]
+    pub creator: String,
     pub platform: String,
     pub collection: String,
     pub origin: String,

@@ -1,3 +1,4 @@
+use crate::components::creator_collections::{by_creator, collection_title};
 use crate::components::service_icon::service_icon;
 use crate::dom::assign_missing_descriptive_ids;
 use crate::types::{content_type_str, platform_str, ClipRow, MediaKind};
@@ -59,15 +60,6 @@ fn item_label_for_row(row: &ClipRow) -> String {
     } else {
         last_two_path_segments(link)
     }
-}
-fn collection_title(row: &ClipRow) -> String {
-    let handle = if row.handle.trim().is_empty() {
-        "Unknown"
-    } else {
-        &row.handle
-    };
-    let typ = content_type_str(&row.content_type);
-    format!("{handle} | {typ}")
 }
 
 /* ───────────────────────── component ───────────────────────── */
@@ -196,7 +188,8 @@ pub fn library_page(props: &LibraryProps) -> Html {
                             html!{
                                 <div id={format!("{platform_dom}-collections")}>
                                     {
-                                        for col_map.into_iter().map(|((handle, typ_str), rows)| {
+                                        by_creator(&platform_dom, col_map.into_iter().map(|((handle, typ_str), rows)| {
+                                            let creator = rows.first().map(|row| row.creator.clone()).unwrap_or_default();
                                             let col_key = format!("{}::{}::{}::{}", section_id, plat_label, handle, typ_str);
                                             let collection_dom = format!("{platform_dom}-collection-{}", crate::dom::hash_fragment(&col_key));
                                             let col_open = expanded_collections.contains(&col_key);
@@ -260,7 +253,7 @@ pub fn library_page(props: &LibraryProps) -> Html {
                                                 })
                                             };
 
-                                            html!{
+                                            (creator, html!{
                                                 <div id={format!("{collection_dom}-group")} class="collection-block" key={col_key.clone()}>
                                                     <div id={format!("{collection_dom}-toggle")} class="collection-item" onclick={on_col_click}>
                                                         <div id={format!("{collection_dom}-identity")} class="item-left">
@@ -368,8 +361,8 @@ pub fn library_page(props: &LibraryProps) -> Html {
                                                         }
                                                     }
                                                 </div>
-                                            }
-                                        })
+                                            })
+                                        }))
                                     }
                                 </div>
                             }

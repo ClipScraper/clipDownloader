@@ -272,3 +272,20 @@
 .link-address { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; user-select: text; }
 .collected-link:hover { color: #9bcfff; text-decoration: underline; }
 .link-group-toggle:focus-visible, .link-trash:focus-visible, .collected-link:focus-visible { outline: 2px solid #9bcfff; outline-offset: 2px; }
+
+.creator-collections { margin-left: 16px; }
+.creator-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  border-radius: 10px;
+  background: rgba(255,255,255,0.06);
+  cursor: pointer;
+}
+.creator-item::-webkit-details-marker { display: none; }
+.creator-item::before { content: '▸'; color: #bdbdbd; }
+.creator-collections[open] > .creator-item::before { content: '▾'; }
+.creator-item:hover { background: rgba(255,255,255,0.12); }
+.creator-item:focus-visible { outline: 2px solid #9bcfff; }

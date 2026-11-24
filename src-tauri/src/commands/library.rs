@@ -97,15 +97,16 @@ pub async fn open_platform_folder(platform: String) -> Result<(), String> {
 pub async fn open_collection_folder(platform: String, handle: String, content_type: String) -> Result<(), String> {
     let s = crate::settings::load_settings();
     let base = std::path::PathBuf::from(s.download_directory);
-    let label = crate::database::Database::collection_folder_label(&content_type, &handle);
-    let p = base.join(&platform).join(label);
-    if p.is_dir() {
-        return reveal_dir(&p.to_string_lossy());
-    }
-    // Files from before a Patreon title change still have their original stored paths.
+    let previous = crate::database::Database::collection_directory(&base, &platform, &content_type, &handle, "");
     if platform == "patreon" && content_type == "collection" {
         return tauri::async_runtime::spawn_blocking(move || {
             let db = crate::database::Database::new().map_err(|e| e.to_string())?;
+            let creator = db.patreon_collection_creator(&handle).map_err(|e| e.to_string())?;
+            let folder = crate::database::Database::collection_directory(&base, &platform, &content_type, &handle, &creator);
+            for dir in [folder, previous] {
+                if dir.is_dir() { return reveal_dir(&dir.to_string_lossy()); }
+            }
+            // Earlier imports may have saved files under an ID-only collection label.
             let paths = db.list_ids_and_paths_by_collection(&platform, &handle, &content_type).map_err(|e| e.to_string())?;
             for (_, path) in paths {
                 if path.is_empty() || path == "unknown_path" {
@@ -118,6 +119,7 @@ pub async fn open_collection_folder(platform: String, handle: String, content_ty
             Ok(())
         }).await.map_err(|e| e.to_string())?;
     }
+    if previous.is_dir() { return reveal_dir(&previous.to_string_lossy()); }
     Ok(())
 }
 
