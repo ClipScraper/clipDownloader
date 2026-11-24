@@ -63,6 +63,7 @@ fn platform_icon_src(p: &str) -> &'static str {
     match p {
         "instagram" => "public/instagram.webp",
         "pinterest" => "public/pinterest.png",
+        "patreon" => "public/patreon.png",
         "tiktok" => "public/tiktok.webp",
         "youtube" => "public/youtube.webp",
         _ => "",
@@ -135,12 +136,13 @@ pub fn library_page() -> Html {
 
     html! {
         <main id="library-page" class="container downloads library">
-            <h1>{"Library"}</h1>
-            <div class="summary">
+            <h1 id="library-heading">{"Library"}</h1>
+            <div id="library-summary" class="summary">
                 {
                     for map.into_iter().map(|(plat_label, col_map)| {
                         let section_id = "library";
                         let platform_key = format!("{}::{}", section_id, plat_label);
+                        let platform_dom = platform_key.replace("::", "-");
                         let is_open = expanded_platforms.contains(&platform_key);
 
                         let on_platform_click = {
@@ -194,10 +196,11 @@ pub fn library_page() -> Html {
 
                         let platform_rows = if is_open {
                             html!{
-                                <div>
+                                <div id={format!("{platform_dom}-collections")}>
                                     {
                                         for col_map.into_iter().map(|((handle, typ_str), rows)| {
                                             let col_key = format!("{}::{}::{}::{}", section_id, plat_label, handle, typ_str);
+                                            let collection_dom = format!("{platform_dom}-collection-{}", crate::dom::hash_fragment(&col_key));
                                             let col_open = expanded_collections.contains(&col_key);
                                             let on_col_click = {
                                                 let expanded_collections = expanded_collections.clone();
@@ -260,17 +263,17 @@ pub fn library_page() -> Html {
                                             };
 
                                             html!{
-                                                <div class="collection-block" key={col_key.clone()}>
-                                                    <div class="collection-item" onclick={on_col_click}>
-                                                        <div class="item-left">
-                                                            <span class="item-title">{format!("{} | {}", handle, typ_str)}</span>
+                                                <div id={format!("{collection_dom}-group")} class="collection-block" key={col_key.clone()}>
+                                                    <div id={format!("{collection_dom}-toggle")} class="collection-item" onclick={on_col_click}>
+                                                        <div id={format!("{collection_dom}-identity")} class="item-left">
+                                                            <span id={format!("{collection_dom}-name")} class="item-title">{format!("{} | {}", handle, typ_str)}</span>
                                                         </div>
-                                                        <div class="item-right">
-                                                            <span>{format!("{} items", rows.len())}</span>
-                                                            <button class="icon-btn" type_="button" title="Show in folder" onclick={on_open_collection_folder}>
+                                                        <div id={format!("{collection_dom}-actions")} class="item-right">
+                                                            <span id={format!("{collection_dom}-count")}>{format!("{} items", rows.len())}</span>
+                                                            <button id={format!("{collection_dom}-open-folder")} class="icon-btn" type_="button" title="Show in folder" onclick={on_open_collection_folder}>
                                                                 <Icon icon_id={IconId::LucideFolder} width={"18"} height={"18"} />
                                                             </button>
-                                                            <button class="icon-btn" type_="button" title="Delete" onclick={on_delete_collection}>
+                                                            <button id={format!("{collection_dom}-delete")} class="icon-btn" type_="button" title="Delete" onclick={on_delete_collection}>
                                                                 <Icon icon_id={IconId::LucideTrash2} width={"18"} height={"18"} />
                                                             </button>
                                                         </div>
@@ -278,8 +281,8 @@ pub fn library_page() -> Html {
                                                     {
                                                         if col_open {
                                                             html!{
-                                                                <div class="rows-card">
-                                                                    <ul class="rows">
+                                                                <div id={format!("{collection_dom}-items")} class="rows-card">
+                                                                    <ul id={format!("{collection_dom}-list")} class="rows">
                                                                         {
                                                                             for rows.into_iter().map(|row| {
                                                                                 // Delete callback: optimistic UI update + backend delete
@@ -332,24 +335,25 @@ pub fn library_page() -> Html {
                                                                                 };
 
                                                                                 html!{
-                                                                                    <li class="row-line" key={row.link.clone()}>
+                                                                                    <li id={format!("library-item-{}-item", row.id)} class="row-line" key={row.link.clone()}>
                                                                                         {
                                                                                             match row.media {
+                                                                                                MediaKind::Link => html!{ <Icon icon_id={IconId::LucideLink} width={"16"} height={"16"} /> },
                                                                                                 MediaKind::Pictures => html!{<Icon icon_id={IconId::LucideImage} width={"16"} height={"16"} />},
                                                                                                 MediaKind::Video    => html!{<Icon icon_id={IconId::LucideVideo} width={"16"} height={"16"} />},
                                                                                             }
                                                                                         }
-                                                                                        <a class="link-text" href={row.link.clone()} target="_blank">
+                                                                                        <a id={format!("library-item-{}-source-link", row.id)} class="link-text" href={row.link.clone()} target="_blank">
                                                                                             {collection_title(&row)}{" - "}{item_label_for_row(&row)}
                                                                                         </a>
-                                                                                        <div class="row-actions">
-                                                                                            <button class="icon-btn" type_="button" title="Play" onclick={on_open_file}>
+                                                                                        <div id={format!("library-item-{}-actions", row.id)} class="row-actions">
+                                                                                            <button id={format!("library-item-{}-open-file", row.id)} class="icon-btn" type_="button" title={if row.media == MediaKind::Link { "Open saved link or attachment" } else { "Open file" }} onclick={on_open_file}>
                                                                                                 <Icon icon_id={IconId::LucidePlay} width={"18"} height={"18"} />
                                                                                             </button>
-                                                                                            <button class="icon-btn" type_="button" title="Show in folder" onclick={on_open_folder}>
+                                                                                            <button id={format!("library-item-{}-open-folder", row.id)} class="icon-btn" type_="button" title="Show in folder" onclick={on_open_folder}>
                                                                                                 <Icon icon_id={IconId::LucideFolder} width={"18"} height={"18"} />
                                                                                             </button>
-                                                                                            <button class="icon-btn" type_="button" title="Delete" onclick={on_delete_row}>
+                                                                                            <button id={format!("library-item-{}-delete", row.id)} class="icon-btn" type_="button" title="Delete" onclick={on_delete_row}>
                                                                                                 <Icon icon_id={IconId::LucideTrash2} width={"18"} height={"18"} />
                                                                                             </button>
                                                                                         </div>
@@ -375,18 +379,18 @@ pub fn library_page() -> Html {
                         };
 
                         html!{
-                            <div class="platform-block" key={platform_key.clone()}>
-                                <div class="platform-item" onclick={on_platform_click}>
-                                    <div class="item-left">
-                                        <img class="brand-icon" src={platform_icon_src(&plat_label)} />
-                                        <span class="item-title">{plat_label.clone()}</span>
+                            <div id={format!("{platform_dom}-group")} class="platform-block" key={platform_key.clone()}>
+                                <div id={format!("{platform_dom}-toggle")} class="platform-item" onclick={on_platform_click}>
+                                    <div id={format!("{platform_dom}-identity")} class="item-left">
+                                        <img id={format!("{platform_dom}-icon")} class="brand-icon" src={platform_icon_src(&plat_label)} />
+                                        <span id={format!("{platform_dom}-name")} class="item-title">{plat_label.clone()}</span>
                                     </div>
-                                    <div class="item-right">
-                                        <span>{format!("{} collections | {} items", collections_count, items_count)}</span>
-                                        <button class="icon-btn" type_="button" title="Show in folder" onclick={on_platform_open_folder}>
+                                    <div id={format!("{platform_dom}-actions")} class="item-right">
+                                        <span id={format!("{platform_dom}-count")}>{format!("{} collections | {} items", collections_count, items_count)}</span>
+                                        <button id={format!("{platform_dom}-open-folder")} class="icon-btn" type_="button" title="Show in folder" onclick={on_platform_open_folder}>
                                             <Icon icon_id={IconId::LucideFolder} width={"18"} height={"18"} />
                                         </button>
-                                        <button class="icon-btn" type_="button" title="Delete" onclick={on_platform_delete}>
+                                        <button id={format!("{platform_dom}-delete")} class="icon-btn" type_="button" title="Delete" onclick={on_platform_delete}>
                                             <Icon icon_id={IconId::LucideTrash2} width={"18"} height={"18"} />
                                         </button>
                                     </div>

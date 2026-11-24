@@ -1,10 +1,10 @@
 /// Import a CSV (as text) and add all rows into the DB with status=Backlog.
 /// This is the core function that processes CSV files imported via "Import list" button or drag-and-drop.
 /// Expected CSV header format: Platform,Type,Handle,Media,link
-/// - Platform: "instagram", "tiktok", or "youtube"
+/// - Platform: "patreon", "pinterest", "instagram", "tiktok", or "youtube"
 /// - Type: content source like "recommendation", "playlist", "profile", "bookmarks", etc.
 /// - Handle: username or channel name
-/// - Media: "Pictures" or "Video"
+/// - Media: "pictures", "video", or "link"
 /// - link: the URL to download from
 ///
 /// All imported items are stored in the database with status "Backlog" for later downloading.
@@ -26,10 +26,12 @@ pub async fn import_csv_text(csv_text: String) -> Result<u64, String> {
 fn import_csv_text_blocking(csv_text: String) -> Result<u64, String> {
     println!("[BACKEND] [commands/import.rs] [import_csv_to_db]");
 
-    let mut rdr = csv::ReaderBuilder::new().trim(csv::Trim::All).has_headers(true).from_reader(csv_text.as_bytes());
-
-    // Initialize database connection
     let db = crate::database::Database::new().map_err(|e| e.to_string())?;
+    import_into(&db, &csv_text)
+}
+
+pub(crate) fn import_into(db: &crate::database::Database, csv_text: &str) -> Result<u64, String> {
+    let mut rdr = csv::ReaderBuilder::new().trim(csv::Trim::All).has_headers(true).from_reader(csv_text.as_bytes());
 
     // Batch every insert into one transaction: N implicit transactions (one
     // fsync each) collapse into a single commit. The duplicate check reads the
@@ -60,6 +62,10 @@ fn import_csv_text_blocking(csv_text: String) -> Result<u64, String> {
             let platform = crate::database::Platform::from(platform_s.clone());
             let media = crate::database::MediaKind::from(media_s);
 
+            if platform == crate::database::Platform::Patreon || media == crate::database::MediaKind::Link {
+                crate::utils::url::http_url(&link)?;
+            }
+
             // Determine origin; special-case Pinterest "{user} - {something}" to pinboard
             let origin = if platform_s.eq_ignore_ascii_case("pinterest") {
                 let is_pinboard = handle.contains(" - ");
@@ -71,6 +77,7 @@ fn import_csv_text_blocking(csv_text: String) -> Result<u64, String> {
             } else {
                 match typ_s.as_str() {
                     "recommendation" => crate::database::Origin::Recommendation,
+                    "collection" => crate::database::Origin::Collection,
                     "playlist" => crate::database::Origin::Playlist,
                     "profile" => crate::database::Origin::Profile,
                     "bookmarks" => crate::database::Origin::Bookmarks,
@@ -111,7 +118,12 @@ fn import_csv_text_blocking(csv_text: String) -> Result<u64, String> {
 
             let platform_token = format!("{:?}", platform).to_lowercase();
             let origin_token = format!("{:?}", origin).to_lowercase();
-            if db.link_exists_in_collection(&link, &platform_token, &handle, &origin_token).unwrap_or(false) {
+            if let Some((id, status, path)) = db.existing_collection_item(&link, &platform_token, &handle, &origin_token).map_err(|e| e.to_string())? {
+                // Reimporting an old completed shortcut is an explicit request to download the full post.
+                if platform_token == "patreon" && status == "done" && path.ends_with(".url") && crate::utils::url::patreon_post_id(&link).is_some() {
+                    db.set_status_by_id(id, crate::database::DownloadStatus::Backlog).map_err(|e| e.to_string())?;
+                    inserted += 1;
+                }
                 continue;
             }
 

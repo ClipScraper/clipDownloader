@@ -109,7 +109,13 @@ pub async fn execute_download_job(app: AppHandle, row: DbDownloadRow, overrides:
     }
 
     let mut want_audio_pref = overrides.as_ref().and_then(|ov| ov.force_audio);
-    let (mut cleaned_url, legacy_audio_flag, legacy_flat_flag) = strip_legacy_flags(&row.link);
+    let post_id = utils::url::patreon_post_id(&row.link);
+    let patreon = row.platform == "patreon" || post_id.is_some();
+    let (mut cleaned_url, legacy_audio_flag, legacy_flat_flag) = if patreon || row.media == "link" {
+        (row.link.clone(), false, false)
+    } else {
+        strip_legacy_flags(&row.link)
+    };
     if want_audio_pref.is_none() {
         want_audio_pref = match row.output_format.to_lowercase().as_str() {
             "audio" => Some(true),
@@ -130,13 +136,13 @@ pub async fn execute_download_job(app: AppHandle, row: DbDownloadRow, overrides:
         use_flat = true;
     }
 
-    if cleaned_url.contains("instagram.com/") {
+    if !patreon && cleaned_url.contains("instagram.com/") {
         if let Some((base, _)) = cleaned_url.split_once('?') {
             cleaned_url = base.to_string();
         }
     }
 
-    let site = infer_site(&cleaned_url);
+    let site = if patreon { "patreon" } else { infer_site(&cleaned_url) };
     let collection_dir_label = Database::collection_folder_label(&row.origin, &row.user_handle);
     let dest_dir = if use_flat {
         download_root.clone()
@@ -145,11 +151,32 @@ pub async fn execute_download_job(app: AppHandle, row: DbDownloadRow, overrides:
     };
     let _ = fs::create_dir_all(&dest_dir);
 
-    let is_instagram = cleaned_url.contains("instagram.com/");
-    let is_ig_post_p = is_instagram && cleaned_url.contains("/p/");
-    let is_tt_photo = utils::url::is_tiktok_photo(&cleaned_url);
+    if let Some(post_id) = post_id {
+        let tools = super::patreon::PostTools::for_app(&app, settings.use_system_binaries)?;
+        let path = tools.download(&post_id, &dest_dir, &settings.on_duplicate, |message| {
+            (emitter)(DownloadEvent::Message {id: row.id, message});
+        }).await?;
+        return Ok(Some(path.display().to_string()));
+    }
 
-    let browsers = utils::os::installed_browsers();
+    if patreon || row.media == "link" {
+        let url = utils::url::http_url(&cleaned_url)?;
+        if row.media == "link" || row.media == "image" {
+            let stage = if row.media == "link" { "Checking linked resource" } else { "Downloading image" };
+            (emitter)(DownloadEvent::Message {id: row.id, message: stage.into()});
+            let path = super::direct::download(url, &dest_dir, &row.media, row.id, &settings.on_duplicate).await?;
+            return Ok(Some(path.display().to_string()));
+        }
+    }
+
+    let is_instagram = !patreon && cleaned_url.contains("instagram.com/");
+    let is_ig_post_p = is_instagram && cleaned_url.contains("/p/");
+    let is_tt_photo = !patreon && utils::url::is_tiktok_photo(&cleaned_url);
+
+    let mut browsers = utils::os::installed_browsers();
+    if patreon {
+        browsers.insert(0, ("public access".into(), String::new()));
+    }
     if browsers.is_empty() {
         return Err("No logged-in browsers detected for cookies.".into());
     }
@@ -165,7 +192,7 @@ pub async fn execute_download_job(app: AppHandle, row: DbDownloadRow, overrides:
             } else {
                 cleaned_url.clone()
             };
-            match video::run_yt_dlp_with_progress(&app, &dest_dir, cookie_arg, &effective_url, false, &settings.on_duplicate, row.id, emitter.clone()).await {
+            match video::run_yt_dlp_with_progress(&app, &dest_dir, cookie_arg, &effective_url, false, None, &settings.on_duplicate, row.id, emitter.clone()).await {
                 Ok((true, output)) => {
                     (emitter)(DownloadEvent::Message {
                         id: row.id,
@@ -251,7 +278,7 @@ pub async fn execute_download_job(app: AppHandle, row: DbDownloadRow, overrides:
         } else {
             cleaned_url.clone()
         };
-        match video::run_yt_dlp_with_progress(&app, &dest_dir, cookie_arg, &effective_url, false, &settings.on_duplicate, row.id, emitter.clone()).await {
+        match video::run_yt_dlp_with_progress(&app, &dest_dir, cookie_arg, &effective_url, false, patreon.then_some("https://www.patreon.com/"), &settings.on_duplicate, row.id, emitter.clone()).await {
             Ok((true, output)) => {
                 (emitter)(DownloadEvent::Message {
                     id: row.id,

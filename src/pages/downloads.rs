@@ -135,6 +135,7 @@ fn icon_for_row(row: &ClipRow) -> IconId {
         IconId::LucideImage
     } else {
         match row.media {
+            MediaKind::Link => IconId::LucideLink,
             MediaKind::Pictures => IconId::LucideImage,
             MediaKind::Video => IconId::LucideVideo,
         }
@@ -145,6 +146,7 @@ fn platform_icon_src(p: &str) -> &'static str {
     match p {
         "instagram" => "public/instagram.webp",
         "pinterest" => "public/pinterest.png",
+        "patreon" => "public/patreon.png",
         "tiktok" => "public/tiktok.webp",
         "youtube" => "public/youtube.webp",
         _ => "",
@@ -186,8 +188,8 @@ pub fn downloads_page(props: &Props) -> Html {
 
             let section_id = title.to_lowercase(); // "backlog" or "queue"
 
-            // platform -> (handle, type, Platform, ContentType) -> rows
-            let mut map: BTreeMap<String, BTreeMap<(String, String, Platform, ContentType), Vec<ClipRow>>> = BTreeMap::new();
+            // Keep typed keys with their labels so sorting and queue actions use the same groups.
+            let mut map: BTreeMap<(String, Platform), BTreeMap<(String, String, ContentType), Vec<ClipRow>>> = BTreeMap::new();
 
             // De-dupe by (platform, handle, type, link) within this section
             let mut seen = HashSet::<String>::new();
@@ -204,15 +206,15 @@ pub fn downloads_page(props: &Props) -> Html {
                     continue;
                 }
 
-                map.entry(plat).or_default().entry((r.handle.clone(), typ, r.platform, r.content_type)).or_default().push(r);
+                map.entry((plat, r.platform)).or_default().entry((r.handle.clone(), typ, r.content_type)).or_default().push(r);
             }
 
             html! {
                 <>
-                    <h2 style="margin: 24px 0 8px 16px;">{title}</h2>
-                    <div class="summary">
+                    <h2 id={format!("{section_id}-heading")} style="margin: 24px 0 8px 16px;">{title}</h2>
+                    <div id={format!("{section_id}-summary")} class="summary">
                         {
-                            for map.into_iter().map(|(plat_label, mut col_map)| {
+                            for map.into_iter().map(|((plat_label, platform), mut col_map)| {
                                 for rows in col_map.values_mut() {
                                     rows.sort_by(|a, b| item_label_for_row(a).cmp(&item_label_for_row(b)));
                                 }
@@ -222,6 +224,7 @@ pub fn downloads_page(props: &Props) -> Html {
 
                                 /* ---- platform open state (namespaced) ---- */
                                 let platform_key = format!("{}::{}", section_id, plat_label);
+                                let platform_dom = platform_key.replace("::", "-");
                                 let is_open = expanded_platforms.contains(&platform_key);
 
                                 let on_platform_click = {
@@ -238,13 +241,6 @@ pub fn downloads_page(props: &Props) -> Html {
 
                                 let on_delete_platform = {
                                     let on_delete = on_delete_prop.clone();
-                                    let platform = match plat_label.as_str() {
-                                        "instagram" => Platform::Instagram,
-                                        "tiktok" => Platform::Tiktok,
-                                        "youtube" => Platform::Youtube,
-                                        "pinterest" => Platform::Pinterest,
-                                        _ => Platform::Tiktok,
-                                    };
                                     // Backend deletion honoring delete mode
                                     let platform_str_for_backend = plat_label.clone();
                                     Callback::from(move |e: MouseEvent| {
@@ -261,13 +257,6 @@ pub fn downloads_page(props: &Props) -> Html {
 
                                 let on_queue_platform = {
                                     let on_move = on_move_prop.clone();
-                                    let platform = match plat_label.as_str() {
-                                        "instagram" => Platform::Instagram,
-                                        "tiktok" => Platform::Tiktok,
-                                        "youtube" => Platform::Youtube,
-                                        "pinterest" => Platform::Pinterest,
-                                        _ => Platform::Tiktok,
-                                    };
                                     Callback::from(move |e: MouseEvent| {
                                         e.prevent_default();
                                         e.stop_propagation();
@@ -279,13 +268,6 @@ pub fn downloads_page(props: &Props) -> Html {
 
                                 let on_back_platform = {
                                     let on_move_back = on_move_back_prop.clone();
-                                    let platform = match plat_label.as_str() {
-                                        "instagram" => Platform::Instagram,
-                                        "tiktok" => Platform::Tiktok,
-                                        "youtube" => Platform::Youtube,
-                                        "pinterest" => Platform::Pinterest,
-                                        _ => Platform::Tiktok,
-                                    };
                                     Callback::from(move |e: MouseEvent| {
                                         e.prevent_default();
                                         e.stop_propagation();
@@ -297,11 +279,12 @@ pub fn downloads_page(props: &Props) -> Html {
 
                                 let platform_rows = if is_open {
                                     html! {
-                                        <div>
+                                        <div id={format!("{platform_dom}-collections")}>
                                             {
-                                                for col_map.into_iter().map(|((handle, typ_str, plat, ctype), rows)| {
+                                                for col_map.into_iter().map(|((handle, typ_str, ctype), rows)| {
                                                     /* ---- collection open state (namespaced) ---- */
                                                     let col_key = format!("{}::{}::{}::{}", section_id, plat_label, handle, typ_str);
+                                                    let collection_dom = format!("{platform_dom}-collection-{}", crate::dom::hash_fragment(&col_key));
                                                     let col_open = expanded_collections.contains(&col_key);
 
                                                     let on_col_click = {
@@ -318,7 +301,7 @@ pub fn downloads_page(props: &Props) -> Html {
 
                                                     let on_delete_collection = {
                                                         let on_delete = on_delete_prop.clone();
-                                                        let plat = plat.clone();
+                                                        let plat = platform;
                                                         let handle = handle.clone();
                                                         let ctype = ctype.clone();
                                                         // Backend deletion honoring delete mode
@@ -345,33 +328,13 @@ pub fn downloads_page(props: &Props) -> Html {
 
                                                     let on_queue_collection = {
                                                         let on_move = on_move_prop.clone();
-                                                        let plat_label_s = plat_label.clone();
                                                         let handle_s = handle.clone();
-                                                        let typ_s = typ_str.clone();
                                                         Callback::from(move |e: MouseEvent| {
                                                             e.prevent_default();
                                                             e.stop_propagation();
                                                             if enable_queue_action {
                                                                 on_move.emit(MoveItem::Collection(
-                                                                    match plat_label_s.as_str() {
-                                                                        "instagram"         => Platform::Instagram,
-                                                                        "tiktok"            => Platform::Tiktok,
-                                                                        "youtube"           => Platform::Youtube,
-                                                                        "pinterest"         => Platform::Pinterest,
-                                                                        _                   => Platform::Tiktok,
-                                                                    },
-                                                                    handle_s.clone(),
-                                                                    match typ_s.as_str() {
-                                                                        "liked"             => ContentType::Liked,
-                                                                        "reposts"           => ContentType::Reposts,
-                                                                        "profile"           => ContentType::Profile,
-                                                                        "bookmarks"         => ContentType::Bookmarks,
-                                                                        "playlist"          => ContentType::Playlist,
-                                                                        "recommendation"    => ContentType::Recommendation,
-                                                                        "manual"            => ContentType::Manual,
-                                                                        "pinboard"          => ContentType::Pinboard,
-                                                                        _                   => ContentType::Other,
-                                                                    }
+                                                                    platform, handle_s.clone(), ctype
                                                                 ));
                                                             }
                                                         })
@@ -379,58 +342,38 @@ pub fn downloads_page(props: &Props) -> Html {
 
                                                     let on_back_collection = {
                                                         let on_move_back = on_move_back_prop.clone();
-                                                        let plat_label_s = plat_label.clone();
                                                         let handle_s = handle.clone();
-                                                        let typ_s = typ_str.clone();
                                                         Callback::from(move |e: MouseEvent| {
                                                             e.prevent_default();
                                                             e.stop_propagation();
                                                             if !enable_queue_action {
                                                                 on_move_back.emit(crate::app::MoveBackItem::Collection(
-                                                                    match plat_label_s.as_str() {
-                                                                        "instagram"         => Platform::Instagram,
-                                                                        "tiktok"            => Platform::Tiktok,
-                                                                        "youtube"           => Platform::Youtube,
-                                                                        "pinterest"         => Platform::Pinterest,
-                                                                        _                   => Platform::Tiktok,
-                                                                    },
-                                                                    handle_s.clone(),
-                                                                    match typ_s.as_str() {
-                                                                        "liked"             => ContentType::Liked,
-                                                                        "reposts"           => ContentType::Reposts,
-                                                                        "profile"           => ContentType::Profile,
-                                                                        "bookmarks"         => ContentType::Bookmarks,
-                                                                        "playlist"          => ContentType::Playlist,
-                                                                        "recommendation"    => ContentType::Recommendation,
-                                                                        "manual"            => ContentType::Manual,
-                                                                        "pinboard"          => ContentType::Pinboard,
-                                                                        _                   => ContentType::Other,
-                                                                    }
+                                                                    platform, handle_s.clone(), ctype
                                                                 ));
                                                             }
                                                         })
                                                     };
 
                                                     html!{
-                                                        <div class="collection-block" key={col_key.clone()}>
-                                                            <div class="collection-item" onclick={on_col_click}>
-                                                                <div class="item-left">
-                                                                    <span class="item-title">{format!("{} | {}", handle, typ_str)}</span>
+                                                        <div id={format!("{collection_dom}-group")} class="collection-block" key={col_key.clone()}>
+                                                            <div id={format!("{collection_dom}-toggle")} class="collection-item" onclick={on_col_click}>
+                                                                <div id={format!("{collection_dom}-identity")} class="item-left">
+                                                                    <span id={format!("{collection_dom}-name")} class="item-title">{format!("{} | {}", handle, typ_str)}</span>
                                                                 </div>
-                                                                    <div class="item-right">
-                                                                    <span>{format!("{} items", rows.len())}</span>
-                                                                    <button class="icon-btn" type_="button" title="Delete" onclick={on_delete_collection}>
+                                                                    <div id={format!("{collection_dom}-actions")} class="item-right">
+                                                                    <span id={format!("{collection_dom}-count")}>{format!("{} items", rows.len())}</span>
+                                                                    <button id={format!("{collection_dom}-delete")} class="icon-btn" type_="button" title="Delete" onclick={on_delete_collection}>
                                                                         <Icon icon_id={IconId::LucideTrash2} width={"18"} height={"18"} />
                                                                     </button>
                                                                     { if !enable_queue_action {
-                                                                        html!{<button class="icon-btn" type_="button" title="Move back to backlog" onclick={on_back_collection.clone()}><Icon icon_id={IconId::LucideRotateCcw} width={"18"} height={"18"} /></button>}
+                                                                        html!{<button id={format!("{collection_dom}-back-to-backlog")} class="icon-btn" type_="button" title="Move back to backlog" onclick={on_back_collection.clone()}><Icon icon_id={IconId::LucideRotateCcw} width={"18"} height={"18"} /></button>}
                                                                     } else {
                                                                         html!{}
                                                                     } }
                                                                     {
                                                                         if enable_queue_action {
                                                                             html!{
-                                                                                <button class="icon-btn" type_="button" title="Queue" onclick={on_queue_collection.clone()}>
+                                                                                <button id={format!("{collection_dom}-queue")} class="icon-btn" type_="button" title="Queue" onclick={on_queue_collection.clone()}>
                                                                                     <Icon icon_id={IconId::LucideDownload} width={"18"} height={"18"} />
                                                                                 </button>
                                                                             }
@@ -444,8 +387,8 @@ pub fn downloads_page(props: &Props) -> Html {
                                                             {
                                                                 if col_open {
                                                                     html!{
-                                                                        <div class="rows-card">
-                                                                            <ul class="rows">
+                                                                        <div id={format!("{collection_dom}-items")} class="rows-card">
+                                                                            <ul id={format!("{collection_dom}-list")} class="rows">
                                                                                 {
                                                                                     for rows.into_iter().map(|row| {
                                                                                         let on_delete_row = {
@@ -476,7 +419,8 @@ pub fn downloads_page(props: &Props) -> Html {
                                                                                         };
                                                                                         // Determine current effective format (override -> row value)
                                                                                         let effective_fmt: Option<String> = (*output_overrides).get(&row.link).cloned().or_else(|| row.output_format.clone());
-                                                                                        let row_icon = if effective_fmt.as_deref() == Some("audio") {
+                                                                                        let fixed_media = row.media == MediaKind::Link || (row.platform == Platform::Patreon && row.media == MediaKind::Pictures);
+                                                                                        let row_icon = if !fixed_media && effective_fmt.as_deref() == Some("audio") {
                                                                                             IconId::LucideMusic
                                                                                         } else {
                                                                                             icon_for_row(&row)
@@ -506,16 +450,16 @@ pub fn downloads_page(props: &Props) -> Html {
                                                                                             })
                                                                                         };
                                                                                         html!{
-                                                                                            <li class="row-line" key={row.link.clone()}>
-                                                                                                <span onclick={on_click_toggle.clone()}><Icon icon_id={row_icon} width={"16"} height={"16"} /></span>
-                                                                                                <a class="link-text" href={row.link.clone()} target="_blank">
+                                                                                            <li id={format!("downloads-item-{}-item", row.id)} class="row-line" key={row.link.clone()}>
+                                                                                                <span id={format!("downloads-item-{}-media-type", row.id)} title={if row.media == MediaKind::Link { "Link" } else { "" }} onclick={(!fixed_media).then_some(on_click_toggle.clone())}><Icon icon_id={row_icon} width={"16"} height={"16"} /></span>
+                                                                                                <a id={format!("downloads-item-{}-source-link", row.id)} class="link-text" href={row.link.clone()} target="_blank">
                                                                                                     {item_label_for_row(&row)}
                                                                                                 </a>
-                                                                                                <div class="row-actions">
-                                                                                                    <button class="icon-btn" type_="button" title="Delete" onclick={on_delete_row}>
+                                                                                                <div id={format!("downloads-item-{}-actions", row.id)} class="row-actions">
+                                                                                                    <button id={format!("downloads-item-{}-delete", row.id)} class="icon-btn" type_="button" title="Delete" onclick={on_delete_row}>
                                                                                                         <Icon icon_id={IconId::LucideTrash2} width={"18"} height={"18"} />
                                                                                                     </button>
-                                                                                                    { if !enable_queue_action { html!{ <button class="icon-btn" type_="button" title="Move back to backlog" onclick={
+                                                                                                    { if !enable_queue_action { html!{ <button id={format!("downloads-item-{}-back-to-backlog", row.id)} class="icon-btn" type_="button" title="Move back to backlog" onclick={
                                                                                                         {
                                                                                                             let on_move_back = on_move_back_prop.clone();
                                                                                                             let link = row.link.clone();
@@ -533,7 +477,7 @@ pub fn downloads_page(props: &Props) -> Html {
                                                                                                     {
                                                                                                         if enable_queue_action {
                                                                                                             html!{
-                                                                                                                <button class="icon-btn" type_="button" title="Queue" onclick={on_queue_row}>
+                                                                                                                <button id={format!("downloads-item-{}-queue", row.id)} class="icon-btn" type_="button" title="Queue" onclick={on_queue_row}>
                                                                                                                     <Icon icon_id={IconId::LucideDownload} width={"18"} height={"18"} />
                                                                                                                 </button>
                                                                                                             }
@@ -564,26 +508,26 @@ pub fn downloads_page(props: &Props) -> Html {
                                 };
 
                                 html! {
-                                    <div class="platform-block" key={platform_key.clone()}>
-                                        <div class="platform-item" onclick={on_platform_click}>
-                                            <div class="item-left">
-                                                <img class="brand-icon" src={platform_icon_src(&plat_label)} />
-                                                <span class="item-title">{plat_label.clone()}</span>
+                                    <div id={format!("{platform_dom}-group")} class="platform-block" key={platform_key.clone()}>
+                                        <div id={format!("{platform_dom}-toggle")} class="platform-item" onclick={on_platform_click}>
+                                            <div id={format!("{platform_dom}-identity")} class="item-left">
+                                                <img id={format!("{platform_dom}-icon")} class="brand-icon" src={platform_icon_src(&plat_label)} />
+                                                <span id={format!("{platform_dom}-name")} class="item-title">{plat_label.clone()}</span>
                                             </div>
-                                            <div class="item-right">
-                                                <span>{format!("{} collections | {} items", collections_count, bookmarks_count)}</span>
-                                                <button class="icon-btn" type_="button" title="Delete" onclick={on_delete_platform}>
+                                            <div id={format!("{platform_dom}-actions")} class="item-right">
+                                                <span id={format!("{platform_dom}-count")}>{format!("{} collections | {} items", collections_count, bookmarks_count)}</span>
+                                                <button id={format!("{platform_dom}-delete")} class="icon-btn" type_="button" title="Delete" onclick={on_delete_platform}>
                                                     <Icon icon_id={IconId::LucideTrash2} width={"18"} height={"18"} />
                                                 </button>
                                                         { if !enable_queue_action {
-                                                            html!{<button class="icon-btn" type_="button" title="Move back to backlog" onclick={on_back_platform}><Icon icon_id={IconId::LucideRotateCcw} width={"18"} height={"18"} /></button>}
+                                                            html!{<button id={format!("{platform_dom}-back-to-backlog")} class="icon-btn" type_="button" title="Move back to backlog" onclick={on_back_platform}><Icon icon_id={IconId::LucideRotateCcw} width={"18"} height={"18"} /></button>}
                                                         } else {
                                                             html!{}
                                                         } }
                                                 {
                                                     if enable_queue_action {
                                                         html!{
-                                                            <button class="icon-btn" type_="button" title="Queue" onclick={on_queue_platform}>
+                                                            <button id={format!("{platform_dom}-queue")} class="icon-btn" type_="button" title="Queue" onclick={on_queue_platform}>
                                                                 <Icon icon_id={IconId::LucideDownload} width={"18"} height={"18"} />
                                                             </button>
                                                         }
@@ -614,25 +558,26 @@ pub fn downloads_page(props: &Props) -> Html {
         move |rows_in: Vec<ClipRow>| -> Html {
             use std::collections::BTreeMap;
 
-            let mut map: BTreeMap<String, BTreeMap<(String, String), Vec<ClipRow>>> = BTreeMap::new();
+            let mut map: BTreeMap<(String, Platform), BTreeMap<(String, String, ContentType), Vec<ClipRow>>> = BTreeMap::new();
             for mut r in rows_in {
                 if r.handle.trim().is_empty() {
                     r.handle = "Unknown".into();
                 }
                 let plat = platform_str(&r.platform).to_string();
                 let typ = content_type_str(&r.content_type).to_string();
-                map.entry(plat).or_default().entry((r.handle.clone(), typ)).or_default().push(r);
+                map.entry((plat, r.platform)).or_default().entry((r.handle.clone(), typ, r.content_type)).or_default().push(r);
             }
 
             html! {
                 <>
-                    <h2 style="margin: 24px 0 8px 16px;">{"Issues"}</h2>
-                    <div class="summary">
+                    <h2 id="issues-heading" style="margin: 24px 0 8px 16px;">{"Issues"}</h2>
+                    <div id="issues-summary" class="summary">
                         {
-                            for map.into_iter().map(|(plat_label, col_map)| {
+                            for map.into_iter().map(|((plat_label, platform), col_map)| {
                                 let total: usize = col_map.values().map(|v| v.len()).sum();
                                 let col_count = col_map.len();
                                 let platform_key = format!("issues::{}", plat_label);
+                                let platform_dom = platform_key.replace("::", "-");
                                 let is_open = expanded_platforms.contains(&platform_key);
 
                                 let on_platform_click = {
@@ -649,13 +594,6 @@ pub fn downloads_page(props: &Props) -> Html {
 
                                 let on_delete_platform = {
                                     let on_delete = on_delete_prop.clone();
-                                    let platform = match plat_label.as_str() {
-                                        "instagram" => Platform::Instagram,
-                                        "tiktok"    => Platform::Tiktok,
-                                        "youtube"   => Platform::Youtube,
-                                        "pinterest" => Platform::Pinterest,
-                                        _           => Platform::Tiktok,
-                                    };
                                     let plat_s = plat_label.clone();
                                     Callback::from(move |e: MouseEvent| {
                                         e.prevent_default();
@@ -671,10 +609,11 @@ pub fn downloads_page(props: &Props) -> Html {
 
                                 let platform_rows = if is_open {
                                     html! {
-                                        <div>
+                                        <div id={format!("{platform_dom}-collections")}>
                                             {
-                                                for col_map.into_iter().map(|((handle, typ_str), rows)| {
+                                                for col_map.into_iter().map(|((handle, typ_str, ctype), rows)| {
                                                     let col_key = format!("issues::{}::{}::{}", plat_label, handle, typ_str);
+                                                    let collection_dom = format!("{platform_dom}-collection-{}", crate::dom::hash_fragment(&col_key));
                                                     let col_open = expanded_collections.contains(&col_key);
 
                                                     let on_col_click = {
@@ -694,24 +633,6 @@ pub fn downloads_page(props: &Props) -> Html {
                                                         let plat_s = plat_label.clone();
                                                         let handle_s = handle.clone();
                                                         let typ_s = typ_str.clone();
-                                                        let platform = match plat_label.as_str() {
-                                                            "instagram" => Platform::Instagram,
-                                                            "tiktok"    => Platform::Tiktok,
-                                                            "youtube"   => Platform::Youtube,
-                                                            "pinterest" => Platform::Pinterest,
-                                                            _           => Platform::Tiktok,
-                                                        };
-                                                        let ctype = match typ_str.as_str() {
-                                                            "liked"          => ContentType::Liked,
-                                                            "reposts"        => ContentType::Reposts,
-                                                            "profile"        => ContentType::Profile,
-                                                            "bookmarks"      => ContentType::Bookmarks,
-                                                            "playlist"       => ContentType::Playlist,
-                                                            "recommendation" => ContentType::Recommendation,
-                                                            "manual"         => ContentType::Manual,
-                                                            "pinboard"       => ContentType::Pinboard,
-                                                            _                => ContentType::Other,
-                                                        };
                                                         Callback::from(move |e: MouseEvent| {
                                                             e.prevent_default();
                                                             e.stop_propagation();
@@ -732,14 +653,14 @@ pub fn downloads_page(props: &Props) -> Html {
                                                     };
 
                                                     html! {
-                                                        <div class="collection-block" key={col_key.clone()}>
-                                                            <div class="collection-item" onclick={on_col_click}>
-                                                                <div class="item-left">
-                                                                    <span class="item-title">{format!("{} | {}", handle, typ_str)}</span>
+                                                        <div id={format!("{collection_dom}-group")} class="collection-block" key={col_key.clone()}>
+                                                            <div id={format!("{collection_dom}-toggle")} class="collection-item" onclick={on_col_click}>
+                                                                <div id={format!("{collection_dom}-identity")} class="item-left">
+                                                                    <span id={format!("{collection_dom}-name")} class="item-title">{format!("{} | {}", handle, typ_str)}</span>
                                                                 </div>
-                                                                <div class="item-right">
-                                                                    <span>{format!("{} items", rows.len())}</span>
-                                                                    <button class="icon-btn" type_="button" title="Delete" onclick={on_delete_col}>
+                                                                <div id={format!("{collection_dom}-actions")} class="item-right">
+                                                                    <span id={format!("{collection_dom}-count")}>{format!("{} items", rows.len())}</span>
+                                                                    <button id={format!("{collection_dom}-delete")} class="icon-btn" type_="button" title="Delete" onclick={on_delete_col}>
                                                                         <Icon icon_id={IconId::LucideTrash2} width={"18"} height={"18"} />
                                                                     </button>
                                                                 </div>
@@ -747,8 +668,8 @@ pub fn downloads_page(props: &Props) -> Html {
                                                             {
                                                                 if col_open {
                                                                     html! {
-                                                                        <div class="rows-card">
-                                                                            <ul class="rows">
+                                                                        <div id={format!("{collection_dom}-items")} class="rows-card">
+                                                                            <ul id={format!("{collection_dom}-list")} class="rows">
                                                                                 {
                                                                                     for rows.into_iter().map(|row| {
                                                                                         let issue_id = row.id;
@@ -784,23 +705,23 @@ pub fn downloads_page(props: &Props) -> Html {
                                                                                             })
                                                                                         };
                                                                                         html! {
-                                                                                            <li class="row-line issue-line" key={row.link.clone()}>
-                                                                                                <div class="issue-copy">
-                                                                                                    <div class="issue-title">
-                                                                                                        <span class="link-text">{item_label_for_row(&row)}</span>
+                                                                                            <li id={format!("downloads-item-{}-item", row.id)} class="row-line issue-line" key={row.link.clone()}>
+                                                                                                <div id={format!("downloads-item-{}-details", row.id)} class="issue-copy">
+                                                                                                    <div id={format!("downloads-item-{}-title", row.id)} class="issue-title">
+                                                                                                        <span id={format!("downloads-item-{}-label", row.id)} class="link-text">{item_label_for_row(&row)}</span>
                                                                                                     </div>
-                                                                                                    <div class="issue-reason">
+                                                                                                    <div id={format!("downloads-item-{}-reason", row.id)} class="issue-reason">
                                                                                                         {row.last_error.clone().unwrap_or_else(|| "Download failed".into())}
                                                                                                     </div>
                                                                                                 </div>
-                                                                                                <div class="row-actions active-status issue-actions">
-                                                                                                    <button class="icon-btn" type_="button" title="Delete" onclick={on_delete_row}>
+                                                                                                <div id={format!("downloads-item-{}-actions", row.id)} class="row-actions active-status issue-actions">
+                                                                                                    <button id={format!("downloads-item-{}-delete", row.id)} class="icon-btn" type_="button" title="Delete" onclick={on_delete_row}>
                                                                                                         <Icon icon_id={IconId::LucideTrash2} width={"18"} height={"18"} />
                                                                                                     </button>
-                                                                                                    <button class="icon-btn" type_="button" title="Move back to backlog" onclick={on_backlog_row}>
+                                                                                                    <button id={format!("downloads-item-{}-back-to-backlog", row.id)} class="icon-btn" type_="button" title="Move back to backlog" onclick={on_backlog_row}>
                                                                                                         <Icon icon_id={IconId::LucideRotateCcw} width={"18"} height={"18"} />
                                                                                                     </button>
-                                                                                                    <button class="icon-btn" type_="button" title="Retry" onclick={on_retry_row}>
+                                                                                                    <button id={format!("downloads-item-{}-retry", row.id)} class="icon-btn" type_="button" title="Retry" onclick={on_retry_row}>
                                                                                                         <Icon icon_id={IconId::LucideDownload} width={"18"} height={"18"} />
                                                                                                     </button>
                                                                                                 </div>
@@ -826,15 +747,15 @@ pub fn downloads_page(props: &Props) -> Html {
                                 };
 
                                 html! {
-                                    <div class="platform-block" key={platform_key.clone()}>
-                                        <div class="platform-item" onclick={on_platform_click}>
-                                            <div class="item-left">
-                                                <img class="brand-icon" src={platform_icon_src(&plat_label)} />
-                                                <span class="item-title">{plat_label.clone()}</span>
+                                    <div id={format!("{platform_dom}-group")} class="platform-block" key={platform_key.clone()}>
+                                        <div id={format!("{platform_dom}-toggle")} class="platform-item" onclick={on_platform_click}>
+                                            <div id={format!("{platform_dom}-identity")} class="item-left">
+                                                <img id={format!("{platform_dom}-icon")} class="brand-icon" src={platform_icon_src(&plat_label)} />
+                                                <span id={format!("{platform_dom}-name")} class="item-title">{plat_label.clone()}</span>
                                             </div>
-                                            <div class="item-right">
-                                                <span>{format!("{} collections | {} items", col_count, total)}</span>
-                                                <button class="icon-btn" type_="button" title="Delete" onclick={on_delete_platform}>
+                                            <div id={format!("{platform_dom}-actions")} class="item-right">
+                                                <span id={format!("{platform_dom}-count")}>{format!("{} collections | {} items", col_count, total)}</span>
+                                                <button id={format!("{platform_dom}-delete")} class="icon-btn" type_="button" title="Delete" onclick={on_delete_platform}>
                                                     <Icon icon_id={IconId::LucideTrash2} width={"18"} height={"18"} />
                                                 </button>
                                             </div>
@@ -852,9 +773,9 @@ pub fn downloads_page(props: &Props) -> Html {
 
     html! {
         <main id="downloads-page" class="container downloads">
-            <div style="display:flex; align-items:center; gap:8px; margin: 24px 0 8px 16px;">
-                <h2 style="margin:0;">{"Downloading"}</h2>
-                <button class="icon-btn" type_="button" onclick={on_toggle_pause_click_header} title={ if props.paused {
+            <div id="downloads-active-header" style="display:flex; align-items:center; gap:8px; margin: 24px 0 8px 16px;">
+                <h2 id="downloads-heading" style="margin:0;">{"Downloading"}</h2>
+                <button id="downloads-toggle-pause" class="icon-btn" type_="button" onclick={on_toggle_pause_click_header} title={ if props.paused {
                     "Play"
                 } else {
                     "Pause"
@@ -872,8 +793,8 @@ pub fn downloads_page(props: &Props) -> Html {
             {
                 if props.loading && !has_any_rows {
                     html! {
-                        <div class="summary">
-                            <p style="margin: 0 0 8px 16px; opacity: 0.85;">{"Loading downloads..."}</p>
+                        <div id="downloads-loading-summary" class="summary">
+                            <p id="downloads-loading-message" style="margin: 0 0 8px 16px; opacity: 0.85;">{"Loading downloads..."}</p>
                         </div>
                     }
                 } else {
@@ -884,22 +805,22 @@ pub fn downloads_page(props: &Props) -> Html {
             {
                 if !props.active.is_empty() {
                     html!{
-                        <div class="summary">
-                            <div class="rows-card no-indent">
-                                <ul class="rows">
+                        <div id="downloads-summary" class="summary">
+                            <div id="downloads-active-card" class="rows-card no-indent">
+                                <ul id="downloads-active-list" class="rows">
                                     {
                                         for props.active.iter().map(|active| {
                                             let plat_label = platform_str(&active.row.platform).to_string();
                                             html! {
-                                                <li class="row-line">
-                                                    <img class="brand-icon" src={platform_icon_src(&plat_label)} />
-                                                    <span class="link-text">{collection_title(&active.row)}</span>
-                                                    <span class="link-text" style="opacity:0.9;">{" - "}{item_label_for_row(&active.row)}</span>
-                                                    <div class="row-actions active-status">
-                                                        <span class="stage-text">{&active.stage}</span>
+                                                <li id={format!("downloads-item-{}-item", active.row.id)} class="row-line">
+                                                    <img id={format!("downloads-item-{}-icon", active.row.id)} class="brand-icon" src={platform_icon_src(&plat_label)} />
+                                                    <span id={format!("downloads-item-{}-collection", active.row.id)} class="link-text">{collection_title(&active.row)}</span>
+                                                    <span id={format!("downloads-item-{}-label", active.row.id)} class="link-text" style="opacity:0.9;">{" - "}{item_label_for_row(&active.row)}</span>
+                                                    <div id={format!("downloads-item-{}-actions", active.row.id)} class="row-actions active-status">
+                                                        <span id={format!("downloads-item-{}-stage", active.row.id)} class="stage-text">{&active.stage}</span>
                                                         {
                                                             if let Some(progress) = &active.progress {
-                                                                html! {<span class="progress-text">{progress}</span>}
+                                                                html! {<span id={format!("downloads-item-{}-progress", active.row.id)} class="progress-text">{progress}</span>}
                                                             } else {
                                                                 html! {}
                                                             }

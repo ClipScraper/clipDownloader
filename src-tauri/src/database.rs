@@ -170,14 +170,10 @@ pub fn list_all_ui_conn(conn: &Connection) -> Result<Vec<UiBacklogRow>> {
         let last_error: Option<String> = row.get(9).ok();
 
         let content_type = match origin.as_str() {
-            "recommendation" | "playlist" | "profile" | "bookmarks" | "liked" | "reposts" => origin.clone(),
+            "collection" | "recommendation" | "playlist" | "profile" | "bookmarks" | "liked" | "reposts" => origin.clone(),
             _ => "recommendation".to_string(),
         };
-        let media_token = if media == "image" || media == "images" {
-            "pictures".to_string()
-        } else {
-            "video".to_string()
-        };
+        let media_token = ui_media_token(&media);
 
         Ok(UiBacklogRow {id, platform, content_type, handle, media: media_token, link, output_format, status: DownloadStatus::from_db(status_raw), last_error})
     })?;
@@ -189,6 +185,14 @@ pub fn list_all_ui_conn(conn: &Connection) -> Result<Vec<UiBacklogRow>> {
     Ok(out)
 }
 
+fn ui_media_token(media: &str) -> String {
+    match media {
+        "image" | "images" => "pictures",
+        "link" => "link",
+        _ => "video",
+    }.into()
+}
+
 /* ----------------------------- enums & models ----------------------------- */
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum Platform {
@@ -196,12 +200,14 @@ pub enum Platform {
     Tiktok,
     Instagram,
     Pinterest,
+    Patreon,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum MediaKind {
     Image,
     Video,
+    Link,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -211,6 +217,7 @@ pub enum Origin {
     Profile,
     Bookmarks,
     Pinboard,
+    Collection,
     Other,
     Manual,
 }
@@ -284,7 +291,7 @@ pub struct UiBacklogRow {
     /// "instagram" | "tiktok" | "youtube"
     pub platform: String,
     #[serde(rename = "Type")]
-    /// "recommendation" | "playlist" | "profile" | "bookmarks" | "liked" | "reposts"
+    /// "collection" | "recommendation" | "playlist" | "profile" | "bookmarks" | "liked" | "reposts"
     pub content_type: String,
     #[serde(rename = "Handle")]
     /// username / channel
@@ -333,6 +340,7 @@ impl From<String> for Platform {
             "youtube" => Platform::Youtube,
             "tiktok" => Platform::Tiktok,
             "instagram" => Platform::Instagram,
+            "patreon" => Platform::Patreon,
             "pinterest" => Platform::Pinterest,
             _ => Platform::Youtube, // Default fallback
         }
@@ -341,7 +349,8 @@ impl From<String> for Platform {
 impl From<String> for MediaKind {
     fn from(s: String) -> Self {
         match s.to_lowercase().as_str() {
-            "image" | "images" => MediaKind::Image,
+            "link" => MediaKind::Link,
+            "image" | "images" | "picture" | "pictures" => MediaKind::Image,
             "video" | "videos" => MediaKind::Video,
             _ => MediaKind::Video, // Default fallback
         }
@@ -355,6 +364,7 @@ impl From<String> for Origin {
             "playlist" => Origin::Playlist,
             "profile" => Origin::Profile,
             "bookmarks" => Origin::Bookmarks,
+            "collection" => Origin::Collection,
             "pinboard" => Origin::Pinboard,
             "other" => Origin::Other,
             "manual" => Origin::Manual,
@@ -486,6 +496,15 @@ fn normalize_link(mut s: String) -> String {
     s
 }
 
+fn same_collection_url(platform: &str, stored: &str, requested: &str, normalized: &str) -> bool {
+    if platform == "patreon" {
+        stored == requested || crate::utils::url::patreon_post_id(requested)
+            .is_some_and(|id| crate::utils::url::patreon_post_id(stored).as_ref() == Some(&id))
+    } else {
+        normalize_link(stored.to_string()) == normalized
+    }
+}
+
 /* -------------------------------- database -------------------------------- */
 impl Database {
     pub fn new() -> Result<Self> {
@@ -495,13 +514,13 @@ impl Database {
 
     pub fn find_done_row_by_link(&self, link: &str) -> Result<Option<(i64, String)>> {
         let norm = normalize_link(link.to_string());
-        let mut stmt = self.conn.prepare("SELECT id, link, path FROM downloads WHERE status='done' ORDER BY id")?;
+        let mut stmt = self.conn.prepare("SELECT id, link, path, platform FROM downloads WHERE status='done' ORDER BY id")?;
         let mut rows = stmt.query([])?;
         while let Some(r) = rows.next()? {
             let id: i64 = r.get(0)?;
             let db_link: String = r.get(1)?;
             let path: String = r.get(2)?;
-            if normalize_link(db_link) == norm {
+            if same_collection_url(&r.get::<_, String>(3)?, &db_link, link, &norm) {
                 return Ok(Some((id, path)));
             }
         }
@@ -655,13 +674,13 @@ impl Database {
         let norm = normalize_link(link.to_string());
 
         // find oldest queued row (or backlog) whose normalized link matches
-        let mut stmt = self.conn.prepare("SELECT id, link FROM downloads WHERE status IN ('queued', 'queue', 'backlog') ORDER BY CASE status WHEN 'queued' THEN 0 WHEN 'queue' THEN 0 ELSE 1 END, id")?;
+        let mut stmt = self.conn.prepare("SELECT id, link, platform FROM downloads WHERE status IN ('queued', 'queue', 'backlog') ORDER BY CASE status WHEN 'queued' THEN 0 WHEN 'queue' THEN 0 ELSE 1 END, id")?;
         let mut rows = stmt.query([])?;
         let mut target_id: Option<i64> = None;
         while let Some(row) = rows.next()? {
             let id: i64 = row.get(0)?;
             let db_link: String = row.get(1)?;
-            if normalize_link(db_link) == norm {
+            if same_collection_url(&row.get::<_, String>(2)?, &db_link, link, &norm) {
                 target_id = Some(id);
                 break;
             }
@@ -686,17 +705,17 @@ impl Database {
         mark_id_done_conn(&self.conn, id, path)
     }
 
-    pub fn link_exists_in_collection(&self, link: &str, platform: &str, user_handle: &str, origin: &str) -> Result<bool> {
+    pub fn existing_collection_item(&self, link: &str, platform: &str, user_handle: &str, origin: &str) -> Result<Option<(i64, String, String)>> {
         let norm = normalize_link(link.to_string());
-        let mut stmt = self.conn.prepare("SELECT link FROM downloads WHERE platform = ?1 COLLATE NOCASE AND (user_handle = ?2 COLLATE NOCASE OR (?2 = 'Unknown' AND (user_handle = '' OR user_handle IS NULL))) AND origin = ?3 COLLATE NOCASE")?;
+        let mut stmt = self.conn.prepare("SELECT link, id, status, path FROM downloads WHERE platform = ?1 COLLATE NOCASE AND (user_handle = ?2 COLLATE NOCASE OR (?2 = 'Unknown' AND (user_handle = '' OR user_handle IS NULL))) AND origin = ?3 COLLATE NOCASE")?;
         let mut rows = stmt.query([platform, user_handle, origin])?;
         while let Some(row) = rows.next()? {
             let db_link: String = row.get(0)?;
-            if normalize_link(db_link) == norm {
-                return Ok(true);
+            if same_collection_url(platform, &db_link, link, &norm) {
+                return Ok(Some((row.get(1)?, row.get(2)?, row.get(3)?)));
             }
         }
-        Ok(false)
+        Ok(None)
     }
 
     pub fn find_id_by_link(&self, link: &str) -> Result<Option<i64>> {
@@ -721,7 +740,7 @@ impl Database {
             let origin: String = r.get(1)?;
             let user_handle: String = r.get(2)?;
             let db_link: String = r.get(3)?;
-            if normalize_link(db_link) == norm {
+            if same_collection_url(&platform, &db_link, link, &norm) {
                 return Ok(Some(CollectionInfo {platform, origin, user_handle}));
             }
         }
@@ -742,7 +761,9 @@ impl Database {
         } else {
             u
         };
-        format!("{o} - {u}")
+        format!("{o} - {u}").chars().map(|ch| {
+            if ch.is_control() || matches!(ch, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') { '_' } else { ch }
+        }).take(160).collect::<String>().trim_end_matches(['.', ' ']).to_string()
     }
 
     pub fn find_download_by_id(&self, id: i64) -> Result<Option<DbDownloadRow>> {
@@ -772,11 +793,7 @@ impl Database {
             let last_error: Option<String> = row.get(9).ok();
 
             let content_type = origin.clone();
-            let media_token = if media == "image" || media == "images" {
-                "pictures".to_string()
-            } else {
-                "video".to_string()
-            };
+            let media_token = ui_media_token(&media);
 
             Ok(UiBacklogRow {id, platform, content_type, handle, media: media_token, link, output_format, status: DownloadStatus::from_db(status_raw), last_error})
         })?;
@@ -805,14 +822,10 @@ impl Database {
             let last_error: Option<String> = row.get(9).ok();
 
             let content_type = match origin.as_str() {
-                "recommendation" | "playlist" | "profile" | "bookmarks" | "liked" | "reposts" => origin.clone(),
+                "collection" | "recommendation" | "playlist" | "profile" | "bookmarks" | "liked" | "reposts" => origin.clone(),
                 _ => "recommendation".to_string(),
             };
-            let media_token = if media == "image" || media == "images" {
-                "pictures".to_string()
-            } else {
-                "video".to_string()
-            };
+            let media_token = ui_media_token(&media);
 
             Ok(UiBacklogRow {id, platform, content_type, handle, media: media_token, link, output_format, status: DownloadStatus::from_db(status_raw), last_error})
         })?;
@@ -840,14 +853,10 @@ impl Database {
             let last_error: Option<String> = row.get(9).ok();
 
             let content_type = match origin.as_str() {
-                "recommendation" | "playlist" | "profile" | "bookmarks" | "liked" | "reposts" => origin.clone(),
+                "collection" | "recommendation" | "playlist" | "profile" | "bookmarks" | "liked" | "reposts" => origin.clone(),
                 _ => "recommendation".to_string(),
             };
-            let media_token = if media == "image" || media == "images" {
-                "pictures".to_string()
-            } else {
-                "video".to_string()
-            };
+            let media_token = ui_media_token(&media);
 
             Ok(UiBacklogRow {id, platform, content_type, handle, media: media_token, link, output_format, status: DownloadStatus::from_db(status_raw), last_error})
         })?;
@@ -902,5 +911,47 @@ impl Database {
     pub fn move_platform_to_backlog(&self, platform: &str) -> Result<usize> {
         let n = self.conn.execute("UPDATE downloads SET status='backlog' WHERE platform = ?1 COLLATE NOCASE AND status IN ('queued', 'queue')", [platform])?;
         Ok(n)
+    }
+}
+
+#[cfg(test)]
+mod patreon_tests {
+    use super::*;
+
+    #[test]
+    fn reimporting_post_shortcuts_queues_a_single_upgrade() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema(&conn).unwrap();
+        let db = Database {conn};
+        let header = "Platform,Type,Handle,Media,link\n";
+        let csv = format!("{header}patreon,collection,Gallery,link,https://www.patreon.com/posts/101?collection=77\n");
+        assert_eq!(crate::commands::import::import_into(&db, &csv).unwrap(), 1);
+        let id = db.list_all_ui().unwrap()[0].id;
+        db.mark_id_done(id, "original.url").unwrap();
+        let next = csv.replace("/posts/101?collection=77", "/creator/posts/post-title-101");
+        assert_eq!(crate::commands::import::import_into(&db, &next).unwrap(), 1);
+        assert_eq!(crate::commands::import::import_into(&db, &next).unwrap(), 0);
+        assert_eq!(db.list_backlog_ui().unwrap()[0].id, id);
+        db.mark_id_done(id, "patreon-post-101.zip").unwrap();
+        assert_eq!(crate::commands::import::import_into(&db, &csv).unwrap(), 0);
+    }
+
+    #[test]
+    fn mixed_collection_keeps_media_kinds_and_distinct_attachment_urls() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema(&conn).unwrap();
+        let db = Database {conn};
+        let csv = "Platform,Type,Handle,Media,link\npatreon,collection,Gallery,pictures,https://cdn.example/file?id=1\npatreon,collection,Gallery,video,https://cdn.example/file?id=2\npatreon,collection,Gallery,link,https://example.com/article#section\n";
+        assert_eq!(crate::commands::import::import_into(&db, csv).unwrap(), 3);
+        assert_eq!(crate::commands::import::import_into(&db, csv).unwrap(), 0);
+        let rows = db.list_all_ui().unwrap();
+        for row in &rows {
+            assert_eq!(row.platform, "patreon");
+            assert_eq!(row.content_type, "collection");
+            assert_eq!(row.handle, "Gallery");
+        }
+        assert_eq!(rows.iter().map(|row| row.media.as_str()).collect::<Vec<_>>(), ["pictures", "video", "link"]);
+        assert_eq!(db.move_collection_to_queue("patreon", "Gallery", "collection").unwrap(), 3);
+        assert_eq!(db.list_queue_ui().unwrap().len(), 3);
     }
 }
