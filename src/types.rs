@@ -7,6 +7,7 @@ pub enum Platform {
     Instagram,
     Youtube,
     Pinterest,
+    Patreon,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -20,6 +21,7 @@ pub enum ContentType {
     Recommendation,
     Manual,
     Pinboard,
+    Collection,
     #[serde(other)]
     Other,
 }
@@ -30,6 +32,8 @@ pub enum MediaKind {
     Pictures,
     #[serde(alias = "video")]
     Video,
+    #[serde(alias = "link")]
+    Link,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -80,6 +84,7 @@ pub fn platform_str(p: &Platform) -> &'static str {
         Platform::Tiktok => "tiktok",
         Platform::Instagram => "instagram",
         Platform::Youtube => "youtube",
+        Platform::Patreon => "patreon",
         Platform::Pinterest => "pinterest",
     }
 }
@@ -93,6 +98,7 @@ pub fn content_type_str(t: &ContentType) -> &'static str {
         ContentType::Playlist => "playlist",
         ContentType::Recommendation => "recommendation",
         ContentType::Manual => "manual",
+        ContentType::Collection => "collection",
         ContentType::Pinboard => "pinboard",
         ContentType::Other => "other",
     }

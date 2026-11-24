@@ -1,6 +1,6 @@
 # ClipScraper Downloader
 
-App to download content from Youtube, TikTok, Instagram, Pinterest
+App to download content from Youtube, TikTok, Instagram, Pinterest, and Patreon
 
 ## Features:
 
@@ -11,6 +11,10 @@ App to download content from Youtube, TikTok, Instagram, Pinterest
 ### Bulk download:
 
 - Using the companion extension (currently only available on Chromium based browsers) the app can accept a list of urls scraped from pages/profiles/bookmarks and download them sequentially, or in parallel, and output files sorted by platform, and collection
+
+### Patreon collections
+
+Export a Patreon collection as CSV from Listr and use **Import list** or drop the file into ClipDownloader. Queue the whole collection or individual items. Images and downloadable attachments are saved as files, and videos use the existing video downloader. Ordinary webpages are saved as `.url` shortcuts with their original address. All three media types appear in the library under Patreon after saving.
 
 ## Local Development
 

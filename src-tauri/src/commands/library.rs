@@ -63,7 +63,7 @@ fn resolve_stored_path(path: &str) -> Option<PathBuf> {
 }
 
 #[tauri::command]
-pub async fn open_file_for_link(link: String) -> Result<(), String> {
+pub async fn open_file_for_link(app: tauri::AppHandle, link: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         let db = crate::database::Database::new().map_err(|e| e.to_string())?;
         let Some((_id, path)) = db.find_done_row_by_link(&link).map_err(|e| e.to_string())? else {
@@ -72,6 +72,11 @@ pub async fn open_file_for_link(link: String) -> Result<(), String> {
         let Some(real) = resolve_stored_path(&path).filter(|p| p.is_file()) else {
             return Ok(());
         };
+        if real.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("url")) {
+            use tauri_plugin_opener::OpenerExt;
+            let url = crate::utils::url::http_url(&link)?;
+            return app.opener().open_url(url.as_str(), None::<&str>).map_err(|e| e.to_string());
+        }
         open_with_default_app(&real.to_string_lossy())
     })
     .await

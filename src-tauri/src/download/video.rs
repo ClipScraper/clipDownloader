@@ -31,8 +31,14 @@ fn path_sep() -> &'static str {
     ":"
 }
 
-fn base_ytdlp_args(cookie_arg: &str, is_ig_images: bool, audio_only: bool) -> Vec<String> {
-    let mut args: Vec<String> = vec!["--newline".into(), "-N".into(), "8".into(), "--cookies-from-browser".into(), cookie_arg.into(), "--ignore-config".into(), "--no-cache-dir".into()];
+fn base_ytdlp_args(referer: Option<&str>, cookie_arg: &str, is_ig_images: bool, audio_only: bool) -> Vec<String> {
+    let mut args: Vec<String> = vec!["--newline".into(), "-N".into(), "8".into(), "--ignore-config".into(), "--no-cache-dir".into()];
+    if let Some(referer) = referer {
+        args.extend(["--referer".into(), referer.into()]);
+    }
+    if !cookie_arg.is_empty() {
+        args.extend(["--cookies-from-browser".into(), cookie_arg.into()]);
+    }
     if is_ig_images {
         args.push("--ignore-no-formats-error".into());
     } else if audio_only {
@@ -138,10 +144,10 @@ fn stage_message_from_output_line(line: &str) -> Option<&'static str> {
 }
 
 // Probe uploader using yt-dlp sidecar (simulate + print)
-async fn probe_uploader(app: &tauri::AppHandle, cookie_arg: &str, processed_url: &str, is_ig_images: bool) -> Option<String> {
-    let mut args = base_ytdlp_args(cookie_arg, is_ig_images, false);
+async fn probe_uploader(app: &tauri::AppHandle, cookie_arg: &str, processed_url: &str, is_ig_images: bool, referer: Option<&str>) -> Option<String> {
+    let mut args = base_ytdlp_args(referer, cookie_arg, is_ig_images, false);
     args.push("--simulate".into());
-    args.extend(vec!["--print".into(), "uploader".into(), processed_url.into()]);
+    args.extend(vec!["--print".into(), "uploader".into(), "--".into(), processed_url.into()]);
 
     let settings = crate::settings::load_settings();
     let cmd = if settings.use_system_binaries {
@@ -184,7 +190,7 @@ async fn probe_uploader(app: &tauri::AppHandle, cookie_arg: &str, processed_url:
 
 /* ---------- output template selection ---------- */
 
-async fn choose_output_template(app: &tauri::AppHandle, out_dir: &Path, cookie_arg: &str, processed_url: &str, is_ig_images: bool, audio_only: bool, on_duplicate: &OnDuplicate) -> io::Result<String> {
+async fn choose_output_template(app: &tauri::AppHandle, out_dir: &Path, cookie_arg: &str, processed_url: &str, is_ig_images: bool, audio_only: bool, referer: Option<&str>, on_duplicate: &OnDuplicate) -> io::Result<String> {
     let rest_id = sanitize(rest_token_from_url(processed_url));
 
     let url_author = if processed_url.contains("instagram.com/") {
@@ -198,7 +204,7 @@ async fn choose_output_template(app: &tauri::AppHandle, out_dir: &Path, cookie_a
     let mut author_real = if let Some(author) = url_author {
         author
     } else {
-        probe_uploader(app, cookie_arg, processed_url, is_ig_images).await.unwrap_or_else(|| "unknown".into())
+        probe_uploader(app, cookie_arg, processed_url, is_ig_images, referer).await.unwrap_or_else(|| "unknown".into())
     };
     author_real = sanitize(author_real);
 
@@ -234,7 +240,7 @@ async fn choose_output_template(app: &tauri::AppHandle, out_dir: &Path, cookie_a
 
 /* ---------- runner ---------- */
 
-pub async fn run_yt_dlp_with_progress(app: &tauri::AppHandle, out_dir: &Path, cookie_arg: &str, processed_url: &str, is_ig_images: bool, on_duplicate: &OnDuplicate, id: i64, emitter: Arc<dyn Fn(DownloadEvent) + Send + Sync>) -> io::Result<(bool, String)> {
+pub async fn run_yt_dlp_with_progress(app: &tauri::AppHandle, out_dir: &Path, cookie_arg: &str, processed_url: &str, is_ig_images: bool, referer: Option<&str>, on_duplicate: &OnDuplicate, id: i64, emitter: Arc<dyn Fn(DownloadEvent) + Send + Sync>) -> io::Result<(bool, String)> {
     let audio_only = processed_url.ends_with("#__audio_only__");
     let real_url = if audio_only {
         &processed_url[..processed_url.len() - "#__audio_only__".len()]
@@ -242,7 +248,7 @@ pub async fn run_yt_dlp_with_progress(app: &tauri::AppHandle, out_dir: &Path, co
         processed_url
     };
 
-    let mut args = base_ytdlp_args(cookie_arg, is_ig_images, audio_only);
+    let mut args = base_ytdlp_args(referer, cookie_arg, is_ig_images, audio_only);
     args.extend(crate::settings::get_yt_dlp_duplicate_flags(on_duplicate));
 
     // Prints used by parse_multiple_filenames_from_output
@@ -267,12 +273,12 @@ pub async fn run_yt_dlp_with_progress(app: &tauri::AppHandle, out_dir: &Path, co
     (emitter)(DownloadEvent::Message {id, message: "Inspecting media metadata".into()});
 
     // Output template with uniqueness policy
-    let output_template = choose_output_template(app, out_dir, cookie_arg, real_url, is_ig_images, audio_only, on_duplicate).await?;
+    let output_template = choose_output_template(app, out_dir, cookie_arg, real_url, is_ig_images, audio_only, referer, on_duplicate).await?;
     args.push("-o".into());
     args.push(output_template.clone());
 
     // URL last
-    args.push(real_url.to_string());
+    args.extend(["--".into(), real_url.to_string()]);
 
     let planned_path = out_dir.join(output_template.replace(
         "%(ext)s",

@@ -1,3 +1,4 @@
+mod direct;
 pub mod image;
 pub mod manager;
 pub mod pipeline;
