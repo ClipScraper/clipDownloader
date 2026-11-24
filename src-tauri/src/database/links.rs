@@ -1,22 +1,26 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 
 use rusqlite::{params, Connection, Result, Transaction, TransactionBehavior};
-use serde::Serialize;
+use crate::collected_links::{CollectedLink, LinkSelection};
 
 use super::Database;
 use crate::utils::resource::{classify_url, Resource};
 use crate::utils::url::{http_url, link_service, patreon_post_id, text_link_url};
 
-#[derive(Serialize)]
-pub struct CollectedLink {
-    platform: String,
-    collection: String,
-    origin: String,
-    url: String,
-    service: &'static str,
+impl LinkSelection {
+    fn contains(&self, candidate: &CollectedLink) -> bool {
+        match self {
+            Self::Destination { service } => service == &candidate.service,
+            Self::Collection { service, platform, collection, origin } => {
+                service == &candidate.service && platform == &candidate.platform
+                    && collection == &candidate.collection && origin == &candidate.origin
+            }
+            Self::Link { link } => link == candidate,
+        }
+    }
 }
 
 // Upgrade legacy rows once, before the manager resumes queued downloads.
@@ -101,35 +105,41 @@ impl Database {
 
     pub fn collected_links(&self) -> Result<Vec<CollectedLink>> {
         self.recover_archived_links()?;
-        let mut stmt = self.conn.prepare(
-            "WITH candidates(platform, user_handle, origin, url, standalone) AS (
-                SELECT platform, user_handle, origin, link, 1 FROM downloads WHERE status='reference'
-                UNION SELECT d.platform, d.user_handle, d.origin, j.value, 0 FROM downloads d, json_each(d.body_links) j
-             ) SELECT platform, user_handle, origin, url, max(standalone) FROM candidates c
-               WHERE NOT EXISTS (SELECT 1 FROM downloads media WHERE media.link=c.url AND media.status<>'reference')
-               GROUP BY platform, user_handle, origin, url",
-        )?;
-        let mut rows = stmt.query([])?;
-        let mut links = Vec::new();
-        while let Some(row) = rows.next()? {
-            let url: String = row.get(3)?;
-            if let Ok(parsed) = http_url(&url) {
-                if !row.get::<_, bool>(4)? && classify_url(&parsed, "") != Resource::Reference {
-                    continue;
+        let mut links = BTreeSet::new();
+        visit_links(&self.conn, |_, _, link| { links.insert(link); })?;
+        Ok(links.into_iter().collect())
+    }
+
+    pub fn delete_collected_links(&self, selection: &LinkSelection) -> Result<()> {
+        self.recover_archived_links()?;
+        let tx = Transaction::new_unchecked(&self.conn, TransactionBehavior::Immediate)?;
+        let mut references = Vec::new();
+        let mut from_posts: BTreeMap<i64, Vec<String>> = BTreeMap::new();
+        visit_links(&tx, |id, standalone, link| {
+            if selection.contains(&link) {
+                if standalone {
+                    references.push(id);
+                } else {
+                    from_posts.entry(id).or_default().push(link.url);
                 }
-                let mut platform: String = row.get(0)?;
-                let origin: String = row.get(2)?;
-                let service = link_service(&parsed);
-                // Older manual submissions used YouTube as the fallback for unrecognized hosts.
-                if origin == "manual" && platform == "youtube" && service != "youtube" {
-                    platform = service.to_owned();
-                }
-                links.push(CollectedLink {
-                    platform, collection: row.get(1)?, origin, service, url,
-                });
+            }
+        })?;
+
+        {
+            let mut remove = tx.prepare("DELETE FROM downloads WHERE id=?1 AND status='reference'")?;
+            for id in references {
+                remove.execute([id])?;
+            }
+            let mut edit = tx.prepare(
+                "UPDATE downloads SET body_links=(SELECT json_group_array(value) FROM json_each(body_links)
+                 WHERE value NOT IN (SELECT value FROM json_each(?2))) WHERE id=?1",
+            )?;
+            for (id, urls) in from_posts {
+                let removed = serde_json::to_string(&urls).map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+                edit.execute(params![id, removed])?;
             }
         }
-        Ok(links)
+        tx.commit()
     }
 
     pub(crate) fn recover_archived_links(&self) -> Result<bool> {
@@ -158,6 +168,43 @@ impl Database {
         }
         Ok(changed)
     }
+}
+
+// Listing and trash use the same visibility rules. Keep the owner ID until after
+// filtering so deleting a deduplicated link can remove every copy in that collection.
+fn visit_links(conn: &Connection, mut visit: impl FnMut(i64, bool, CollectedLink)) -> Result<()> {
+    let mut stmt = conn.prepare(
+        "WITH candidates(id, platform, user_handle, origin, url, standalone) AS (
+            SELECT id, platform, user_handle, origin, link, 1 FROM downloads WHERE status='reference'
+            UNION ALL
+            SELECT d.id, d.platform, d.user_handle, d.origin, j.value, 0 FROM downloads d, json_each(d.body_links) j
+         ) SELECT id, platform, user_handle, origin, url, standalone,
+                  MAX(standalone) OVER (PARTITION BY platform, user_handle, origin, url)
+           FROM candidates c WHERE NOT EXISTS (
+               SELECT 1 FROM downloads media WHERE media.link=c.url AND media.status<>'reference'
+           )",
+    )?;
+    let mut rows = stmt.query([])?;
+    while let Some(row) = rows.next()? {
+        let url: String = row.get(4)?;
+        let Ok(parsed) = http_url(&url) else { continue };
+        if !row.get::<_, bool>(6)? && classify_url(&parsed, "") != Resource::Reference {
+            continue;
+        }
+        let service = link_service(&parsed);
+        let mut platform: String = row.get(1)?;
+        let collection: String = row.get(2)?;
+        let origin: String = row.get(3)?;
+        // Older manual submissions used YouTube as the fallback for unrecognized hosts.
+        if origin == "manual" && platform == "youtube" && service != "youtube" {
+            platform = service.to_owned();
+        }
+        visit(row.get(0)?, row.get(5)?, CollectedLink {
+            platform, collection: if collection.is_empty() { "Unknown".into() } else { collection },
+            origin, url, service: service.into(),
+        });
+    }
+    Ok(())
 }
 
 fn archive_links(path: &Path) -> std::io::Result<(BTreeSet<String>, BTreeSet<String>)> {
@@ -228,6 +275,52 @@ mod tests {
     }
 
     #[test]
+    fn trash_is_scoped_to_destination_source_collection_and_exact_url() {
+        let db = database();
+        let mega = "https://mega.nz/file/example#key-one";
+        let second = "https://mega.nz/file/example#key-two";
+        let twitter = "https://x.com/creator";
+        let patreon = "https://www.patreon.com/creator/posts?filters%5Btag%5D=art";
+        let header = "Platform,Type,Handle,Media,link";
+        let csv = format!("{header}\npatreon,collection,A,link,https://www.patreon.com/posts/101\npatreon,collection,A,link,https://www.patreon.com/posts/102\npatreon,collection,A,link,{mega}\ninstagram,collection,A,link,{mega}\npatreon,collection,B,link,{second}");
+        import_into(&db, &csv).unwrap();
+        let first = db.find_id_by_link("https://www.patreon.com/posts/101").unwrap().unwrap();
+        let other = db.find_id_by_link("https://www.patreon.com/posts/102").unwrap().unwrap();
+        db.record_post_links(first, &BTreeSet::from([mega, second, twitter, patreon].map(str::to_owned))).unwrap();
+        db.record_post_links(other, &BTreeSet::from([mega.to_owned()])).unwrap();
+
+        let displayed = db.collected_links().unwrap();
+        assert_eq!(displayed.len(), 6);
+        let groups = crate::collected_links::by_destination(&displayed);
+        assert_eq!(groups.keys().copied().collect::<Vec<_>>(), ["mega", "patreon", "twitter"]);
+        assert_eq!(groups["mega"][&("A", "collection", "patreon")].len(), 2);
+        assert_eq!(groups["mega"][&("A", "collection", "instagram")].len(), 1);
+        let link = displayed.into_iter().find(|r| r.platform == "patreon" && r.collection == "A" && r.url == mega).unwrap();
+        let one = LinkSelection::Link {link};
+        db.delete_collected_links(&one).unwrap();
+        db.delete_collected_links(&one).unwrap();
+        let left = db.collected_links().unwrap();
+        assert_eq!(left.len(), 5);
+        assert!(left.iter().any(|r| r.platform == "instagram" && r.url == mega));
+        assert!(!left.iter().any(|r| r.platform == "patreon" && r.url == mega));
+        assert!(left.iter().any(|r| r.collection == "A" && r.url == second));
+
+        db.delete_collected_links(&LinkSelection::Collection {
+            service: "mega".into(), platform: "patreon".into(), collection: "A".into(), origin: "collection".into(),
+        }).unwrap();
+        let left = db.collected_links().unwrap();
+        assert_eq!(left.len(), 4);
+        assert!(left.iter().any(|r| r.collection == "B" && r.url == second));
+        assert!(left.iter().any(|r| r.collection == "A" && r.url == twitter));
+        assert!(left.iter().any(|r| r.collection == "A" && r.url == patreon));
+        db.delete_collected_links(&LinkSelection::Destination {service: "mega".into()}).unwrap();
+        let left = db.collected_links().unwrap();
+        assert_eq!(left.len(), 2);
+        assert!(left.iter().all(|r| r.service != "mega"));
+        assert_eq!(db.list_backlog_ui().unwrap().len(), 2);
+    }
+
+    #[test]
     fn references_media_and_completed_files_use_distinct_views() {
         let db = database();
         let gif = "https://c10.patreonusercontent.com/4/patreon-media/p/post/101/hash/size/1.gif?token-hash=sample%3D&token-time=123";
@@ -285,8 +378,10 @@ mod tests {
 
     #[test]
     fn recovers_and_caches_links_from_existing_post_bundles() {
-        let db = database();
         let dir = tempfile::tempdir().unwrap();
+        let db_file = dir.path().join("catalog.db");
+        let db = Database {conn: Connection::open(&db_file).unwrap()};
+        super::super::init_schema(&db.conn).unwrap();
         let path = dir.path().join("patreon-post-101.zip");
         let mut archive = zip::ZipWriter::new(File::create(&path).unwrap());
         for (name, text) in [
@@ -309,7 +404,14 @@ mod tests {
         assert!(rows.iter().any(|r| r.url == "https://t.me/+invite"));
         assert!(rows.iter().any(|r| r.url == "https://mega.nz/file/abc#the-key"));
         assert_eq!(db.list_backlog_ui().unwrap()[0].link, "https://www.instagram.com/reel/recovered/");
+        db.delete_collected_links(&LinkSelection::Destination {service: "mega".into()}).unwrap();
+        assert!(path.is_file());
+        assert_eq!(db.list_done_ui().unwrap()[0].id, id);
+        assert_eq!(db.collected_links().unwrap().len(), 1);
+        drop(db);
+        let reopened = Database {conn: Connection::open(db_file).unwrap()};
+        assert_eq!(reopened.collected_links().unwrap()[0].service, "telegram");
         std::fs::remove_file(path).unwrap();
-        assert_eq!(db.collected_links().unwrap().len(), 2);
+        assert_eq!(reopened.collected_links().unwrap().len(), 1);
     }
 }

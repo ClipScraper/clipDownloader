@@ -18,7 +18,7 @@ Export a Patreon collection as CSV from Listr and use **Import list** or drop th
 
 ### Collected links
 
-Open **Links** beneath **Downloads** to browse external references such as MEGA shares, Dropbox preview pages, Telegram invites, and social profiles. Links are grouped by source platform and collection and open in the system default browser. Supported media such as Instagram reels, TikTok videos and photos, Patreon posts, and direct image or file URLs go to **Downloads**. Successfully saved files appear in **Library**. Media embedded in a Patreon post remains in its archive. Downloadable outbound hyperlinks enter the collection’s backlog. Existing rows and shortcuts in older post archives are reclassified on upgrade.
+Open **Links** beneath **Downloads** to browse external references such as MEGA shares, Dropbox preview pages, Telegram invites, and social profiles. Links are grouped by destination service and then by source collection, and open in the system default browser. Use the trash icon beside a link, collection, or destination to remove its saved references. Supported media such as Instagram reels, TikTok videos and photos, Patreon posts, and direct image or file URLs go to **Downloads**. Successfully saved files appear in **Library**. Media embedded in a Patreon post remains in its archive. Downloadable outbound hyperlinks enter the collection’s backlog. Existing rows and shortcuts in older post archives are reclassified on upgrade.
 
 ## Local Development
 

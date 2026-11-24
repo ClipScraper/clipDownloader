@@ -138,11 +138,22 @@ pub async fn delete_library_item(link: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn list_collected_links() -> Result<Vec<crate::database::links::CollectedLink>, String> {
+pub async fn list_collected_links() -> Result<Vec<crate::collected_links::CollectedLink>, String> {
     tauri::async_runtime::spawn_blocking(|| {
         let db = crate::database::Database::new().map_err(|e| e.to_string())?;
         db.collected_links().map_err(|e| e.to_string())
     }).await.map_err(|e| format!("Join error: {e}"))?
+}
+
+#[tauri::command]
+pub async fn delete_collected_links(app: tauri::AppHandle, selection: crate::collected_links::LinkSelection) -> Result<(), String> {
+    use tauri::Emitter;
+    tauri::async_runtime::spawn_blocking(move || {
+        let db = crate::database::Database::new().map_err(|e| e.to_string())?;
+        db.delete_collected_links(&selection).map_err(|e| e.to_string())
+    }).await.map_err(|e| format!("Join error: {e}"))??;
+    let _ = app.emit("post-links-collected", ());
+    Ok(())
 }
 
 #[tauri::command]

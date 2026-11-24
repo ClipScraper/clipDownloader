@@ -1,23 +1,21 @@
 use std::cell::Cell;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::rc::Rc;
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use wasm_bindgen::JsValue;
 use wasm_bindgen_futures::spawn_local;
 use yew::prelude::*;
+use yew_icons::{Icon, IconId};
 
 use crate::app::invoke;
+use crate::collected_links::{by_destination, CollectedLink, LinkSelection};
 use crate::components::service_icon::{service_icon, service_name};
 use crate::dom::hash_fragment;
 
-#[derive(Clone, PartialEq, Deserialize)]
-struct CollectedLink {
-    platform: String,
-    collection: String,
-    origin: String,
-    url: String,
-    service: String,
+#[derive(Serialize)]
+struct DeleteLinksArgs {
+    selection: LinkSelection,
 }
 
 #[derive(Serialize)]
@@ -34,6 +32,7 @@ pub struct LinksProps {
 pub fn links_page(props: &LinksProps) -> Html {
     let rows = use_state(|| None::<Result<Vec<CollectedLink>, String>>);
     let open_error = use_state(|| false);
+    let delete_error = use_state(|| false);
     let expanded = use_state(BTreeSet::new);
     {
         let rows = rows.clone();
@@ -67,17 +66,32 @@ pub fn links_page(props: &LinksProps) -> Html {
         }
     });
 
+    let delete = Callback::from({
+        let delete_error = delete_error.clone();
+        move |selection: LinkSelection| {
+            let delete_error = delete_error.clone();
+            delete_error.set(false);
+            spawn_local(async move {
+                let args = serde_wasm_bindgen::to_value(&DeleteLinksArgs {selection}).unwrap();
+                if invoke("delete_collected_links", args).await.is_err() {
+                    delete_error.set(true);
+                }
+            });
+        }
+    });
+
     let content = match rows.as_ref() {
         None => html! { <p id="links-loading" role="status">{"Loading links…"}</p> },
         Some(Err(err)) => html! { <p id="links-load-error" role="alert">{err}</p> },
         Some(Ok(links)) if links.is_empty() => html! { <p id="links-empty">{"No collected links yet."}</p> },
-        Some(Ok(links)) => groups(links, &open_link, &expanded),
+        Some(Ok(links)) => groups(links, &open_link, &delete, &expanded),
     };
     html! {
         <main id="links-page" class="container downloads link-catalog">
             <h1 id="links-heading">{"Links"}</h1>
             <div id="links-summary" class="summary">
                 if *open_error { <p id="links-open-error" role="alert">{"Could not open this link in your default browser."}</p> }
+                if *delete_error { <p id="links-delete-error" role="alert">{"Could not delete the selected links. Please try again."}</p> }
                 {content}
             </div>
         </main>
@@ -97,48 +111,68 @@ fn toggle_group(expanded: &UseStateHandle<BTreeSet<String>>, key: &str) -> Callb
     })
 }
 
-fn groups(links: &[CollectedLink], open_link: &Callback<String>, expanded: &UseStateHandle<BTreeSet<String>>) -> Html {
-    let mut platforms = BTreeMap::<&str, BTreeMap<(&str, &str), BTreeMap<&str, &CollectedLink>>>::new();
-    for link in links {
-        let handle = if link.collection.is_empty() { "Unknown" } else { &link.collection };
-        platforms.entry(&link.platform).or_default().entry((handle, &link.origin)).or_default().insert(&link.url, link);
-    }
-    html! { for platforms.into_iter().map(|(platform, collections)| {
-        let group = format!("links-platform-{platform}");
-        let count: usize = collections.values().map(BTreeMap::len).sum();
+fn groups(links: &[CollectedLink], open: &Callback<String>, delete: &Callback<LinkSelection>, expanded: &UseStateHandle<BTreeSet<String>>) -> Html {
+    html! { for by_destination(links).into_iter().map(|(service, collections)| {
+        let group = format!("links-platform-{service}");
+        let name = service_name(service);
+        let count: usize = collections.values().map(Vec::len).sum();
+        let totals = format!("{} · {}", quantity(collections.len(), "collection"), quantity(count, "link"));
+        let all = LinkSelection::Destination {service: service.into()};
         html! {
-            <details id={group.clone()} key={group.clone()} open={expanded.contains(&group)} class="platform-block">
-                <summary id={format!("{group}-toggle")} class="platform-item" onclick={toggle_group(expanded, &group)}>
-                    <span id={format!("{group}-identity")} class="item-left">
-                        {service_icon(format!("{group}-icon"), platform)}
-                        <span id={format!("{group}-name")} class="item-title">{service_name(platform)}</span>
-                    </span>
-                    <span id={format!("{group}-count")} class="item-right">{format!("{} · {}", quantity(collections.len(), "collection"), quantity(count, "link"))}</span>
-                </summary>
-                if expanded.contains(&group) {
-                    {for collections.into_iter().map(|((name, origin), entries)| {
-                        let collection = format!("{group}-collection-{}", hash_fragment(&format!("{name}\0{origin}")));
-                        html! {
-                            <details key={collection.clone()} id={collection.clone()} class="collection-block" open={expanded.contains(&collection)}>
-                                <summary id={format!("{collection}-toggle")} class="collection-item" onclick={toggle_group(expanded, &collection)}>
-                                    <span id={format!("{collection}-name")} class="item-title">{format!("{name} | {origin}")}</span>
-                                    <span id={format!("{collection}-count")} class="item-right">{quantity(entries.len(), "link")}</span>
-                                </summary>
-                                if expanded.contains(&collection) {
-                                    <ul id={format!("{collection}-list")} class="rows rows-card">
-                                        {for entries.into_values().map(|link| link_row(link, &collection, open_link))}
-                                    </ul>
-                                }
-                            </details>
-                        }
-                    })}
-                }
-            </details>
+            <section id={group.clone()} key={group.clone()} class="platform-block">
+                <div id={format!("{group}-header")} class="platform-item">
+                    <button type="button" id={format!("{group}-toggle")} class="link-group-toggle" aria-expanded={expanded.contains(&group).to_string()} aria-controls={format!("{group}-collections")} onclick={toggle_group(expanded, &group)}>
+                        {service_icon(format!("{group}-icon"), service)}
+                        <span id={format!("{group}-name")} class="item-title">{name}</span>
+                        <span id={format!("{group}-count")} class="item-right">{totals}</span>
+                    </button>
+                    {trash_button(&group, format!("Delete all {name} links"), all, delete)}
+                </div>
+                <div id={format!("{group}-collections")} hidden={!expanded.contains(&group)}>
+                    if expanded.contains(&group) {
+                        {for collections.into_iter().map(|((collection, origin, platform), mut entries)| {
+                            entries.sort_by_key(|link| &link.url);
+                            let key = format!("{group}-collection-{}", hash_fragment(&format!("{platform}\0{collection}\0{origin}")));
+                            let selection = LinkSelection::Collection {
+                                service: service.into(), platform: platform.into(), collection: collection.into(), origin: origin.into(),
+                            };
+                            let source = service_name(platform);
+                            html! {
+                                <section key={key.clone()} id={key.clone()} class="collection-block">
+                                    <div id={format!("{key}-header")} class="collection-item">
+                                        <button type="button" id={format!("{key}-toggle")} class="link-group-toggle" aria-expanded={expanded.contains(&key).to_string()} aria-controls={format!("{key}-items")} onclick={toggle_group(expanded, &key)}>
+                                            <span id={format!("{key}-name")} class="item-title">{format!("{collection} | {origin} · {source}")}</span>
+                                            <span id={format!("{key}-count")} class="item-right">{quantity(entries.len(), "link")}</span>
+                                        </button>
+                                        {trash_button(&key, format!("Delete {name} links from {source} collection {collection}"), selection, delete)}
+                                    </div>
+                                    <div id={format!("{key}-items")} hidden={!expanded.contains(&key)}>
+                                        if expanded.contains(&key) {
+                                            <ul id={format!("{key}-list")} class="rows rows-card">
+                                                {for entries.into_iter().map(|link| link_row(link, &key, open, delete))}
+                                            </ul>
+                                        }
+                                    </div>
+                                </section>
+                            }
+                        })}
+                    }
+                </div>
+            </section>
         }
     })}
 }
 
-fn link_row(link: &CollectedLink, collection: &str, open_link: &Callback<String>) -> Html {
+fn trash_button(group: &str, label: String, selection: LinkSelection, delete: &Callback<LinkSelection>) -> Html {
+    let onclick = delete.reform(move |_| selection.clone());
+    html! {
+        <button id={format!("{group}-delete")} type="button" class="icon-btn link-trash" aria-label={label.clone()} title={label} {onclick}>
+            <Icon icon_id={IconId::LucideTrash2} width="18" height="18" />
+        </button>
+    }
+}
+
+fn link_row(link: &CollectedLink, collection: &str, open_link: &Callback<String>, delete: &Callback<LinkSelection>) -> Html {
     let row = format!("{collection}-link-{}", hash_fragment(&link.url));
     let url = link.url.clone();
     let open = open_link.reform(move |event: MouseEvent| {
@@ -159,6 +193,7 @@ fn link_row(link: &CollectedLink, collection: &str, open_link: &Callback<String>
                 {service_icon(format!("{row}-icon"), &link.service)}
                 <span id={format!("{row}-address")} class="link-address">{&link.url}</span>
             </a>
+            {trash_button(&row, format!("Delete {} link", service_name(&link.service)), LinkSelection::Link {link: link.clone()}, delete)}
         </li>
     }
 }
