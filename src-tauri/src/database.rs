@@ -498,7 +498,8 @@ fn normalize_link(mut s: String) -> String {
 
 fn same_collection_url(platform: &str, stored: &str, requested: &str, normalized: &str) -> bool {
     if platform == "patreon" {
-        stored == requested
+        stored == requested || crate::utils::url::patreon_post_id(requested)
+            .is_some_and(|id| crate::utils::url::patreon_post_id(stored).as_ref() == Some(&id))
     } else {
         normalize_link(stored.to_string()) == normalized
     }
@@ -704,17 +705,17 @@ impl Database {
         mark_id_done_conn(&self.conn, id, path)
     }
 
-    pub fn link_exists_in_collection(&self, link: &str, platform: &str, user_handle: &str, origin: &str) -> Result<bool> {
+    pub fn existing_collection_item(&self, link: &str, platform: &str, user_handle: &str, origin: &str) -> Result<Option<(i64, String, String)>> {
         let norm = normalize_link(link.to_string());
-        let mut stmt = self.conn.prepare("SELECT link FROM downloads WHERE platform = ?1 COLLATE NOCASE AND (user_handle = ?2 COLLATE NOCASE OR (?2 = 'Unknown' AND (user_handle = '' OR user_handle IS NULL))) AND origin = ?3 COLLATE NOCASE")?;
+        let mut stmt = self.conn.prepare("SELECT link, id, status, path FROM downloads WHERE platform = ?1 COLLATE NOCASE AND (user_handle = ?2 COLLATE NOCASE OR (?2 = 'Unknown' AND (user_handle = '' OR user_handle IS NULL))) AND origin = ?3 COLLATE NOCASE")?;
         let mut rows = stmt.query([platform, user_handle, origin])?;
         while let Some(row) = rows.next()? {
             let db_link: String = row.get(0)?;
             if same_collection_url(platform, &db_link, link, &norm) {
-                return Ok(true);
+                return Ok(Some((row.get(1)?, row.get(2)?, row.get(3)?)));
             }
         }
-        Ok(false)
+        Ok(None)
     }
 
     pub fn find_id_by_link(&self, link: &str) -> Result<Option<i64>> {
@@ -916,6 +917,24 @@ impl Database {
 #[cfg(test)]
 mod patreon_tests {
     use super::*;
+
+    #[test]
+    fn reimporting_post_shortcuts_queues_a_single_upgrade() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema(&conn).unwrap();
+        let db = Database {conn};
+        let header = "Platform,Type,Handle,Media,link\n";
+        let csv = format!("{header}patreon,collection,Gallery,link,https://www.patreon.com/posts/101?collection=77\n");
+        assert_eq!(crate::commands::import::import_into(&db, &csv).unwrap(), 1);
+        let id = db.list_all_ui().unwrap()[0].id;
+        db.mark_id_done(id, "original.url").unwrap();
+        let next = csv.replace("/posts/101?collection=77", "/creator/posts/post-title-101");
+        assert_eq!(crate::commands::import::import_into(&db, &next).unwrap(), 1);
+        assert_eq!(crate::commands::import::import_into(&db, &next).unwrap(), 0);
+        assert_eq!(db.list_backlog_ui().unwrap()[0].id, id);
+        db.mark_id_done(id, "patreon-post-101.zip").unwrap();
+        assert_eq!(crate::commands::import::import_into(&db, &csv).unwrap(), 0);
+    }
 
     #[test]
     fn mixed_collection_keeps_media_kinds_and_distinct_attachment_urls() {

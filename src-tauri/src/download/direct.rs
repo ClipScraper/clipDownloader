@@ -13,7 +13,7 @@ static HTTP: Lazy<Result<Client, reqwest::Error>> = Lazy::new(|| {
     Client::builder().connect_timeout(Duration::from_secs(15)).read_timeout(Duration::from_secs(60)).build()
 });
 
-fn save_file(mut temp: TempPath, directory: &Path, stem: &str, ext: &str, policy: &OnDuplicate) -> io::Result<PathBuf> {
+pub(super) fn save_file(mut temp: TempPath, directory: &Path, stem: &str, ext: &str, policy: &OnDuplicate) -> io::Result<PathBuf> {
     let mut target = directory.join(format!("{stem}.{ext}"));
     if matches!(policy, OnDuplicate::Overwrite) {
         temp.persist(&target)?;
@@ -47,6 +47,9 @@ pub(super) async fn download(url: Url, directory: &Path, media: &str, id: i64, p
 
     if !bookmark {
         response.error_for_status_ref().map_err(|e| e.without_url().to_string())?;
+        if media == "file" && web_page && !attachment {
+            return Err("The attachment returned a webpage instead of a file".into());
+        }
         if media == "image" && !(mime.starts_with("image/") || mime == "application/octet-stream") {
             return Err(format!("Expected an image, received {mime}"));
         }

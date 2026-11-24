@@ -118,7 +118,12 @@ pub(crate) fn import_into(db: &crate::database::Database, csv_text: &str) -> Res
 
             let platform_token = format!("{:?}", platform).to_lowercase();
             let origin_token = format!("{:?}", origin).to_lowercase();
-            if db.link_exists_in_collection(&link, &platform_token, &handle, &origin_token).unwrap_or(false) {
+            if let Some((id, status, path)) = db.existing_collection_item(&link, &platform_token, &handle, &origin_token).map_err(|e| e.to_string())? {
+                // Reimporting an old completed shortcut is an explicit request to download the full post.
+                if platform_token == "patreon" && status == "done" && path.ends_with(".url") && crate::utils::url::patreon_post_id(&link).is_some() {
+                    db.set_status_by_id(id, crate::database::DownloadStatus::Backlog).map_err(|e| e.to_string())?;
+                    inserted += 1;
+                }
                 continue;
             }
 

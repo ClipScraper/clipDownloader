@@ -31,7 +31,7 @@ fn path_sep() -> &'static str {
     ":"
 }
 
-fn base_ytdlp_args(referer: Option<&str>, cookie_arg: &str, is_ig_images: bool, audio_only: bool) -> Vec<String> {
+pub(super) fn base_ytdlp_args(referer: Option<&str>, cookie_arg: &str, is_ig_images: bool, audio_only: bool) -> Vec<String> {
     let mut args: Vec<String> = vec!["--newline".into(), "-N".into(), "8".into(), "--ignore-config".into(), "--no-cache-dir".into()];
     if let Some(referer) = referer {
         args.extend(["--referer".into(), referer.into()]);

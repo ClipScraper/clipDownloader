@@ -109,7 +109,8 @@ pub async fn execute_download_job(app: AppHandle, row: DbDownloadRow, overrides:
     }
 
     let mut want_audio_pref = overrides.as_ref().and_then(|ov| ov.force_audio);
-    let patreon = row.platform == "patreon";
+    let post_id = utils::url::patreon_post_id(&row.link);
+    let patreon = row.platform == "patreon" || post_id.is_some();
     let (mut cleaned_url, legacy_audio_flag, legacy_flat_flag) = if patreon || row.media == "link" {
         (row.link.clone(), false, false)
     } else {
@@ -149,6 +150,14 @@ pub async fn execute_download_job(app: AppHandle, row: DbDownloadRow, overrides:
         download_root.join(site).join(collection_dir_label)
     };
     let _ = fs::create_dir_all(&dest_dir);
+
+    if let Some(post_id) = post_id {
+        let tools = super::patreon::PostTools::for_app(&app, settings.use_system_binaries)?;
+        let path = tools.download(&post_id, &dest_dir, &settings.on_duplicate, |message| {
+            (emitter)(DownloadEvent::Message {id: row.id, message});
+        }).await?;
+        return Ok(Some(path.display().to_string()));
+    }
 
     if patreon || row.media == "link" {
         let url = utils::url::http_url(&cleaned_url)?;

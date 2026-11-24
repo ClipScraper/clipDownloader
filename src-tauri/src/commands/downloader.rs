@@ -74,7 +74,7 @@ fn ensure_row_for_url(url: &str, force_audio: Option<bool>) -> Result<(i64, bool
     }
 
     let platform = infer_platform(url);
-    let media_kind = infer_media(url);
+    let media_kind = if platform == Platform::Patreon { MediaKind::Link } else { infer_media(url) };
     let output = match force_audio {
         Some(true) => OutputFormat::Audio,
         Some(false) => OutputFormat::Video,
@@ -87,7 +87,9 @@ fn ensure_row_for_url(url: &str, force_audio: Option<bool>) -> Result<(i64, bool
 }
 
 fn infer_platform(url: &str) -> Platform {
-    if url.contains("instagram.com") {
+    if crate::utils::url::patreon_post_id(url).is_some() {
+        Platform::Patreon
+    } else if url.contains("instagram.com") {
         Platform::Instagram
     } else if url.contains("tiktok.com") {
         Platform::Tiktok
