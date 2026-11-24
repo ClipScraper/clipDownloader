@@ -1,3 +1,4 @@
+pub mod links;
 use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection, Result};
 use serde::{Deserialize, Serialize};
@@ -41,6 +42,8 @@ fn init_schema(conn: &Connection) -> Result<()> {
     // Older databases were created before these columns existed. `CREATE TABLE IF NOT EXISTS` above is a no-op for them, so migrate any missing columns.
     ensure_column(conn, "output_format", "ALTER TABLE downloads ADD COLUMN output_format TEXT NOT NULL DEFAULT 'default' CHECK (output_format IN ('default','audio','video'))")?;
     ensure_column(conn, "last_error", "ALTER TABLE downloads ADD COLUMN last_error TEXT")?;
+
+    ensure_column(conn, "body_links", "ALTER TABLE downloads ADD COLUMN body_links TEXT")?;
 
     // Indexes for the columns the app filters/orders by. Without these every list/move/delete/lookup is a full table scan that degrades linearly as the library grows.
     conn.execute_batch("CREATE INDEX IF NOT EXISTS idx_downloads_status ON downloads(status); CREATE INDEX IF NOT EXISTS idx_downloads_link ON downloads(link); CREATE INDEX IF NOT EXISTS idx_downloads_collection ON downloads(platform, user_handle, origin);")?;
@@ -201,6 +204,11 @@ pub enum Platform {
     Instagram,
     Pinterest,
     Patreon,
+    Twitter,
+    Mega,
+    Dropbox,
+    Telegram,
+    Other,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -341,6 +349,11 @@ impl From<String> for Platform {
             "tiktok" => Platform::Tiktok,
             "instagram" => Platform::Instagram,
             "patreon" => Platform::Patreon,
+            "x" | "x.com" | "twitter" | "twitter.com" => Platform::Twitter,
+            "mega" | "mega.nz" => Platform::Mega,
+            "dropbox" | "dropbox.com" => Platform::Dropbox,
+            "telegram" | "t.me" | "telegram.me" => Platform::Telegram,
+            "other" => Platform::Other,
             "pinterest" => Platform::Pinterest,
             _ => Platform::Youtube, // Default fallback
         }
@@ -500,6 +513,8 @@ fn same_collection_url(platform: &str, stored: &str, requested: &str, normalized
     if platform == "patreon" {
         stored == requested || crate::utils::url::patreon_post_id(requested)
             .is_some_and(|id| crate::utils::url::patreon_post_id(stored).as_ref() == Some(&id))
+    } else if matches!(platform, "mega" | "dropbox" | "telegram") {
+        stored == requested
     } else {
         normalize_link(stored.to_string()) == normalized
     }
@@ -705,13 +720,15 @@ impl Database {
         mark_id_done_conn(&self.conn, id, path)
     }
 
-    pub fn existing_collection_item(&self, link: &str, platform: &str, user_handle: &str, origin: &str) -> Result<Option<(i64, String, String)>> {
+    pub fn existing_collection_item(&self, link: &str, platform: &str, user_handle: &str, origin: &str, is_link: bool) -> Result<Option<(i64, String, String)>> {
         let norm = normalize_link(link.to_string());
         let mut stmt = self.conn.prepare("SELECT link, id, status, path FROM downloads WHERE platform = ?1 COLLATE NOCASE AND (user_handle = ?2 COLLATE NOCASE OR (?2 = 'Unknown' AND (user_handle = '' OR user_handle IS NULL))) AND origin = ?3 COLLATE NOCASE")?;
         let mut rows = stmt.query([platform, user_handle, origin])?;
         while let Some(row) = rows.next()? {
             let db_link: String = row.get(0)?;
-            if same_collection_url(platform, &db_link, link, &norm) {
+            // Share links can identify different files entirely in their query or fragment.
+            let exact_link = is_link && platform != "patreon";
+            if db_link == link || (!exact_link && same_collection_url(platform, &db_link, link, &norm)) {
                 return Ok(Some((row.get(1)?, row.get(2)?, row.get(3)?)));
             }
         }

@@ -14,7 +14,7 @@ use yew::prelude::*;
 #[wasm_bindgen]
 extern "C" {
     #[wasm_bindgen(catch, js_namespace = ["window", "__TAURI__", "core"])]
-    async fn invoke(cmd: &str, args: JsValue) -> Result<JsValue, JsValue>;
+    pub(crate) async fn invoke(cmd: &str, args: JsValue) -> Result<JsValue, JsValue>;
     #[wasm_bindgen(js_namespace = ["window", "__TAURI__", "event"])]
     async fn listen(event: &str, f: &Closure<dyn FnMut(JsValue)>) -> JsValue;
     #[wasm_bindgen(js_namespace = ["window","__TAURI__","webview"])]
@@ -29,6 +29,7 @@ pub fn log_invoke_err(cmd: &str, e: JsValue) {
 pub enum Page {
     Home,
     Downloads,
+    Links,
     Library,
     Settings,
     Extension,
@@ -305,6 +306,7 @@ pub enum MoveBackItem {
 #[function_component(App)]
 pub fn app() -> Html {
     let page = use_state(|| Page::Home);
+    let links_revision = use_state(|| 0u64);
     let settings = use_state(Settings::default);
 
     let downloads = use_state(HashMap::<i64, DownloadEntry>::new);
@@ -496,16 +498,20 @@ pub fn app() -> Html {
     }
 
     {
+        let links_revision = links_revision.clone();
         let downloads = downloads.clone();
         let downloads_ref = downloads_ref.clone();
         let downloads_ready = downloads_ready.clone();
         use_effect_with((), move |_| {
             spawn_local(async move {
+                let mut revision = 0;
                 let handler = Closure::<dyn FnMut(JsValue)>::new(move |_event: JsValue| {
-                    web_sys::console::log_1(&"[UI] import_completed event received, reloading downloads".into());
+                    revision += 1;
+                    links_revision.set(revision);
                     spawn_refresh_downloads(downloads.clone(), downloads_ref.clone(), downloads_ready.clone());
                 });
                 let _ = listen("import_completed", &handler).await;
+                let _ = listen("post-links-collected", &handler).await;
                 handler.forget();
             });
             || ()
@@ -643,6 +649,7 @@ pub fn app() -> Html {
                 />
             }
         }
+        Page::Links => html! {<pages::links::LinksPage revision={*links_revision} />},
         Page::Library => html! {<pages::library::LibraryPage />},
         Page::Settings => html! {<pages::settings::SettingsPage />},
         Page::Extension => html! {<pages::extension::ExtensionPage />},

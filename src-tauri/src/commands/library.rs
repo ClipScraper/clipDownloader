@@ -1,3 +1,4 @@
+use crate::utils::resolve_stored_path;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -33,33 +34,6 @@ fn reveal_dir(dir: &str) -> Result<(), String> {
         Command::new("xdg-open").arg(dir).spawn().map_err(|e| format!("failed to open folder: {e}"))?;
     }
     Ok(())
-}
-
-/// Resolve a path stored in the database to one that actually exists on disk.
-///
-/// Older builds mis-decoded yt-dlp's cp1252 stdout as UTF-8, corrupting any
-/// non-ASCII characters in the stored download path (e.g. `Téléchargements`
-/// became `T�l�chargements`). Only the download-root prefix is affected, so if
-/// the stored path is missing we re-root the below-root components under the
-/// correctly-encoded `download_directory` from settings.
-fn resolve_stored_path(path: &str) -> Option<PathBuf> {
-    let p = PathBuf::from(path);
-    if p.exists() {
-        return Some(p);
-    }
-    let root = PathBuf::from(crate::settings::load_settings().download_directory);
-    let root_depth = root.components().count();
-    let comps: Vec<_> = p.components().collect();
-    if comps.len() > root_depth {
-        let mut rebuilt = root;
-        for c in &comps[root_depth..] {
-            rebuilt.push(c.as_os_str());
-        }
-        if rebuilt.exists() {
-            return Some(rebuilt);
-        }
-    }
-    None
 }
 
 #[tauri::command]
@@ -161,4 +135,19 @@ pub async fn delete_library_item(link: String) -> Result<(), String> {
     })
     .await
     .map_err(|e| format!("Join error: {e}"))?
+}
+
+#[tauri::command]
+pub async fn list_collected_links() -> Result<Vec<crate::database::links::CollectedLink>, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let db = crate::database::Database::new().map_err(|e| e.to_string())?;
+        db.collected_links().map_err(|e| e.to_string())
+    }).await.map_err(|e| format!("Join error: {e}"))?
+}
+
+#[tauri::command]
+pub fn open_collected_link(app: tauri::AppHandle, url: String) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    let url = crate::utils::url::http_url(&url)?;
+    app.opener().open_url(url.as_str(), None::<&str>).map_err(|e| e.to_string())
 }

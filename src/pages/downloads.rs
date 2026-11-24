@@ -1,3 +1,4 @@
+use crate::components::service_icon::service_icon;
 use crate::app::{DeleteItem, MoveItem};
 use crate::dom::assign_missing_descriptive_ids;
 use crate::types::{content_type_str, platform_str, ClipRow, ContentType, MediaKind, Platform};
@@ -142,16 +143,6 @@ fn icon_for_row(row: &ClipRow) -> IconId {
     }
 }
 
-fn platform_icon_src(p: &str) -> &'static str {
-    match p {
-        "instagram" => "public/instagram.webp",
-        "pinterest" => "public/pinterest.png",
-        "patreon" => "public/patreon.png",
-        "tiktok" => "public/tiktok.webp",
-        "youtube" => "public/youtube.webp",
-        _ => "",
-    }
-}
 
 /* ───────────────────────── component ───────────────────────── */
 #[function_component(DownloadsPage)]
@@ -511,7 +502,7 @@ pub fn downloads_page(props: &Props) -> Html {
                                     <div id={format!("{platform_dom}-group")} class="platform-block" key={platform_key.clone()}>
                                         <div id={format!("{platform_dom}-toggle")} class="platform-item" onclick={on_platform_click}>
                                             <div id={format!("{platform_dom}-identity")} class="item-left">
-                                                <img id={format!("{platform_dom}-icon")} class="brand-icon" src={platform_icon_src(&plat_label)} />
+                                                {service_icon(format!("{platform_dom}-icon"), &plat_label)}
                                                 <span id={format!("{platform_dom}-name")} class="item-title">{plat_label.clone()}</span>
                                             </div>
                                             <div id={format!("{platform_dom}-actions")} class="item-right">
@@ -750,7 +741,7 @@ pub fn downloads_page(props: &Props) -> Html {
                                     <div id={format!("{platform_dom}-group")} class="platform-block" key={platform_key.clone()}>
                                         <div id={format!("{platform_dom}-toggle")} class="platform-item" onclick={on_platform_click}>
                                             <div id={format!("{platform_dom}-identity")} class="item-left">
-                                                <img id={format!("{platform_dom}-icon")} class="brand-icon" src={platform_icon_src(&plat_label)} />
+                                                {service_icon(format!("{platform_dom}-icon"), &plat_label)}
                                                 <span id={format!("{platform_dom}-name")} class="item-title">{plat_label.clone()}</span>
                                             </div>
                                             <div id={format!("{platform_dom}-actions")} class="item-right">
@@ -813,7 +804,7 @@ pub fn downloads_page(props: &Props) -> Html {
                                             let plat_label = platform_str(&active.row.platform).to_string();
                                             html! {
                                                 <li id={format!("downloads-item-{}-item", active.row.id)} class="row-line">
-                                                    <img id={format!("downloads-item-{}-icon", active.row.id)} class="brand-icon" src={platform_icon_src(&plat_label)} />
+                                                    {service_icon(format!("downloads-item-{}-icon", active.row.id), &plat_label)}
                                                     <span id={format!("downloads-item-{}-collection", active.row.id)} class="link-text">{collection_title(&active.row)}</span>
                                                     <span id={format!("downloads-item-{}-label", active.row.id)} class="link-text" style="opacity:0.9;">{" - "}{item_label_for_row(&active.row)}</span>
                                                     <div id={format!("downloads-item-{}-actions", active.row.id)} class="row-actions active-status">

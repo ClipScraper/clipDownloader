@@ -1,3 +1,4 @@
+use crate::components::service_icon::service_icon;
 use crate::dom::assign_missing_descriptive_ids;
 use crate::types::{content_type_str, platform_str, ClipRow, MediaKind};
 use wasm_bindgen::prelude::*;
@@ -57,16 +58,6 @@ fn item_label_for_row(row: &ClipRow) -> String {
         }
     } else {
         last_two_path_segments(link)
-    }
-}
-fn platform_icon_src(p: &str) -> &'static str {
-    match p {
-        "instagram" => "public/instagram.webp",
-        "pinterest" => "public/pinterest.png",
-        "patreon" => "public/patreon.png",
-        "tiktok" => "public/tiktok.webp",
-        "youtube" => "public/youtube.webp",
-        _ => "",
     }
 }
 fn collection_title(row: &ClipRow) -> String {
@@ -382,7 +373,7 @@ pub fn library_page() -> Html {
                             <div id={format!("{platform_dom}-group")} class="platform-block" key={platform_key.clone()}>
                                 <div id={format!("{platform_dom}-toggle")} class="platform-item" onclick={on_platform_click}>
                                     <div id={format!("{platform_dom}-identity")} class="item-left">
-                                        <img id={format!("{platform_dom}-icon")} class="brand-icon" src={platform_icon_src(&plat_label)} />
+                                        {service_icon(format!("{platform_dom}-icon"), &plat_label)}
                                         <span id={format!("{platform_dom}-name")} class="item-title">{plat_label.clone()}</span>
                                     </div>
                                     <div id={format!("{platform_dom}-actions")} class="item-right">

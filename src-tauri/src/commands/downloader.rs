@@ -18,7 +18,7 @@ pub async fn download_url(manager: State<'_, DownloadManager>, url: String, outp
     let (row_id, created) = tauri::async_runtime::spawn_blocking(move || ensure_row_for_url(&lookup_url, force_audio_clone)).await.map_err(|e| format!("Join error: {e}"))??;
 
     if created {
-        println!("[DOWNLOADER] inserted new manual row {} for {}", row_id, cleaned_url);
+        println!("[DOWNLOADER] inserted new manual row {row_id}");
     }
 
     manager.send(DownloadCommand::StartNow {id: row_id, overrides: Some(DownloadOverrides {force_audio, flat_destination: flat})}).await?;
@@ -74,7 +74,10 @@ fn ensure_row_for_url(url: &str, force_audio: Option<bool>) -> Result<(i64, bool
     }
 
     let platform = infer_platform(url);
-    let media_kind = if platform == Platform::Patreon { MediaKind::Link } else { infer_media(url) };
+    let media_kind = match platform {
+        Platform::Patreon | Platform::Mega | Platform::Dropbox | Platform::Telegram => MediaKind::Link,
+        _ => infer_media(url),
+    };
     let output = match force_audio {
         Some(true) => OutputFormat::Audio,
         Some(false) => OutputFormat::Video,
@@ -87,17 +90,9 @@ fn ensure_row_for_url(url: &str, force_audio: Option<bool>) -> Result<(i64, bool
 }
 
 fn infer_platform(url: &str) -> Platform {
-    if crate::utils::url::patreon_post_id(url).is_some() {
-        Platform::Patreon
-    } else if url.contains("instagram.com") {
-        Platform::Instagram
-    } else if url.contains("tiktok.com") {
-        Platform::Tiktok
-    } else if url.contains("pinterest.com") || url.contains("pin.it") {
-        Platform::Pinterest
-    } else {
-        Platform::Youtube
-    }
+    crate::utils::url::http_url(url).ok().map(|parsed| {
+        Platform::from(crate::utils::url::link_service(&parsed).to_owned())
+    }).unwrap_or(Platform::Other)
 }
 
 fn infer_media(url: &str) -> MediaKind {

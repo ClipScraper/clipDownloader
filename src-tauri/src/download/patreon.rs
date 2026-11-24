@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -15,7 +15,7 @@ use zip::write::SimpleFileOptions;
 
 use super::{direct, video};
 use crate::database::OnDuplicate;
-use crate::utils::{os::installed_browsers, url::http_url};
+use crate::utils::{os::installed_browsers, url::{http_url, link_service, text_link_url}};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Kind {
@@ -27,6 +27,7 @@ enum Kind {
 
 struct Post {
     text: String,
+    links: BTreeSet<String>,
     assets: Vec<(Url, Kind)>,
     video_fallback: Option<Url>,
 }
@@ -68,16 +69,28 @@ fn post_contents(meta: &Value, base: &Url, downloaded: &str) -> Post {
 
     let mut assets: Vec<(Url, Kind)> = Vec::new();
     let mut positions: HashMap<Url, usize> = HashMap::new();
-    let mut add = |raw: &str, kind: Option<Kind>| {
+    let mut links = BTreeSet::new();
+    let mut add = |raw: &str, kind: Option<Kind>, is_link: bool| {
         let raw = raw.trim();
-        if raw.is_empty() || raw.starts_with('#') || transferred.contains(raw) {
+        if raw.is_empty() || raw.starts_with('#') {
             return;
         }
-        let Ok(url) = base.join(raw) else { return };
+        let Some(url) = text_link_url(raw).or_else(|| base.join(raw).ok()) else { return };
         if http_url(url.as_str()).is_err() {
             return;
         }
-        let kind = kind.unwrap_or_else(|| classify(&url));
+        let shared_resource = matches!(link_service(&url), "mega" | "dropbox" | "telegram");
+        if is_link || shared_resource {
+            links.insert(url.to_string());
+        }
+        if transferred.contains(raw) {
+            return;
+        }
+        let kind = if is_link && shared_resource {
+            Kind::Link
+        } else {
+            kind.unwrap_or_else(|| classify(&url))
+        };
         if let Some(&i) = positions.get(&url) {
             if assets[i].1 == Kind::Link {
                 assets[i].1 = kind;
@@ -96,15 +109,15 @@ fn post_contents(meta: &Value, base: &Url, downloaded: &str) -> Post {
         if is_video || kind == Kind::Video {
             // Patreon's native stream endpoint can require authentication even on public posts.
             // yt-dlp's Patreon extractor resolves the current playable source from the permalink.
-            add(base.as_str(), Some(Kind::Video));
+            add(base.as_str(), Some(Kind::Video), false);
             video_fallback = file["viewer_playback_data"]["url"].as_str().or(Some(raw)).and_then(|url| http_url(url).ok());
         } else {
-            add(raw, Some(if kind == Kind::Link { Kind::File } else { kind }));
+            add(raw, Some(if kind == Kind::Link { Kind::File } else { kind }), false);
         }
     } else if let Some(url) = meta["embed"]["url"].as_str() {
-        add(url, is_video.then_some(Kind::Video));
+        add(url, is_video.then_some(Kind::Video), true);
     } else if is_video {
-        add(base.as_str(), Some(Kind::Video));
+        add(base.as_str(), Some(Kind::Video), false);
     }
 
     let dom = kuchikiki::parse_html().one(meta["content"].as_str().unwrap_or("")).document_node;
@@ -123,12 +136,12 @@ fn post_contents(meta: &Value, base: &Url, downloaded: &str) -> Post {
                 "source" | "video" => Some(Kind::Video),
                 _ => None,
             };
-            add(url, kind);
+            add(url, kind, matches!(tag, "a" | "iframe"));
         }
     }
 
     let mut finder = LinkFinder::new();
-    finder.kinds(&[LinkKind::Url]);
+    finder.kinds(&[LinkKind::Url]).url_must_have_scheme(false);
     let mut body = Vec::new();
     for node in dom.descendants() {
         if let Some(text) = node.as_text() {
@@ -138,13 +151,15 @@ fn post_contents(meta: &Value, base: &Url, downloaded: &str) -> Post {
                 body.push(line.to_owned());
                 if !node.ancestors().any(|n| n.as_element().is_some_and(|e| e.name.local.as_ref() == "a")) {
                     for link in finder.links(line) {
-                        add(link.as_str(), None);
+                        if let Some(url) = text_link_url(link.as_str()) {
+                            add(url.as_str(), None, true);
+                        }
                     }
                 }
             }
         }
     }
-    Post {text: format!("{}\n{}\n\n{}\n", meta["title"].as_str().unwrap_or("Patreon post"), base, body.join("\n")), assets, video_fallback}
+    Post {text: format!("{}\n{}\n\n{}\n", meta["title"].as_str().unwrap_or("Patreon post"), base, body.join("\n")), links, assets, video_fallback}
 }
 
 pub(super) struct PostTools {
@@ -166,7 +181,8 @@ impl PostTools {
         Ok(Self {gallery: program("gallery-dl")?, video: program("yt-dlp")?, ffmpeg})
     }
 
-    pub(super) async fn download(&self, id: &str, dest: &Path, policy: &OnDuplicate, notify: impl Fn(String)) -> Result<PathBuf, String> {
+    pub(super) async fn download(&self, id: &str, dest: &Path, policy: &OnDuplicate, notify: impl Fn(String),
+        record_links: impl FnOnce(BTreeSet<String>) -> Result<(), String> + Send + 'static) -> Result<PathBuf, String> {
         let base = Url::parse(&format!("https://www.patreon.com/posts/{id}")).map_err(|e| e.to_string())?;
         let stem = format!("patreon-post-{id}");
         let existing = dest.join(format!("{stem}.zip"));
@@ -176,7 +192,9 @@ impl PostTools {
 
         let profiles = std::iter::once(("public access".into(), String::new()))
             .chain(std::iter::once_with(installed_browsers).flatten());
-        let (stage, post, cookie) = self.fetch_post(id, &base, dest, profiles, &notify).await?;
+        let (stage, mut post, cookie) = self.fetch_post(id, &base, dest, profiles, &notify).await?;
+        let links = std::mem::take(&mut post.links);
+        tokio::task::spawn_blocking(move || record_links(links)).await.map_err(|e| e.to_string())??;
         self.save_body_assets(stage.path(), post, &base, &cookie, &notify).await?;
 
         notify("Saving post archive".into());
@@ -346,6 +364,23 @@ mod tests {
         assert!(!post.text.contains("comment"));
     }
 
+    #[test]
+    fn keeps_body_links_with_destinations_and_ignores_comments() {
+        let base = Url::parse("https://www.patreon.com/posts/101").unwrap();
+        let meta = json!({"content": r#"<a href="https://www.dropbox.com/scl/fi/a/video.mp4?rlkey=one&amp;dl=0">Watch</a>
+            <p>mega.nz/file/abc#exampleKey or t.me/+group</p>
+            <a href="https://x.com/creator/status/123">X</a>
+            <a href="https://instagram.com/creator/">Instagram</a>
+            <div data-tag="comments"><a href="https://t.me/comment">Ignore</a></div>
+            <img src="https://cdn.example/photo.jpg">"#});
+        let post = post_contents(&meta, &base, "");
+        assert_eq!(post.links, BTreeSet::from([
+            "https://www.dropbox.com/scl/fi/a/video.mp4?rlkey=one&dl=0", "https://mega.nz/file/abc#exampleKey",
+            "https://t.me/+group", "https://x.com/creator/status/123", "https://instagram.com/creator/",
+        ].map(str::to_string)));
+        assert!(post.assets.iter().any(|(url, kind)| url.host_str() == Some("www.dropbox.com") && *kind == Kind::Link));
+    }
+
     #[cfg(unix)]
     #[tokio::test]
     async fn each_post_gets_its_own_archive_and_a_locked_post_returns_an_error() {
@@ -370,7 +405,11 @@ printf 'GIF89a-post-%s' "$id" > "$dir/gallery-0001.gif"
         fs::set_permissions(&gallery, fs::Permissions::from_mode(0o700)).unwrap();
         let tools = PostTools {gallery, video: PathBuf::new(), ffmpeg: None};
         for id in ["101", "102"] {
-            let file = tools.download(id, dest.path(), &OnDuplicate::CreateNew, |_| {}).await.unwrap();
+            let expected = format!("https://example.org/post-{id}");
+            let file = tools.download(id, dest.path(), &OnDuplicate::CreateNew, |_| {}, move |links| {
+                assert_eq!(links, BTreeSet::from([expected]));
+                Ok(())
+            }).await.unwrap();
             assert_eq!(file.file_name().unwrap().to_str().unwrap(), format!("patreon-post-{id}.zip"));
             let mut archive = zip::ZipArchive::new(File::open(file).unwrap()).unwrap();
             let mut gif = String::new();

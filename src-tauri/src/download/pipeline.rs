@@ -142,7 +142,11 @@ pub async fn execute_download_job(app: AppHandle, row: DbDownloadRow, overrides:
         }
     }
 
-    let site = if patreon { "patreon" } else { infer_site(&cleaned_url) };
+    let site = match row.platform.as_str() {
+        _ if patreon => "patreon",
+        platform @ ("mega" | "telegram" | "dropbox" | "twitter") => platform,
+        _ => infer_site(&cleaned_url),
+    };
     let collection_dir_label = Database::collection_folder_label(&row.origin, &row.user_handle);
     let dest_dir = if use_flat {
         download_root.clone()
@@ -153,8 +157,14 @@ pub async fn execute_download_job(app: AppHandle, row: DbDownloadRow, overrides:
 
     if let Some(post_id) = post_id {
         let tools = super::patreon::PostTools::for_app(&app, settings.use_system_binaries)?;
+        let handle = app.clone();
         let path = tools.download(&post_id, &dest_dir, &settings.on_duplicate, |message| {
             (emitter)(DownloadEvent::Message {id: row.id, message});
+        }, move |links| {
+            use tauri::Emitter;
+            Database::new().and_then(|db| db.record_post_links(row.id, &links)).map_err(|e| e.to_string())?;
+            let _ = handle.emit("post-links-collected", ());
+            Ok(())
         }).await?;
         return Ok(Some(path.display().to_string()));
     }

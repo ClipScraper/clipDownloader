@@ -20,6 +20,7 @@ pub fn sidebar(props: &SidebarProps) -> Html {
         let label = match p {
             Page::Home => "Home",
             Page::Downloads => "Downloads",
+            Page::Links => "Links",
             Page::Library => "Library",
             Page::Settings => "Settings",
             Page::Extension => "Extension",
@@ -37,6 +38,7 @@ pub fn sidebar(props: &SidebarProps) -> Html {
         <aside id="app-sidebar" class="sidebar">
             <button id="sidebar-home-button" class="nav-btn" onclick={set_page(Page::Home, props.page.clone())} title="Home"><Icon icon_id={IconId::LucideHome} width={"28"} height={"28"} /></button>
             <button id="sidebar-downloads-button" class="nav-btn" onclick={set_page(Page::Downloads, props.page.clone())} title="Downloads"><Icon icon_id={IconId::LucideDownload} width={"28"} height={"28"} /></button>
+            <button id="sidebar-links-button" class="nav-btn" onclick={set_page(Page::Links, props.page.clone())} title="Links" aria-label="Links"><Icon icon_id={IconId::LucideLink} width={"28"} height={"28"} /></button>
             <button id="sidebar-library-button" class="nav-btn" onclick={set_page(Page::Library, props.page.clone())} title="Library"><Icon icon_id={IconId::LucideLibrary} width={"28"} height={"28"} /></button>
             <button id="sidebar-settings-button" class="nav-btn" onclick={set_page(Page::Settings, props.page.clone())} title="Settings"><Icon icon_id={IconId::LucideSettings} width={"28"} height={"28"} /></button>
             <button id="sidebar-extension-button" class="nav-btn" onclick={set_page(Page::Extension, props.page.clone())} title="Extension"><Icon icon_id={IconId::LucideListEnd} width={"28"} height={"28"} class="flipped-icon" /></button>

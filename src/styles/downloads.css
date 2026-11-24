@@ -239,3 +239,19 @@
     background-color: rgba(255,255,255,0.10);
   }
 }
+
+/* Collected links share the platform and collection cards used by the library. */
+.service-icon { display: inline-flex; align-items: center; flex-shrink: 0; }
+.brand-icon[src$="/x.com.png"] { filter: invert(1); }
+.service-mega { color: #ff555d; }
+.service-dropbox { color: #6da3ff; }
+.service-telegram { color: #59b9e9; }
+.link-catalog summary::-webkit-details-marker { display: none; }
+.link-catalog summary::before { content: '▸'; color: #bdbdbd; margin-right: 8px; }
+.link-catalog details[open] > summary::before { content: '▾'; }
+.link-catalog .rows-card { padding: 8px 12px; }
+.collected-link { color: #e0e7f1; display: flex; align-items: center; gap: 10px; min-width: 0; max-width: 100%; }
+.collected-link .brand-icon { flex: 0 0 18px; }
+.link-address { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; user-select: text; }
+.collected-link:hover { color: #9bcfff; text-decoration: underline; }
+.link-catalog summary:focus-visible, .collected-link:focus-visible { outline: 2px solid #9bcfff; outline-offset: 2px; }
