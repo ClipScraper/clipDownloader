@@ -18,7 +18,7 @@ Export a Patreon collection as CSV from Listr and use **Import list** or drop th
 
 ### Collected links
 
-Open **Links** beneath **Downloads** in the sidebar. Expand a source platform and collection to see imported URLs and links found in Patreon post bodies. Destination icons identify services including Instagram, X/Twitter, MEGA, Dropbox, and Telegram. Clicking a link opens the full address in the system default browser. Links in existing ClipDownloader post archives are recovered when the Links page opens.
+Open **Links** beneath **Downloads** to browse external references such as MEGA shares, Dropbox preview pages, Telegram invites, and social profiles. Links are grouped by source platform and collection and open in the system default browser. Supported media such as Instagram reels, TikTok videos and photos, Patreon posts, and direct image or file URLs go to **Downloads**. Successfully saved files appear in **Library**. Media embedded in a Patreon post remains in its archive. Downloadable outbound hyperlinks enter the collection’s backlog. Existing rows and shortcuts in older post archives are reclassified on upgrade.
 
 ## Local Development
 

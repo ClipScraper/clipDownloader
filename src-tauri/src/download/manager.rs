@@ -332,9 +332,8 @@ async fn maybe_start_next(app: &AppHandle, db: Arc<tokio::sync::Mutex<Connection
                 continue;
             }
         };
-        if changed {
-            emit_event(app, DownloadEvent::StatusChanged {id, status: DownloadStatus::Downloading});
-        }
+        if !changed { continue; }
+        emit_event(app, DownloadEvent::StatusChanged {id, status: DownloadStatus::Downloading});
 
         let app_clone = app.clone();
         let tx_clone = cmd_tx.clone();
@@ -345,12 +344,21 @@ async fn maybe_start_next(app: &AppHandle, db: Arc<tokio::sync::Mutex<Connection
                 tokio::time::sleep(std::time::Duration::from_secs(cooldown_secs as u64)).await;
             }
             match run_download_with_progress(&app_clone, db_clone.clone(), id, opts).await {
-                Ok(path) => {
-                    let _ = set_status(db_clone.clone(), id, DownloadStatus::Done).await;
-                    let _ = set_last_error(db_clone.clone(), id, None).await;
-                    let final_path = path.unwrap_or_default();
-                    let _ = mark_download_done(db_clone.clone(), id, &final_path).await;
-                    emit_event(&app_clone, DownloadEvent::StatusChanged {id, status: DownloadStatus::Done});
+                Ok(pipeline::JobResult::Saved(path)) => {
+                    if let Err(message) = mark_download_done(db_clone.clone(), id, &path).await {
+                        let _ = set_last_error(db_clone.clone(), id, Some(message)).await;
+                        let _ = set_status(db_clone.clone(), id, DownloadStatus::Error).await;
+                        emit_event(&app_clone, DownloadEvent::StatusChanged {id, status: DownloadStatus::Error});
+                    } else {
+                        emit_event(&app_clone, DownloadEvent::StatusChanged {id, status: DownloadStatus::Done});
+                        let _ = app_clone.emit("post-links-collected", ());
+                    }
+                }
+                Ok(pipeline::JobResult::Reference) => {
+                    if set_status(db_clone.clone(), id, DownloadStatus::Reference).await.is_ok() {
+                        emit_event(&app_clone, DownloadEvent::StatusChanged {id, status: DownloadStatus::Reference});
+                        let _ = app_clone.emit("post-links-collected", ());
+                    }
                 }
                 Err(err_msg) => {
                     let _ = set_last_error(db_clone.clone(), id, Some(err_msg.clone())).await;
@@ -405,7 +413,7 @@ async fn mark_download_done(db: Arc<tokio::sync::Mutex<Connection>>, id: i64, pa
     Ok(())
 }
 
-async fn run_download_with_progress(app: &AppHandle, db: Arc<tokio::sync::Mutex<Connection>>, id: i64, overrides: Option<DownloadOverrides>) -> Result<Option<String>, String> {
+async fn run_download_with_progress(app: &AppHandle, db: Arc<tokio::sync::Mutex<Connection>>, id: i64, overrides: Option<DownloadOverrides>) -> Result<pipeline::JobResult, String> {
     let db_clone = db.clone();
     let row = tauri::async_runtime::spawn_blocking(move || {
         let conn = db_clone.blocking_lock();

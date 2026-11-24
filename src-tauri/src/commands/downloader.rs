@@ -1,10 +1,18 @@
-use crate::database::{Database, Download, DownloadStatus, MediaKind, Origin, OutputFormat, Platform};
+use crate::database::{Database, Download, DownloadStatus, Origin, OutputFormat, Platform};
 use crate::download::manager::{DownloadCommand, DownloadManager, DownloadOverrides};
 use chrono::Utc;
-use tauri::State;
+use tauri::{Emitter, State};
+use crate::utils::{resource::{classify_url, Resource}, url::{http_url, link_service}};
+
+#[derive(serde::Serialize)]
+#[serde(untagged)]
+pub enum Submission {
+    Download(i64),
+    Notice(&'static str),
+}
 
 #[tauri::command]
-pub async fn download_url(manager: State<'_, DownloadManager>, url: String, output_format: Option<String>, outputFormat: Option<String>, flat_destination: Option<bool>, flatDestination: Option<bool>) -> Result<i64, String> {
+pub async fn download_url(app: tauri::AppHandle, manager: State<'_, DownloadManager>, url: String, output_format: Option<String>, outputFormat: Option<String>, flat_destination: Option<bool>, flatDestination: Option<bool>) -> Result<Submission, String> {
     let force_audio = output_format.or(outputFormat).and_then(|fmt| match fmt.to_lowercase().as_str() {
         "audio" => Some(true),
         "video" => Some(false),
@@ -13,17 +21,15 @@ pub async fn download_url(manager: State<'_, DownloadManager>, url: String, outp
     let flat = flat_destination.or(flatDestination).unwrap_or(false);
 
     let cleaned_url = sanitize_url(&url);
-    let lookup_url = cleaned_url.clone();
-    let force_audio_clone = force_audio.clone();
-    let (row_id, created) = tauri::async_runtime::spawn_blocking(move || ensure_row_for_url(&lookup_url, force_audio_clone)).await.map_err(|e| format!("Join error: {e}"))??;
-
-    if created {
-        println!("[DOWNLOADER] inserted new manual row {row_id}");
-    }
+    let result = tauri::async_runtime::spawn_blocking(move || ensure_row_for_url(&cleaned_url, force_audio)).await.map_err(|e| format!("Join error: {e}"))??;
+    let Submission::Download(row_id) = result else {
+        let _ = app.emit("post-links-collected", ());
+        return Ok(result);
+    };
 
     manager.send(DownloadCommand::StartNow {id: row_id, overrides: Some(DownloadOverrides {force_audio, flat_destination: flat})}).await?;
 
-    Ok(row_id)
+    Ok(Submission::Download(row_id))
 }
 
 #[tauri::command]
@@ -64,41 +70,33 @@ pub async fn refresh_downloads_snapshot(manager: State<'_, DownloadManager>) -> 
 }
 
 fn sanitize_url(raw: &str) -> String {
-    raw.trim().replace("#__audio_only__", "").replace("#__flat__", "")
+    raw.trim().trim_end_matches("#__flat__").trim_end_matches("#__audio_only__").to_owned()
 }
 
-fn ensure_row_for_url(url: &str, force_audio: Option<bool>) -> Result<(i64, bool), String> {
+fn ensure_row_for_url(url: &str, force_audio: Option<bool>) -> Result<Submission, String> {
+    let parsed = http_url(url)?;
     let db = Database::new().map_err(|e| e.to_string())?;
+    // An explicit manual submission can still use yt-dlp's generic extractor on unknown sites.
+    let service = link_service(&parsed);
+    let route = classify_url(&parsed, if service == "other" { "manual" } else { "" });
     if let Some(id) = db.find_id_by_link(url).map_err(|e| e.to_string())? {
-        return Ok((id, false));
+        let row = db.find_download_by_id(id).map_err(|e| e.to_string())?.ok_or("Item no longer exists")?;
+        return Ok(match row.status {
+            DownloadStatus::Reference => Submission::Notice("Saved in Links"),
+            DownloadStatus::Done if route == Resource::Reference => Submission::Notice("Already in Library"),
+            _ => Submission::Download(id),
+        });
     }
-
-    let platform = infer_platform(url);
-    let media_kind = match platform {
-        Platform::Patreon | Platform::Mega | Platform::Dropbox | Platform::Telegram => MediaKind::Link,
-        _ => infer_media(url),
-    };
+    let platform = Platform::from(service.to_owned());
+    let media_kind = route.media();
+    let status = if route == Resource::Reference { DownloadStatus::Reference } else { DownloadStatus::Queued };
     let output = match force_audio {
         Some(true) => OutputFormat::Audio,
         Some(false) => OutputFormat::Video,
         None => OutputFormat::Default,
     };
 
-    let download = Download {id: None, platform, name: url.to_string(), media: media_kind, user: "Unknown".into(), origin: Origin::Manual, link: url.to_string(), output_format: output, status: DownloadStatus::Queued, path: "unknown_path".into(), image_set_id: None, last_error: None, date_added: Utc::now(), date_downloaded: None};
+    let download = Download {id: None, platform, name: url.to_string(), media: media_kind, user: "Unknown".into(), origin: Origin::Manual, link: url.to_string(), output_format: output, status, path: "unknown_path".into(), image_set_id: None, last_error: None, date_added: Utc::now(), date_downloaded: None};
     let id = db.insert_download(&download).map_err(|e| e.to_string())?;
-    Ok((id, true))
-}
-
-fn infer_platform(url: &str) -> Platform {
-    crate::utils::url::http_url(url).ok().map(|parsed| {
-        Platform::from(crate::utils::url::link_service(&parsed).to_owned())
-    }).unwrap_or(Platform::Other)
-}
-
-fn infer_media(url: &str) -> MediaKind {
-    if url.contains("/photo/") || url.contains("pinterest.com") {
-        MediaKind::Image
-    } else {
-        MediaKind::Video
-    }
+    Ok(if route == Resource::Reference { Submission::Notice("Saved in Links") } else { Submission::Download(id) })
 }

@@ -61,6 +61,7 @@ fn log_download_snapshot(rows: &[ClipRow]) {
             DownloadStatus::Done => cnt_done += 1,
             DownloadStatus::Error => cnt_err += 1,
             DownloadStatus::Canceled => cnt_cancel += 1,
+            DownloadStatus::Reference => {}
         }
     }
     web_sys::console::log_1(&format!("[UI] list_downloads loaded: backlog={} queue={} downloading={} done={} error={} canceled={}", cnt_backlog, cnt_queue, cnt_down, cnt_done, cnt_err, cnt_cancel).into());
@@ -74,6 +75,7 @@ fn default_stage_text(row: &ClipRow) -> String {
         DownloadStatus::Done => "Done".into(),
         DownloadStatus::Error => row.last_error.clone().unwrap_or_else(|| "Failed".into()),
         DownloadStatus::Canceled => "Canceled".into(),
+        DownloadStatus::Reference => "Saved in Links".into(),
     }
 }
 
@@ -81,7 +83,7 @@ fn merge_download_entries(previous: &HashMap<i64, DownloadEntry>, rows: Vec<Clip
     let mut map = HashMap::new();
 
     for row in rows {
-        if matches!(row.status, DownloadStatus::Done | DownloadStatus::Canceled) {
+        if matches!(row.status, DownloadStatus::Done | DownloadStatus::Canceled | DownloadStatus::Reference) {
             continue;
         }
 
@@ -118,7 +120,7 @@ fn merge_download_entries(previous: &HashMap<i64, DownloadEntry>, rows: Vec<Clip
                 }
                 entry.stage_text = entry.row.last_error.clone().unwrap_or_else(|| "Failed".into());
             }
-            DownloadStatus::Done | DownloadStatus::Canceled => {}
+            DownloadStatus::Done | DownloadStatus::Canceled | DownloadStatus::Reference => {}
         }
 
         map.insert(entry.row.id, entry);
@@ -404,7 +406,7 @@ pub fn app() -> Html {
                                 should_refresh = true;
                             }
                             DownloadEventPayload::StatusChanged {id, status} => match status {
-                                DownloadStatus::Done | DownloadStatus::Canceled => {
+                                DownloadStatus::Done | DownloadStatus::Canceled | DownloadStatus::Reference => {
                                     if map.remove(&id).is_none() {
                                         should_refresh = true;
                                     } else {
@@ -650,7 +652,7 @@ pub fn app() -> Html {
             }
         }
         Page::Links => html! {<pages::links::LinksPage revision={*links_revision} />},
-        Page::Library => html! {<pages::library::LibraryPage />},
+        Page::Library => html! {<pages::library::LibraryPage revision={*links_revision} />},
         Page::Settings => html! {<pages::settings::SettingsPage />},
         Page::Extension => html! {<pages::extension::ExtensionPage />},
         Page::Sponsor => html! {<pages::sponsor::SponsorPage />},

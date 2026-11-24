@@ -28,6 +28,15 @@ pub fn run() {
             let shared_conn = shared_conn.clone();
             move |app| {
                 let app_handle = app.handle();
+                let recovery_app = app_handle.clone();
+                tauri::async_runtime::spawn_blocking(move || {
+                    use tauri::Emitter;
+                    match database::Database::new().and_then(|db| db.recover_archived_links()) {
+                        Ok(true) => { let _ = recovery_app.emit("post-links-collected", ()); }
+                        Err(e) => tracing::warn!("Could not recover archived shortcuts: {e}"),
+                        Ok(false) => {}
+                    }
+                });
                 let tx_clone = cmd_tx.clone();
                 let db_clone = shared_conn.clone();
                 tauri::async_runtime::spawn(crate::download::manager::run_download_manager(app_handle.clone(), db_clone, cmd_rx, tx_clone));

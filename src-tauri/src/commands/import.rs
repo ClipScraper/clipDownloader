@@ -1,4 +1,6 @@
-/// Import a CSV (as text) and add all rows into the DB with status=Backlog.
+use crate::utils::resource::{classify_url, Resource};
+
+/// Import downloadable items and browser-only references from a CSV.
 /// This is the core function that processes CSV files imported via "Import list" button or drag-and-drop.
 /// Expected CSV header format: Platform,Type,Handle,Media,link
 /// - Platform: "patreon", "pinterest", "instagram", "tiktok", or "youtube"
@@ -7,7 +9,7 @@
 /// - Media: "pictures", "video", or "link"
 /// - link: the URL to download from
 ///
-/// All imported items are stored in the database with status "Backlog" for later downloading.
+/// Downloadable items enter the backlog. External references are visible only in Links.
 /// Returns the number of successfully imported rows.
 
 #[tauri::command]
@@ -63,11 +65,14 @@ pub(crate) fn import_into(db: &crate::database::Database, csv_text: &str) -> Res
             }
 
             let platform = crate::database::Platform::from(platform_s.clone());
-            let media = crate::database::MediaKind::from(media_s);
-
-            if platform == crate::database::Platform::Patreon || media == crate::database::MediaKind::Link {
-                crate::utils::url::http_url(&link)?;
-            }
+            let parsed = crate::utils::url::http_url(&link)?;
+            let route = classify_url(&parsed, &media_s);
+            let media = route.media();
+            let status = if route == Resource::Reference {
+                crate::database::DownloadStatus::Reference
+            } else {
+                crate::database::DownloadStatus::Backlog
+            };
 
             // Determine origin; special-case Pinterest "{user} - {something}" to pinboard
             let origin = if platform_s.eq_ignore_ascii_case("pinterest") {
@@ -121,20 +126,19 @@ pub(crate) fn import_into(db: &crate::database::Database, csv_text: &str) -> Res
 
             let platform_token = format!("{:?}", platform).to_lowercase();
             let origin_token = format!("{:?}", origin).to_lowercase();
-            if let Some((id, status, path)) = db.existing_collection_item(&link, &platform_token, &handle, &origin_token, media == crate::database::MediaKind::Link).map_err(|e| e.to_string())? {
-                // Reimporting an old completed shortcut is an explicit request to download the full post.
-                if platform_token == "patreon" && status == "done" && path.ends_with(".url") && crate::utils::url::patreon_post_id(&link).is_some() {
-                    db.set_status_by_id(id, crate::database::DownloadStatus::Backlog).map_err(|e| e.to_string())?;
-                    inserted += 1;
+            if let Some((id, status, path)) = db.existing_collection_item(&link, &platform_token, &handle, &origin_token, matches!(media, crate::database::MediaKind::Link | crate::database::MediaKind::File) || parsed.query().is_some() || parsed.fragment().is_some()).map_err(|e| e.to_string())? {
+                let old_shortcut = status == "done" && path.to_ascii_lowercase().ends_with(".url");
+                let stronger_hint = status == "reference" && route != classify_url(&parsed, "");
+                if route != Resource::Reference && (old_shortcut || stronger_hint) {
+                    inserted += db.restore_media_download(id, &media).map_err(|e| e.to_string())? as u64;
                 }
                 continue;
             }
 
-            let download = crate::database::Download {id: None, platform, name, media, user: handle, origin, link, output_format: crate::database::OutputFormat::Default, status: crate::database::DownloadStatus::Backlog, path: String::new(), image_set_id: None, last_error: None, date_added: chrono::Utc::now(), date_downloaded: None};
+            let download = crate::database::Download {id: None, platform, name, media, user: handle, origin, link, output_format: crate::database::OutputFormat::Default, status, path: String::new(), image_set_id: None, last_error: None, date_added: chrono::Utc::now(), date_downloaded: None};
 
-            if db.insert_download(&download).is_ok() {
-                inserted += 1;
-            }
+            db.insert_download(&download).map_err(|e| e.to_string())?;
+            inserted += 1;
         }
 
         Ok(inserted)

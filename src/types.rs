@@ -37,6 +37,8 @@ pub enum MediaKind {
     Pictures,
     #[serde(alias = "video")]
     Video,
+    #[serde(alias = "file")]
+    File,
     #[serde(alias = "link")]
     Link,
 }
@@ -76,6 +78,7 @@ pub enum DownloadStatus {
     Done,
     Error,
     Canceled,
+    Reference,
 }
 
 impl Default for DownloadStatus {

@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 pub mod os;
+pub mod resource;
 pub mod text;
 pub mod url;
 

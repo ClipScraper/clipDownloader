@@ -72,25 +72,32 @@ fn collection_title(row: &ClipRow) -> String {
 
 /* ───────────────────────── component ───────────────────────── */
 
+#[derive(Properties, PartialEq)]
+pub struct LibraryProps {
+    pub revision: u64,
+}
+
 #[function_component(LibraryPage)]
-pub fn library_page() -> Html {
+pub fn library_page(props: &LibraryProps) -> Html {
     use_effect(|| {
         assign_missing_descriptive_ids("library-page");
         || ()
     });
     let done_rows = use_state(|| Vec::<ClipRow>::new());
 
-    // load once
+    // Refresh the open library when a download completes.
     {
         let done_rows = done_rows.clone();
-        use_effect_with((), move |_| {
+        use_effect_with(props.revision, move |_| {
+            let current = std::rc::Rc::new(std::cell::Cell::new(true));
+            let active = current.clone();
             spawn_local(async move {
                 let v = invoke("list_done", JsValue::NULL).await;
                 if let Ok(rows) = serde_wasm_bindgen::from_value::<Vec<ClipRow>>(v) {
-                    done_rows.set(rows);
+                    if active.get() { done_rows.set(rows); }
                 }
             });
-            || ()
+            move || current.set(false)
         });
     }
 
@@ -329,6 +336,7 @@ pub fn library_page() -> Html {
                                                                                     <li id={format!("library-item-{}-item", row.id)} class="row-line" key={row.link.clone()}>
                                                                                         {
                                                                                             match row.media {
+                                                                                                MediaKind::File => html!{ <Icon icon_id={IconId::LucideFile} width={"16"} height={"16"} /> },
                                                                                                 MediaKind::Link => html!{ <Icon icon_id={IconId::LucideLink} width={"16"} height={"16"} /> },
                                                                                                 MediaKind::Pictures => html!{<Icon icon_id={IconId::LucideImage} width={"16"} height={"16"} />},
                                                                                                 MediaKind::Video    => html!{<Icon icon_id={IconId::LucideVideo} width={"16"} height={"16"} />},

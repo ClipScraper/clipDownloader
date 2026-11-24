@@ -136,6 +136,7 @@ fn icon_for_row(row: &ClipRow) -> IconId {
         IconId::LucideImage
     } else {
         match row.media {
+            MediaKind::File => IconId::LucideFile,
             MediaKind::Link => IconId::LucideLink,
             MediaKind::Pictures => IconId::LucideImage,
             MediaKind::Video => IconId::LucideVideo,
@@ -410,7 +411,7 @@ pub fn downloads_page(props: &Props) -> Html {
                                                                                         };
                                                                                         // Determine current effective format (override -> row value)
                                                                                         let effective_fmt: Option<String> = (*output_overrides).get(&row.link).cloned().or_else(|| row.output_format.clone());
-                                                                                        let fixed_media = row.media == MediaKind::Link || (row.platform == Platform::Patreon && row.media == MediaKind::Pictures);
+                                                                                        let fixed_media = matches!(row.media, MediaKind::File | MediaKind::Link) || (row.platform == Platform::Patreon && row.media == MediaKind::Pictures);
                                                                                         let row_icon = if !fixed_media && effective_fmt.as_deref() == Some("audio") {
                                                                                             IconId::LucideMusic
                                                                                         } else {

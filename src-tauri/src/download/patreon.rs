@@ -33,17 +33,14 @@ struct Post {
 }
 
 fn classify(url: &Url) -> Kind {
-    let path = url.path().to_ascii_lowercase();
-    match path.rsplit('.').next().unwrap_or("") {
-        "jpg" | "jpeg" | "png" | "gif" | "webp" | "avif" | "bmp" | "svg" | "tiff" | "heic" => Kind::Image,
-        "zip" | "7z" | "rar" | "pdf" | "epub" | "mp3" | "wav" | "flac" => Kind::File,
-        "mp4" | "m4v" | "mov" | "webm" | "mkv" | "m3u8" | "mpd" | "ogv" => Kind::Video,
-        _ => match url.host_str().unwrap_or("") {
-            "youtu.be" | "player.vimeo.com" | "stream.mux.com" => Kind::Video,
-            "youtube.com" | "www.youtube.com" | "www.youtube-nocookie.com" if path == "/watch" || path.starts_with("/embed/") || path.starts_with("/shorts/") => Kind::Video,
-            "vimeo.com" | "www.vimeo.com" if path.trim_matches('/').rsplit('/').next().is_some_and(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit())) => Kind::Video,
-            _ => Kind::Link,
-        },
+    use crate::utils::resource::{classify_url, Resource};
+    match classify_url(url, "") {
+        Resource::Image => Kind::Image,
+        Resource::File => Kind::File,
+        // Social post permalinks are individual download jobs. Embedded players and direct
+        // video sources remain part of the post archive.
+        Resource::Video if !matches!(link_service(url), "instagram" | "tiktok" | "twitter") => Kind::Video,
+        _ => Kind::Link,
     }
 }
 
@@ -79,10 +76,8 @@ fn post_contents(meta: &Value, base: &Url, downloaded: &str) -> Post {
         if http_url(url.as_str()).is_err() {
             return;
         }
-        let shared_resource = matches!(link_service(&url), "mega" | "dropbox" | "telegram");
-        if is_link || shared_resource {
-            links.insert(url.to_string());
-        }
+        let shared_resource = matches!(link_service(&url), "mega" | "dropbox" | "telegram")
+            && crate::utils::resource::classify_url(&url, "") == crate::utils::resource::Resource::Reference;
         if transferred.contains(raw) {
             return;
         }
@@ -91,6 +86,9 @@ fn post_contents(meta: &Value, base: &Url, downloaded: &str) -> Post {
         } else {
             kind.unwrap_or_else(|| classify(&url))
         };
+        if (is_link || shared_resource) && kind == Kind::Link {
+            links.insert(url.to_string());
+        }
         if let Some(&i) = positions.get(&url) {
             if assets[i].1 == Kind::Link {
                 assets[i].1 = kind;
@@ -133,6 +131,9 @@ fn post_contents(meta: &Value, base: &Url, downloaded: &str) -> Post {
                 "img" => Some(Kind::Image),
                 "source" if attrs.get("srcset").is_some() => Some(Kind::Image),
                 "a" if attrs.get("download").is_some() => Some(Kind::File),
+                // Preserve the body hyperlink in the archive. The catalog routes its
+                // target to the backlog if it is supported by the standalone downloader.
+                "a" => Some(Kind::Link),
                 "source" | "video" => Some(Kind::Video),
                 _ => None,
             };
@@ -152,13 +153,15 @@ fn post_contents(meta: &Value, base: &Url, downloaded: &str) -> Post {
                 if !node.ancestors().any(|n| n.as_element().is_some_and(|e| e.name.local.as_ref() == "a")) {
                     for link in finder.links(line) {
                         if let Some(url) = text_link_url(link.as_str()) {
-                            add(url.as_str(), None, true);
+                            add(url.as_str(), Some(Kind::Link), true);
                         }
                     }
                 }
             }
         }
     }
+    // A hyperlink can also be an inline image or video. That file is already covered by the archive.
+    links.retain(|raw| http_url(raw).ok().and_then(|u| positions.get(&u)).is_some_and(|i| assets[*i].1 == Kind::Link));
     Post {text: format!("{}\n{}\n\n{}\n", meta["title"].as_str().unwrap_or("Patreon post"), base, body.join("\n")), links, assets, video_fallback}
 }
 
@@ -255,11 +258,16 @@ impl PostTools {
     }
 
     async fn save_body_assets(&self, directory: &Path, post: Post, base: &Url, cookie: &str, notify: &impl Fn(String)) -> Result<(), String> {
-        tokio::fs::write(directory.join("post.txt"), post.text).await.map_err(|e| e.to_string())?;
+        let mut text = post.text;
+        let mut linked_downloads = Vec::new();
         for (index, (url, kind)) in post.assets.into_iter().enumerate() {
             let number = index + 1;
             match kind {
                 Kind::Link => {
+                    if crate::utils::resource::classify_url(&url, "") != crate::utils::resource::Resource::Reference {
+                        linked_downloads.push(url.to_string());
+                        continue;
+                    }
                     let shortcut = format!("[InternetShortcut]\r\nURL={}\r\n", url.as_str());
                     tokio::fs::write(directory.join(format!("link-{number:04}.url")), shortcut).await.map_err(|e| e.to_string())?;
                 }
@@ -275,6 +283,12 @@ impl PostTools {
             }
         }
 
+        if !linked_downloads.is_empty() {
+            text.push_str("\nLinked downloads\n");
+            text.push_str(&linked_downloads.join("\n"));
+            text.push('\n');
+        }
+        tokio::fs::write(directory.join("post.txt"), text).await.map_err(|e| e.to_string())?;
         Ok(())
     }
 

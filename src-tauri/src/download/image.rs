@@ -43,7 +43,11 @@ pub async fn run_gallery_dl_to_temp(app: &tauri::AppHandle, _base_download_dir: 
         format!("{}{}{}", res_dir.to_string_lossy(), path_sep(), std::env::var("PATH").unwrap_or_default())
     };
 
-    let args = vec!["--verbose".into(), "--cookies-from-browser".into(), cookie_arg.into(), "-d".into(), tmp_path.display().to_string(), url.into()];
+    let mut args = vec!["--verbose".into(), "-d".into(), tmp_path.display().to_string()];
+    if !cookie_arg.is_empty() {
+        args.extend(["--cookies-from-browser".into(), cookie_arg.into()]);
+    }
+    args.extend(["--".into(), url.into()]);
 
     let cmd = if settings.use_system_binaries {
         app.shell().command("gallery-dl")

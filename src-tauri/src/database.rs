@@ -45,9 +45,11 @@ fn init_schema(conn: &Connection) -> Result<()> {
 
     ensure_column(conn, "body_links", "ALTER TABLE downloads ADD COLUMN body_links TEXT")?;
 
+    ensure_column(conn, "shortcuts_indexed", "ALTER TABLE downloads ADD COLUMN shortcuts_indexed INTEGER NOT NULL DEFAULT 0")?;
+
     // Indexes for the columns the app filters/orders by. Without these every list/move/delete/lookup is a full table scan that degrades linearly as the library grows.
     conn.execute_batch("CREATE INDEX IF NOT EXISTS idx_downloads_status ON downloads(status); CREATE INDEX IF NOT EXISTS idx_downloads_link ON downloads(link); CREATE INDEX IF NOT EXISTS idx_downloads_collection ON downloads(platform, user_handle, origin);")?;
-    Ok(())
+    links::migrate_routes(conn)
 }
 
 /// Add a column via the provided `ALTER TABLE ... ADD COLUMN` DDL if it does not already exist on the `downloads` table.
@@ -86,7 +88,7 @@ pub fn find_download_by_id_conn(conn: &Connection, id: i64) -> Result<Option<DbD
 pub fn set_status_by_id_conn(conn: &Connection, id: i64, status: DownloadStatus) -> Result<usize> {
     let token = status.as_str();
     // Unchanged rows with the same status will not be updated.
-    let updated = conn.execute("UPDATE downloads SET status=?1, last_error=CASE WHEN ?1='error' THEN last_error ELSE NULL END, date_downloaded=CASE WHEN ?1='done' THEN CURRENT_TIMESTAMP ELSE date_downloaded END WHERE id=?2 AND status<>?1", [token, &id.to_string()])?;
+    let updated = conn.execute("UPDATE downloads SET status=?1, last_error=CASE WHEN ?1='error' THEN last_error ELSE NULL END, date_downloaded=CASE WHEN ?1='done' THEN CURRENT_TIMESTAMP ELSE date_downloaded END WHERE id=?2 AND status<>?1 AND status<>'reference'", [token, &id.to_string()])?;
     Ok(updated)
 }
 
@@ -101,7 +103,7 @@ pub fn set_status_bulk_conn(conn: &Connection, ids: &[i64], status: DownloadStat
     let mut updated = 0;
     for chunk in ids.chunks(500) {
         let id_list = chunk.iter().map(|id| id.to_string()).collect::<Vec<_>>().join(",");
-        updated += conn.execute(&format!("UPDATE downloads SET status=?1, last_error=CASE WHEN ?1='error' THEN last_error ELSE NULL END WHERE id IN ({id_list}) AND status<>?1"), [token])?;
+        updated += conn.execute(&format!("UPDATE downloads SET status=?1, last_error=CASE WHEN ?1='error' THEN last_error ELSE NULL END WHERE id IN ({id_list}) AND status<>?1 AND status<>'reference'"), [token])?;
     }
     Ok(updated)
 }
@@ -158,7 +160,7 @@ pub fn mark_id_done_conn(conn: &Connection, id: i64, path: &str) -> Result<usize
 }
 
 pub fn list_all_ui_conn(conn: &Connection) -> Result<Vec<UiBacklogRow>> {
-    let mut stmt = conn.prepare("SELECT id, status, platform, user_handle, origin, media, link, name, output_format, last_error FROM downloads ORDER BY CASE status WHEN 'downloading' THEN 0 WHEN 'queued' THEN 1 WHEN 'queue' THEN 1 WHEN 'backlog' THEN 2 WHEN 'error' THEN 3 WHEN 'done' THEN 4 WHEN 'canceled' THEN 5 ELSE 6 END, id")?;
+    let mut stmt = conn.prepare("SELECT id, status, platform, user_handle, origin, media, link, name, output_format, last_error FROM downloads WHERE status<>'reference' ORDER BY CASE status WHEN 'downloading' THEN 0 WHEN 'queued' THEN 1 WHEN 'queue' THEN 1 WHEN 'backlog' THEN 2 WHEN 'error' THEN 3 WHEN 'done' THEN 4 WHEN 'canceled' THEN 5 ELSE 6 END, id")?;
 
     let rows = stmt.query_map([], |row| {
         let id: i64 = row.get(0)?;
@@ -192,6 +194,7 @@ fn ui_media_token(media: &str) -> String {
     match media {
         "image" | "images" => "pictures",
         "link" => "link",
+        "file" => "file",
         _ => "video",
     }.into()
 }
@@ -213,6 +216,7 @@ pub enum Platform {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum MediaKind {
+    File,
     Image,
     Video,
     Link,
@@ -239,6 +243,7 @@ pub enum DownloadStatus {
     Done,
     Error,
     Canceled,
+    Reference,
 }
 
 impl DownloadStatus {
@@ -250,6 +255,7 @@ impl DownloadStatus {
             DownloadStatus::Done => "done",
             DownloadStatus::Error => "error",
             DownloadStatus::Canceled => "canceled",
+            DownloadStatus::Reference => "reference",
         }
     }
 
@@ -261,6 +267,7 @@ impl DownloadStatus {
             "done" => DownloadStatus::Done,
             "error" => DownloadStatus::Error,
             "canceled" => DownloadStatus::Canceled,
+            "reference" => DownloadStatus::Reference,
             _ => DownloadStatus::Backlog,
         }
     }
@@ -359,13 +366,13 @@ impl From<String> for Platform {
         }
     }
 }
-impl From<String> for MediaKind {
-    fn from(s: String) -> Self {
-        match s.to_lowercase().as_str() {
-            "link" => MediaKind::Link,
-            "image" | "images" | "picture" | "pictures" => MediaKind::Image,
-            "video" | "videos" => MediaKind::Video,
-            _ => MediaKind::Video, // Default fallback
+impl MediaKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Image => "image",
+            Self::Video => "video",
+            Self::File => "file",
+            Self::Link => "link",
         }
     }
 }
@@ -674,7 +681,7 @@ impl Database {
             download.path.clone()
         };
 
-        self.conn.execute("INSERT INTO downloads ( platform, name, media, user_handle, origin, link, output_format, status, path, image_set_id, last_error, date_added, date_downloaded ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)", params![format!("{:?}", download.platform).to_lowercase(), download.name.clone(), format!("{:?}", download.media).to_lowercase(), download.user.clone(), format!("{:?}", download.origin).to_lowercase(), download.link.clone(), format!("{:?}", download.output_format).to_lowercase(), format!("{:?}", download.status).to_lowercase(), path_value, download.image_set_id.clone().unwrap_or_default(), download.last_error.clone(), download.date_added.to_rfc3339(), download.date_downloaded.as_ref().map(|dt| dt.to_rfc3339()).unwrap_or_default(),])?;
+        self.conn.execute("INSERT INTO downloads ( platform, name, media, user_handle, origin, link, output_format, status, path, image_set_id, last_error, date_added, date_downloaded ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)", params![format!("{:?}", download.platform).to_lowercase(), download.name.clone(), download.media.as_str(), download.user.clone(), format!("{:?}", download.origin).to_lowercase(), download.link.clone(), format!("{:?}", download.output_format).to_lowercase(), format!("{:?}", download.status).to_lowercase(), path_value, download.image_set_id.clone().unwrap_or_default(), download.last_error.clone(), download.date_added.to_rfc3339(), download.date_downloaded.as_ref().map(|dt| dt.to_rfc3339()).unwrap_or_default(),])?;
         Ok(self.conn.last_insert_rowid())
     }
 
@@ -714,6 +721,12 @@ impl Database {
         };
 
         Ok(n)
+    }
+
+    pub fn restore_media_download(&self, id: i64, media: &MediaKind) -> Result<usize> {
+        self.conn.execute("UPDATE downloads SET status='backlog', media=?1, last_error=NULL WHERE id=?2
+                           AND (status='reference' OR (status='done' AND lower(path) LIKE '%.url'))",
+                          params![media.as_str(), id])
     }
 
     pub fn mark_id_done(&self, id: i64, path: &str) -> Result<usize> {
@@ -967,8 +980,8 @@ mod patreon_tests {
             assert_eq!(row.content_type, "collection");
             assert_eq!(row.handle, "Gallery");
         }
-        assert_eq!(rows.iter().map(|row| row.media.as_str()).collect::<Vec<_>>(), ["pictures", "video", "link"]);
-        assert_eq!(db.move_collection_to_queue("patreon", "Gallery", "collection").unwrap(), 3);
-        assert_eq!(db.list_queue_ui().unwrap().len(), 3);
+        assert_eq!(rows.iter().map(|row| row.media.as_str()).collect::<Vec<_>>(), ["pictures", "video"]);
+        assert_eq!(db.move_collection_to_queue("patreon", "Gallery", "collection").unwrap(), 2);
+        assert_eq!(db.list_queue_ui().unwrap().len(), 2);
     }
 }
