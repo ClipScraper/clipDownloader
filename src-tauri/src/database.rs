@@ -230,7 +230,7 @@ pub fn list_all_ui_conn(conn: &Connection) -> Result<Vec<UiBacklogRow>> {
         let last_error: Option<String> = row.get(9).ok();
 
         let content_type = match origin.as_str() {
-            "recommendation" | "playlist" | "profile" | "bookmarks" | "liked" | "reposts" => {
+            "recommendation" | "playlist" | "profile" | "bookmarks" | "liked" | "reposts" | "pinboard" | "manual" | "other" => {
                 origin.clone()
             }
             _ => "recommendation".to_string(),
@@ -414,7 +414,7 @@ impl From<String> for Platform {
 impl From<String> for MediaKind {
     fn from(s: String) -> Self {
         match s.to_lowercase().as_str() {
-            "image" | "images" => MediaKind::Image,
+            "image" | "images" | "picture" | "pictures" => MediaKind::Image,
             "video" | "videos" => MediaKind::Video,
             _ => MediaKind::Video, // Default fallback
         }
@@ -532,31 +532,26 @@ fn default_parallel_downloads() -> u8 {
 }
 
 /* ----------------------------- util: link normalize ----------------------------- */
-fn normalize_link(mut s: String) -> String {
-    // strip scheme
-    if let Some(idx) = s.find("://") {
-        s = s[idx + 3..].to_string();
+fn normalize_link(s: String) -> String {
+    let raw = s.trim();
+    let input = if raw.contains("://") { raw.to_string() } else { format!("https://{raw}") };
+    let Ok(mut url) = tauri::Url::parse(&input) else {
+        return raw.to_string();
+    };
+    if let Some(host) = url.host_str().map(str::to_string) {
+        if let Some(host) = host.strip_prefix("www.") {
+            let _ = url.set_host(Some(host));
+        }
     }
-    // lowercase host part
-    if let Some(idx) = s.find('/') {
-        let (host, rest) = s.split_at(idx);
-        s = format!("{}{}", host.to_lowercase(), rest);
-    } else {
-        s = s.to_lowercase();
+    url.set_fragment(None);
+    // Instagram post identity lives in the path. Other sites can identify media
+    // in the query (notably YouTube's v= and list=); never discard those keys.
+    if url.host_str() == Some("instagram.com") {
+        url.set_query(None);
     }
-    // remove "www."
-    if s.starts_with("www.") {
-        s = s.trim_start_matches("www.").to_string();
-    }
-    // drop query
-    if let Some((base, _q)) = s.split_once('?') {
-        s = base.to_string();
-    }
-    // trim trailing slash
-    while s.ends_with('/') {
-        s.pop();
-    }
-    s
+    let path = url.path().trim_end_matches('/').to_string();
+    url.set_path(&path);
+    url.as_str().split_once("://").map(|(_, rest)| rest).unwrap_or(url.as_str()).to_string()
 }
 
 /* -------------------------------- database -------------------------------- */
@@ -564,6 +559,11 @@ impl Database {
     pub fn new() -> Result<Self> {
         let conn = open_connection()?;
         Ok(Database { conn })
+    }
+
+    /// Keep a batch atomic while allowing existing connection helpers to be reused.
+    pub fn transaction(&self) -> Result<rusqlite::Transaction<'_>> {
+        self.conn.unchecked_transaction()
     }
 
     pub fn find_done_row_by_link(&self, link: &str) -> Result<Option<(i64, String)>> {
@@ -881,7 +881,14 @@ impl Database {
         } else {
             u
         };
-        format!("{o} - {u}")
+        // CSV handles are untrusted path components, including on Windows.
+        format!("{o} - {u}").chars().map(|ch| {
+            if ch.is_control() || matches!(ch, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') {
+                '_'
+            } else {
+                ch
+            }
+        }).collect::<String>().trim_end_matches(['.', ' ']).to_string()
     }
 
     pub fn find_download_by_id(&self, id: i64) -> Result<Option<DbDownloadRow>> {
@@ -961,7 +968,7 @@ impl Database {
             let last_error: Option<String> = row.get(9).ok();
 
             let content_type = match origin.as_str() {
-                "recommendation" | "playlist" | "profile" | "bookmarks" | "liked" | "reposts" => {
+                "recommendation" | "playlist" | "profile" | "bookmarks" | "liked" | "reposts" | "pinboard" | "manual" | "other" => {
                     origin.clone()
                 }
                 _ => "recommendation".to_string(),
@@ -1006,7 +1013,7 @@ impl Database {
             let last_error: Option<String> = row.get(9).ok();
 
             let content_type = match origin.as_str() {
-                "recommendation" | "playlist" | "profile" | "bookmarks" | "liked" | "reposts" => {
+                "recommendation" | "playlist" | "profile" | "bookmarks" | "liked" | "reposts" | "pinboard" | "manual" | "other" => {
                     origin.clone()
                 }
                 _ => "recommendation".to_string(),
@@ -1072,4 +1079,79 @@ impl Database {
         let n = self.conn.execute("UPDATE downloads SET status='backlog' WHERE platform = ?1 COLLATE NOCASE AND status IN ('queued', 'queue')", [platform])?;
         Ok(n)
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn database() -> Database {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema(&conn).unwrap();
+        Database { conn }
+    }
+
+    fn insert_video(db: &Database, link: &str, path: &str) -> i64 {
+        db.insert_download(&Download {
+            id: None, platform: Platform::Youtube, name: "Video".into(),
+            media: MediaKind::Video, user: "channel".into(), origin: Origin::Playlist,
+            link: link.into(), output_format: OutputFormat::Default,
+            status: DownloadStatus::Done, path: path.into(), image_set_id: None,
+            last_error: None, date_added: Utc::now(), date_downloaded: None,
+        }).unwrap()
+    }
+
+    #[test]
+    fn youtube_queries_preserve_media_identity() {
+        let db = database();
+        let first = "https://www.youtube.com/watch?v=first";
+        let second = "https://www.youtube.com/watch?v=second";
+        insert_video(&db, first, "/videos/first.mp4");
+        assert!(!db.link_exists_in_collection(second, "youtube", "channel", "playlist").unwrap());
+        let id = insert_video(&db, second, "/videos/second.mp4");
+        assert_eq!(db.find_done_row_by_link(second).unwrap(), Some((id, "/videos/second.mp4".into())));
+        assert_ne!(normalize_link("https://youtube.com/playlist?list=A".into()), normalize_link("https://youtube.com/playlist?list=B".into()));
+    }
+
+    #[test]
+    fn instagram_tracking_does_not_change_identity() {
+        assert_eq!(normalize_link("http://www.instagram.com/p/ABC/?igsh=tracking#fragment".into()),
+            normalize_link("https://instagram.com/p/ABC".into()));
+        assert_ne!(normalize_link("https://example.com/?id=1".into()), normalize_link("https://example.com/?id=2".into()));
+    }
+
+    #[test]
+    fn collection_label_is_one_safe_component() {
+        for handle in ["../../outside", "..\\..\\outside", "name:stream", "bad\nname", "name. "] {
+            let label = Database::collection_folder_label("profile", handle);
+            assert_eq!(std::path::Path::new(&label).components().count(), 1);
+            assert!(!label.contains(['/', '\\', ':', '\n']));
+            assert!(!label.ends_with(['.', ' ']));
+        }
+        assert_eq!(Database::collection_folder_label("profile", "normal_user"), "profile - normal_user");
+    }
+
+    #[test]
+    fn csv_picture_tokens_and_collection_origins_survive_listing() {
+        assert_eq!(MediaKind::from("Pictures".to_string()), MediaKind::Image);
+        let db = database();
+        let id = insert_video(&db, "https://youtube.com/watch?v=test", "/test.mp4");
+        for origin in ["manual", "pinboard", "other"] {
+            db.conn.execute("UPDATE downloads SET origin=?1 WHERE id=?2", params![origin, id]).unwrap();
+            assert_eq!(db.list_all_ui().unwrap()[0].content_type, origin);
+            assert_eq!(db.list_done_ui().unwrap()[0].content_type, origin);
+        }
+    }
+
+    #[test]
+    fn csv_import_keeps_distinct_videos_and_rolls_back_errors() {
+        let db = database();
+        let csv = "Platform,Type,Handle,Media,link\nyoutube,playlist,channel,Video,https://youtube.com/watch?v=first\nyoutube,playlist,channel,Video,https://youtube.com/watch?v=second\n";
+        assert_eq!(crate::commands::import::import_csv_into_db(csv, &db).unwrap(), 2);
+        assert_eq!(crate::commands::import::import_csv_into_db(csv, &db).unwrap(), 0);
+        let invalid = "Platform,Type,Handle,Media,link\nyoutube,playlist,channel,Video,https://youtube.com/watch?v=third\nyoutube,playlist,channel,Video,--exec=bad\n";
+        assert!(crate::commands::import::import_csv_into_db(invalid, &db).is_err());
+        assert_eq!(db.list_all_ui().unwrap().len(), 2);
+    }
+
 }

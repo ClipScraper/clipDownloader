@@ -15,6 +15,7 @@ pub async fn download_url(manager: State<'_, DownloadManager>, url: String, outp
     let flat = flat_destination.or(flatDestination).unwrap_or(false);
 
     let cleaned_url = sanitize_url(&url);
+    crate::utils::url::validate_download_url(&cleaned_url)?;
     let lookup_url = cleaned_url.clone();
     let force_audio_clone = force_audio.clone();
     let (row_id, created) = tauri::async_runtime::spawn_blocking(move || {ensure_row_for_url(&lookup_url, force_audio_clone)}).await.map_err(|e| format!("Join error: {e}"))??;

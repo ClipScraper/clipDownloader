@@ -1,12 +1,11 @@
 use std::io;
-use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::Manager;
 use tauri_plugin_shell::{
     process::{CommandChild, CommandEvent},
     ShellExt,
 };
-use tempfile::tempdir;
+use tempfile::{tempdir, TempDir};
 use tokio::time::{timeout, Duration};
 
 use crate::download::manager::DownloadEvent;
@@ -29,11 +28,10 @@ fn path_sep() -> &'static str {
     ":"
 }
 
-/// Run gallery-dl (sidecar) into a temp dir; return (ok, output, tmp_path).
-pub async fn run_gallery_dl_to_temp(app: &tauri::AppHandle, _base_download_dir: &std::path::Path, url: &str, cookie_arg: &str, id: i64, emitter: Arc<dyn Fn(DownloadEvent) + Send + Sync>) -> io::Result<(bool, String, PathBuf)> {
+/// Run gallery-dl (sidecar) into a temp dir; return the owned temporary directory so cancellation and errors clean it up.
+pub async fn run_gallery_dl_to_temp(app: &tauri::AppHandle, _base_download_dir: &std::path::Path, url: &str, cookie_arg: &str, id: i64, emitter: Arc<dyn Fn(DownloadEvent) + Send + Sync>) -> io::Result<(bool, String, TempDir)> {
     let tmp = tempdir()?;
-    #[allow(deprecated)]
-    let tmp_path = tmp.into_path(); // keep the directory; caller cleans up
+    let tmp_path = tmp.path();
 
     let res_dir = app.path().resource_dir().unwrap_or_else(|_| {
         std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
@@ -45,14 +43,15 @@ pub async fn run_gallery_dl_to_temp(app: &tauri::AppHandle, _base_download_dir: 
         format!("{}{}{}", res_dir.to_string_lossy(), path_sep(), std::env::var("PATH").unwrap_or_default())
     };
 
-    let args = vec![
+    let mut args = vec![
         "--verbose".into(),
-        "--cookies-from-browser".into(),
-        cookie_arg.into(),
         "-d".into(),
         tmp_path.display().to_string(),
-        url.into(),
     ];
+    if !cookie_arg.is_empty() {
+        args.extend(["--cookies-from-browser".into(), cookie_arg.into()]);
+    }
+    args.extend(["--".into(), url.into()]);
 
     let cmd = if settings.use_system_binaries {
         app.shell().command("gallery-dl")
@@ -107,5 +106,5 @@ pub async fn run_gallery_dl_to_temp(app: &tauri::AppHandle, _base_download_dir: 
         }
     }
 
-    Ok((ok, all_output, tmp_path))
+    Ok((ok, all_output, tmp))
 }

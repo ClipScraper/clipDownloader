@@ -117,6 +117,7 @@ pub async fn execute_download_job(
 
     let mut want_audio_pref = overrides.as_ref().and_then(|ov| ov.force_audio);
     let (mut cleaned_url, legacy_audio_flag, legacy_flat_flag) = strip_legacy_flags(&row.link);
+    utils::url::validate_download_url(&cleaned_url)?;
     if want_audio_pref.is_none() {
         want_audio_pref = match row.output_format.to_lowercase().as_str() {
             "audio" => Some(true),
@@ -159,7 +160,10 @@ pub async fn execute_download_job(
     let is_ig_post_p = is_instagram && cleaned_url.contains("/p/");
     let is_tt_photo = utils::url::is_tiktok_photo(&cleaned_url);
 
-    let browsers = utils::os::installed_browsers();
+    let mut browsers = utils::os::installed_browsers();
+    if site == "tiktok" {
+        browsers.insert(0, ("public access".into(), String::new()));
+    }
     if browsers.is_empty() {
         return Err("No logged-in browsers detected for cookies.".into());
     }
@@ -169,7 +173,11 @@ pub async fn execute_download_job(
     for (browser, cookie_arg) in &browsers {
         (emitter)(DownloadEvent::Message {
             id: row.id,
-            message: format!("Trying {} cookies; dest={}", browser, dest_dir.display()),
+            message: if cookie_arg.is_empty() {
+                format!("Trying public download; dest={}", dest_dir.display())
+            } else {
+                format!("Trying {} cookies; dest={}", browser, dest_dir.display())
+            },
         });
 
         if is_instagram {
@@ -196,25 +204,23 @@ pub async fn execute_download_job(
                         (emitter)(DownloadEvent::Message {id: row.id, message: "Video fetch failed, trying image fallback".into()});
                         match image::run_gallery_dl_to_temp(&app, &download_root, &cleaned_url, cookie_arg, row.id, emitter.clone()).await {
                             Ok((ok, _out, tmp_dir)) if ok => {
-                                let (moved_any, finals) = move_tmp_into_site_dir(&tmp_dir, &dest_dir, &settings.on_duplicate, |line| {
+                                let (moved_any, finals) = move_tmp_into_site_dir(tmp_dir.path(), &dest_dir, &settings.on_duplicate, |line| {
                                     (emitter)(DownloadEvent::Message {id: row.id, message: line});
                                 }).unwrap_or((false, vec![]));
-                                let _ = fs::remove_dir_all(&tmp_dir);
                                 if moved_any {
                                     (emitter)(DownloadEvent::Message {id: row.id, message: "Saved images".into()});
                                     return Ok(finals.get(0).cloned());
                                 } else {
-                                    last_error.get_or_insert_with(|| {format!("No files moved from {}", tmp_dir.display())});
+                                    last_error.get_or_insert_with(|| {format!("No files moved from {}", tmp_dir.path().display())});
                                 }
                             }
                             Ok((_ok, output, tmp_dir)) => {
-                                let msg = friendly_browser_error(browser, &output).unwrap_or_else(|| {format!("gallery-dl failed (IG fallback) tmp={}\n{}", tmp_dir.display(), output)});
+                                let msg = friendly_browser_error(browser, &output).unwrap_or_else(|| {format!("gallery-dl failed (IG fallback) tmp={}\n{}", tmp_dir.path().display(), output)});
                                 if specific_cookie_error.is_none() {
                                     specific_cookie_error = friendly_browser_error(browser, &output);
                                 }
                                 last_error.get_or_insert(msg.clone());
                                 (emitter)(DownloadEvent::Message {id: row.id, message: msg});
-                                let _ = fs::remove_dir_all(&tmp_dir);
                             }
                             Err(e) => {
                                 last_error.get_or_insert_with(|| e.to_string());
@@ -230,25 +236,23 @@ pub async fn execute_download_job(
             (emitter)(DownloadEvent::Message {id: row.id, message: "Preparing image download".into()});
             match image::run_gallery_dl_to_temp(&app, &download_root, &cleaned_url, cookie_arg, row.id, emitter.clone()).await {
                 Ok((ok, _output, tmp_dir)) if ok => {
-                    let (moved_any, finals) = move_tmp_into_site_dir(&tmp_dir, &dest_dir, &settings.on_duplicate, |line| {
+                    let (moved_any, finals) = move_tmp_into_site_dir(tmp_dir.path(), &dest_dir, &settings.on_duplicate, |line| {
                             (emitter)(DownloadEvent::Message {id: row.id, message: line});
                         }).unwrap_or((false, vec![]));
-                    let _ = fs::remove_dir_all(&tmp_dir);
                     if moved_any {
                         (emitter)(DownloadEvent::Message {id: row.id, message: "Saved images".into()});
                         return Ok(finals.get(0).cloned());
                     } else {
-                        last_error.get_or_insert_with(|| {format!("No files moved from {}", tmp_dir.display())});
+                        last_error.get_or_insert_with(|| {format!("No files moved from {}", tmp_dir.path().display())});
                     }
                 }
                 Ok((_ok, output, tmp_dir)) => {
-                    let msg = friendly_browser_error(browser, &output).unwrap_or_else(|| {format!("gallery-dl failed tmp={}\n{}", tmp_dir.display(), output)});
+                    let msg = friendly_browser_error(browser, &output).unwrap_or_else(|| {format!("gallery-dl failed tmp={}\n{}", tmp_dir.path().display(), output)});
                     if specific_cookie_error.is_none() {
                         specific_cookie_error = friendly_browser_error(browser, &output);
                     }
                     last_error.get_or_insert(msg.clone());
                     (emitter)(DownloadEvent::Message {id: row.id, message: msg});
-                    let _ = fs::remove_dir_all(&tmp_dir);
                 }
                 Err(e) => {
                     last_error.get_or_insert_with(|| e.to_string());

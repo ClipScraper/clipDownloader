@@ -83,31 +83,43 @@ fn validated_download_dir<S: Into<String>>(candidate: S) -> String {
     path.to_string_lossy().to_string()
 }
 
-/// Load settings from JSON, **validate the download path**, and persist any fixups.
+/// Read settings without rewriting them or probing the download directory.
+/// Readers must not race a save or replace an unreadable file with defaults.
 pub fn load_settings() -> Settings {
-    let path = settings_json_path();
+    read_settings(&settings_json_path())
+}
 
-    // Ensure parent directory exists
-    if let Some(parent) = path.parent() {
-        let _ = fs::create_dir_all(parent);
-    }
-
-    // Read or default
-    let mut settings = match fs::read_to_string(&path) {
-        Ok(s) => serde_json::from_str::<Settings>(&s).unwrap_or_default(),
-        Err(_) => Settings::default(),
+fn read_settings(path: &Path) -> Settings {
+    let mut settings: Settings = match fs::read_to_string(path) {
+        Ok(body) => serde_json::from_str(&body).unwrap_or_else(|error| {
+            tracing::warn!("Could not parse settings: {error}");
+            Settings::default()
+        }),
+        Err(error) => {
+            if error.kind() != std::io::ErrorKind::NotFound {
+                tracing::warn!("Could not read settings: {error}");
+            }
+            Settings::default()
+        }
     };
-
-    // Validate / normalize download directory
-    let fixed_dir = validated_download_dir(&settings.download_directory);
-    if settings.download_directory != fixed_dir {
-        settings.download_directory = fixed_dir;
+    if !Path::new(&settings.download_directory).is_absolute() {
+        settings.download_directory = default_download_dir().to_string_lossy().to_string();
     }
-
-    // Persist the clean copy (also migrates any old/invalid file)
-    let _ = fs::write(&path, serde_json::to_string_pretty(&settings).unwrap_or_else(|_| "{}".into()));
-
     settings
+}
+
+fn write_settings(path: &Path, settings: &Settings) -> Result<(), String> {
+    use std::io::Write;
+
+    let parent = path.parent().ok_or_else(|| "Settings path has no parent".to_string())?;
+    fs::create_dir_all(parent).map_err(|e| format!("Failed to create settings dir: {e}"))?;
+    let body = serde_json::to_vec_pretty(settings).map_err(|e| format!("Failed to serialize settings: {e}"))?;
+    // Same-directory temporary file makes replacement atomic for concurrent readers.
+    let mut file = tempfile::NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
+    file.write_all(&body).map_err(|e| e.to_string())?;
+    file.as_file().sync_all().map_err(|e| e.to_string())?;
+    file.persist(path).map_err(|e| format!("Failed to replace settings.json: {e}"))?;
+    Ok(())
 }
 
 /// Save settings back to JSON (and ensure the target directory exists).
@@ -135,10 +147,7 @@ pub fn save_settings(settings: &Settings) -> Result<(), String> {
         retry_on_queue_empty: settings.retry_on_queue_empty,
     };
 
-    let body = serde_json::to_string_pretty(&to_write)
-        .map_err(|e| format!("Failed to serialize settings: {e}"))?;
-    fs::write(&path, body).map_err(|e| format!("Failed to write settings.json: {e}"))?;
-    Ok(())
+    write_settings(&path, &to_write)
 }
 
 /// Map our duplicate policies to yt-dlp flags.
@@ -151,4 +160,53 @@ pub fn get_yt_dlp_duplicate_flags(on_duplicate: &OnDuplicate) -> Vec<String> {
         OnDuplicate::CreateNew => vec![], // we ensure uniqueness by choosing a free name
         OnDuplicate::DoNothing => vec!["--no-overwrites".into(), "--no-continue".into()],
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reading_settings_never_overwrites_invalid_or_missing_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        read_settings(&path);
+        assert!(!path.exists());
+        fs::write(&path, "invalid original data").unwrap();
+        read_settings(&path);
+        assert_eq!(fs::read_to_string(&path).unwrap(), "invalid original data");
+    }
+
+    #[test]
+    fn settings_replacement_round_trips_and_leaves_no_temp_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        let mut settings = Settings::default();
+        write_settings(&path, &settings).unwrap();
+        settings.parallel_downloads = 7;
+        write_settings(&path, &settings).unwrap();
+        assert_eq!(read_settings(&path).parallel_downloads, 7);
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+    #[test]
+    fn concurrent_readers_always_see_complete_settings() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        write_settings(&path, &Settings::default()).unwrap();
+        let writer_path = path.clone();
+        let writer = std::thread::spawn(move || {
+            for count in 1..20 {
+                let mut settings = Settings::default();
+                settings.parallel_downloads = count;
+                write_settings(&writer_path, &settings).unwrap();
+            }
+        });
+        for _ in 0..200 {
+            let body = fs::read_to_string(&path).unwrap();
+            let settings: Settings = serde_json::from_str(&body).unwrap();
+            assert!((1..20).contains(&settings.parallel_downloads));
+        }
+        writer.join().unwrap();
+    }
+
 }

@@ -8,7 +8,7 @@
 /// - link: the URL to download from
 ///
 /// All imported items are stored in the database with status "Backlog" for later downloading.
-/// Returns the number of successfully imported rows.
+/// Returns the number of inserted rows. Parse, URL, or database errors roll back the import.
 
 #[tauri::command]
 pub async fn import_csv_to_db(csv_text: Option<String>, csvText: Option<String>) -> Result<u64, String> {
@@ -19,23 +19,20 @@ pub async fn import_csv_to_db(csv_text: Option<String>, csvText: Option<String>)
 }
 
 pub async fn import_csv_text(csv_text: String) -> Result<u64, String> {
-    println!("[BACKEND] [commands/import.rs] [import_csv_to_db]");
+    tauri::async_runtime::spawn_blocking(move || {
+        let db = crate::database::Database::new().map_err(|e| e.to_string())?;
+        import_csv_into_db(&csv_text, &db)
+    }).await.map_err(|e| format!("Import task failed: {e}"))?
+}
 
+pub(crate) fn import_csv_into_db(csv_text: &str, db: &crate::database::Database) -> Result<u64, String> {
     let mut rdr = csv::ReaderBuilder::new().trim(csv::Trim::All).has_headers(true).from_reader(csv_text.as_bytes());
-
-    // Initialize database connection
-    let db = crate::database::Database::new().map_err(|e| e.to_string())?;
+    let transaction = db.transaction().map_err(|e| e.to_string())?;
     let mut inserted: u64 = 0;
 
     // Process each row
     for rec in rdr.records() {
-        let rec = match rec {
-            Ok(r) => r,
-            Err(e) => {
-                eprintln!("[import] skipping malformed CSV row: {e}");
-                continue;
-            }
-        };
+        let rec = rec.map_err(|e| format!("Invalid CSV row: {e}"))?;
 
         // Extract CSV columns (Platform,Type,Handle,Media,link)
         let platform_s = rec.get(0).unwrap_or("").to_string();
@@ -46,6 +43,8 @@ pub async fn import_csv_text(csv_text: String) -> Result<u64, String> {
         if link.is_empty() {
             continue;
         }
+
+        crate::utils::url::validate_download_url(&link)?;
 
         let platform = crate::database::Platform::from(platform_s.clone());
         let media = crate::database::MediaKind::from(media_s);
@@ -101,7 +100,7 @@ pub async fn import_csv_text(csv_text: String) -> Result<u64, String> {
 
         let platform_token = format!("{:?}", platform).to_lowercase();
         let origin_token = format!("{:?}", origin).to_lowercase();
-        if db.link_exists_in_collection(&link, &platform_token, &handle, &origin_token).unwrap_or(false) {
+        if db.link_exists_in_collection(&link, &platform_token, &handle, &origin_token).map_err(|e| e.to_string())? {
             continue;
         }
 
@@ -122,10 +121,10 @@ pub async fn import_csv_text(csv_text: String) -> Result<u64, String> {
             date_downloaded: None,
         };
 
-        if db.insert_download(&download).is_ok() {
-            inserted += 1;
-        }
+        db.insert_download(&download).map_err(|e| e.to_string())?;
+        inserted += 1;
     }
 
+    transaction.commit().map_err(|e| e.to_string())?;
     Ok(inserted)
 }

@@ -36,11 +36,12 @@ fn base_ytdlp_args(cookie_arg: &str, is_ig_images: bool, audio_only: bool) -> Ve
         "--newline".into(),
         "-N".into(),
         "8".into(),
-        "--cookies-from-browser".into(),
-        cookie_arg.into(),
         "--ignore-config".into(),
         "--no-cache-dir".into(),
     ];
+    if !cookie_arg.is_empty() {
+        args.extend(["--cookies-from-browser".into(), cookie_arg.into()]);
+    }
     if is_ig_images {
         args.push("--ignore-no-formats-error".into());
     } else if audio_only {
@@ -166,7 +167,7 @@ fn stage_message_from_output_line(line: &str) -> Option<&'static str> {
 async fn probe_uploader(app: &tauri::AppHandle, cookie_arg: &str, processed_url: &str, is_ig_images: bool) -> Option<String> {
     let mut args = base_ytdlp_args(cookie_arg, is_ig_images, false);
     args.push("--simulate".into());
-    args.extend(vec!["--print".into(), "uploader".into(), processed_url.into()]);
+    args.extend(vec!["--print".into(), "uploader".into(), "--".into(), processed_url.into()]);
 
     let settings = crate::settings::load_settings();
     let cmd = if settings.use_system_binaries {
@@ -187,24 +188,30 @@ async fn probe_uploader(app: &tauri::AppHandle, cookie_arg: &str, processed_url:
         format!("{}{}{}", res_dir.to_string_lossy(), path_sep(), std::env::var("PATH").unwrap_or_default())
     };
 
-    let Ok((mut rx, _child)) = cmd.args(args).env("PATH", new_path).spawn() else {
+    let Ok((mut rx, child)) = cmd.args(args).env("PATH", new_path).spawn() else {
         return None;
     };
 
-    let mut first_line: Option<String> = None;
-    while let Some(ev) = rx.recv().await {
-        if let CommandEvent::Stdout(bytes) = ev {
-            let s = String::from_utf8_lossy(&bytes);
-            for line in s.lines() {
-                let l = line.trim();
-                if !l.is_empty() && first_line.is_none() {
-                    first_line = Some(l.to_string());
+    let _guard = KillGuard(Some(child));
+    // A metadata probe used to run forever and survive cancellation.
+    timeout(Duration::from_secs(30), async {
+        let mut first_line: Option<String> = None;
+        while let Some(ev) = rx.recv().await {
+            match ev {
+                CommandEvent::Stdout(bytes) => {
+                    let s = String::from_utf8_lossy(&bytes);
+                    for line in s.lines().map(str::trim).filter(|line| !line.is_empty()) {
+                        if first_line.is_none() {
+                            first_line = Some(line.to_string());
+                        }
+                    }
                 }
+                CommandEvent::Terminated(status) if status.code != Some(0) => return None,
+                _ => {}
             }
         }
-    }
-
-    first_line.filter(|s| !s.eq_ignore_ascii_case("na") && !s.eq_ignore_ascii_case("n/a")).map(sanitize)
+        first_line.filter(|s| !s.eq_ignore_ascii_case("na") && !s.eq_ignore_ascii_case("n/a")).map(sanitize)
+    }).await.ok().flatten()
 }
 
 /* ---------- output template selection ---------- */
@@ -294,6 +301,7 @@ pub async fn run_yt_dlp_with_progress(app: &tauri::AppHandle, out_dir: &Path, co
     args.push(output_template.clone());
 
     // URL last
+    args.push("--".into());
     args.push(real_url.to_string());
 
     let planned_path = out_dir.join(output_template.replace("%(ext)s", if audio_only { "mp3" } else { "mp4" }));
@@ -321,8 +329,6 @@ pub async fn run_yt_dlp_with_progress(app: &tauri::AppHandle, out_dir: &Path, co
     let _guard = KillGuard(Some(child));
 
     let mut all_output = String::new();
-    let mut already_downloaded = false;
-    let mut file_skipped = false;
     let mut ok = false;
     let mut last_stage: Option<&'static str> = None;
 
@@ -354,13 +360,6 @@ pub async fn run_yt_dlp_with_progress(app: &tauri::AppHandle, out_dir: &Path, co
                         }
                     }
 
-                    if l.contains("has already been downloaded") {
-                        already_downloaded = true;
-                    }
-                    if l.contains("has already been recorded in the archive") || l.starts_with("[download] Skipping") {
-                        file_skipped = true;
-                    }
-
                     if let Some(progress) = parse_progress_percentage(l) {
                         (emitter)(DownloadEvent::Progress {id, progress, downloaded_bytes: 0, total_bytes: None});
                     } else if (l.contains("[download]") || l.contains("[info]")) && !l.contains("Starting download for") && !l.contains("Sleeping") && !l.starts_with("[info] Downloading") {
@@ -386,7 +385,7 @@ pub async fn run_yt_dlp_with_progress(app: &tauri::AppHandle, out_dir: &Path, co
                 }
             }
             CommandEvent::Terminated(code) => {
-                ok = code.code == Some(0) || already_downloaded || file_skipped;
+                ok = code.code == Some(0);
             }
             _ => {}
         }
@@ -402,4 +401,22 @@ fn parse_progress_percentage(line: &str) -> Option<f32> {
     let percent_idx = line.find('%')?;
     let start = line[..percent_idx].rsplit_once(' ').map(|(_, tail)| tail).unwrap_or(line[..percent_idx].trim());
     start.parse::<f32>().ok().map(|p| (p / 100.0).clamp(0.0, 1.0))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::base_ytdlp_args;
+
+    #[test]
+    fn public_download_does_not_require_browser_cookies() {
+        let args = base_ytdlp_args("", false, false);
+        assert!(!args.iter().any(|arg| arg == "--cookies-from-browser"));
+        assert!(args.windows(2).any(|pair| pair == ["--merge-output-format", "mp4"]));
+    }
+
+    #[test]
+    fn authenticated_download_keeps_the_selected_browser() {
+        let args = base_ytdlp_args("brave:Default", false, false);
+        assert!(args.windows(2).any(|pair| pair == ["--cookies-from-browser", "brave:Default"]));
+    }
 }

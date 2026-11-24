@@ -1,59 +1,12 @@
 use std::path::PathBuf;
-use std::process::Command;
+use tauri_plugin_opener::OpenerExt;
 
-fn open_with_default_app(path: &str) -> Result<(), String> {
-    #[cfg(target_os = "windows")]
-    {
-        // Use PowerShell to avoid `start` quoting quirks
-        Command::new("powershell")
-            .args(&["-NoProfile", "-Command", "Start-Process", path])
-            .spawn()
-            .map_err(|e| format!("failed to open file: {e}"))?;
-    }
-    #[cfg(target_os = "macos")]
-    {
-        Command::new("open")
-            .arg(path)
-            .spawn()
-            .map_err(|e| format!("failed to open file: {e}"))?;
-    }
-    #[cfg(target_os = "linux")]
-    {
-        Command::new("xdg-open")
-            .arg(path)
-            .spawn()
-            .map_err(|e| format!("failed to open file: {e}"))?;
-    }
-    Ok(())
+fn open_with_default_app(app: &tauri::AppHandle, path: &str) -> Result<(), String> {
+    app.opener().open_path(path, None::<&str>).map_err(|e| format!("failed to open path: {e}"))
 }
 
-fn open_folder(path: &str) -> Result<(), String> {
-    let p = PathBuf::from(path);
-    let dir = p.parent().ok_or_else(|| "no parent folder".to_string())?;
-    let dir_str = dir.to_string_lossy().to_string();
-
-    #[cfg(target_os = "windows")]
-    {
-        Command::new("explorer")
-            .arg(dir_str)
-            .spawn()
-            .map_err(|e| format!("failed to open folder: {e}"))?;
-    }
-    #[cfg(target_os = "macos")]
-    {
-        Command::new("open")
-            .arg(dir_str)
-            .spawn()
-            .map_err(|e| format!("failed to open folder: {e}"))?;
-    }
-    #[cfg(target_os = "linux")]
-    {
-        Command::new("xdg-open")
-            .arg(dir_str)
-            .spawn()
-            .map_err(|e| format!("failed to open folder: {e}"))?;
-    }
-    Ok(())
+fn open_folder(app: &tauri::AppHandle, path: &str) -> Result<(), String> {
+    open_with_default_app(app, path)
 }
 
 fn path_exists_ok(path: &str) -> bool {
@@ -62,7 +15,7 @@ fn path_exists_ok(path: &str) -> bool {
 }
 
 #[tauri::command]
-pub async fn open_file_for_link(link: String) -> Result<(), String> {
+pub async fn open_file_for_link(app: tauri::AppHandle, link: String) -> Result<(), String> {
     let db = crate::database::Database::new().map_err(|e| e.to_string())?;
     let Some((_id, path)) = db.find_done_row_by_link(&link).map_err(|e| e.to_string())? else {
         return Ok(());
@@ -70,39 +23,35 @@ pub async fn open_file_for_link(link: String) -> Result<(), String> {
     if !path_exists_ok(&path) {
         return Ok(());
     }
-    open_with_default_app(&path)
+    open_with_default_app(&app, &path)
 }
 
 #[tauri::command]
-pub async fn open_folder_for_link(link: String) -> Result<(), String> {
+pub async fn open_folder_for_link(app: tauri::AppHandle, link: String) -> Result<(), String> {
     let db = crate::database::Database::new().map_err(|e| e.to_string())?;
     let Some((_id, path)) = db.find_done_row_by_link(&link).map_err(|e| e.to_string())? else {
         return Ok(());
     };
     let p = PathBuf::from(&path);
-    let dir = if p.exists() {
-        path.clone()
-    } else if let Some(parent) = p.parent().filter(|d| d.exists()) {
-        parent.to_string_lossy().to_string()
-    } else {
+    let Some(dir) = p.parent().filter(|dir| dir.is_dir()) else {
         return Ok(());
     };
-    open_folder(&dir)
+    open_folder(&app, &dir.to_string_lossy())
 }
 
 #[tauri::command]
-pub async fn open_platform_folder(platform: String) -> Result<(), String> {
+pub async fn open_platform_folder(app: tauri::AppHandle, platform: String) -> Result<(), String> {
     let s = crate::settings::load_settings();
     let base = std::path::PathBuf::from(s.download_directory);
     let p = base.join(platform);
     if !p.exists() {
         return Ok(());
     }
-    open_folder(&p.to_string_lossy())
+    open_folder(&app, &p.to_string_lossy())
 }
 
 #[tauri::command]
-pub async fn open_collection_folder(platform: String, handle: String, content_type: String) -> Result<(), String> {
+pub async fn open_collection_folder(app: tauri::AppHandle, platform: String, handle: String, content_type: String) -> Result<(), String> {
     let s = crate::settings::load_settings();
     let base = std::path::PathBuf::from(s.download_directory);
     let label = crate::database::Database::collection_folder_label(&content_type, &handle);
@@ -110,7 +59,7 @@ pub async fn open_collection_folder(platform: String, handle: String, content_ty
     if !p.exists() {
         return Ok(());
     }
-    open_folder(&p.to_string_lossy())
+    open_folder(&app, &p.to_string_lossy())
 }
 
 #[tauri::command]
