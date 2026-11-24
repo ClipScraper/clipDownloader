@@ -98,11 +98,27 @@ pub async fn open_collection_folder(platform: String, handle: String, content_ty
     let s = crate::settings::load_settings();
     let base = std::path::PathBuf::from(s.download_directory);
     let label = crate::database::Database::collection_folder_label(&content_type, &handle);
-    let p = base.join(platform).join(label);
-    if !p.exists() {
-        return Ok(());
+    let p = base.join(&platform).join(label);
+    if p.is_dir() {
+        return reveal_dir(&p.to_string_lossy());
     }
-    reveal_dir(&p.to_string_lossy())
+    // Files from before a Patreon title change still have their original stored paths.
+    if platform == "patreon" && content_type == "collection" {
+        return tauri::async_runtime::spawn_blocking(move || {
+            let db = crate::database::Database::new().map_err(|e| e.to_string())?;
+            let paths = db.list_ids_and_paths_by_collection(&platform, &handle, &content_type).map_err(|e| e.to_string())?;
+            for (_, path) in paths {
+                if path.is_empty() || path == "unknown_path" {
+                    continue;
+                }
+                if let Some(file) = resolve_stored_path(&path).filter(|p| p.is_file()) {
+                    if let Some(dir) = file.parent() { return reveal_dir(&dir.to_string_lossy()); }
+                }
+            }
+            Ok(())
+        }).await.map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 #[tauri::command]

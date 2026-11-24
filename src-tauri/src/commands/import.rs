@@ -124,6 +124,9 @@ pub(crate) fn import_into(db: &crate::database::Database, csv_text: &str) -> Res
                 handle = "Unknown".into();
             }
 
+            if platform == crate::database::Platform::Patreon && origin == crate::database::Origin::Collection {
+                handle = db.patreon_import_handle(&handle, &parsed).map_err(|e| e.to_string())?;
+            }
             let platform_token = format!("{:?}", platform).to_lowercase();
             let origin_token = format!("{:?}", origin).to_lowercase();
             if let Some((id, status, path)) = db.existing_collection_item(&link, &platform_token, &handle, &origin_token, matches!(media, crate::database::MediaKind::Link | crate::database::MediaKind::File) || parsed.query().is_some() || parsed.fragment().is_some()).map_err(|e| e.to_string())? {

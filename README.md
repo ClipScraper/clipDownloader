@@ -14,7 +14,7 @@ App to download content from Youtube, TikTok, Instagram, Pinterest, and Patreon
 
 ### Patreon collections
 
-Export a Patreon collection as CSV from Listr and use **Import list** or drop the file into ClipDownloader. Queue the whole collection or individual posts. ClipDownloader opens each post with gallery-dl and saves one `patreon-post-<id>.zip` in the collection folder. It includes the post text, gallery images and GIFs, videos, attachments, and links from the creator’s post body. Webpage links are saved as `.url` shortcuts. Comments are excluded. For members-only posts, ClipDownloader tries the supported browser profiles on your machine. Reimport an older CSV to queue posts previously saved as shortcuts.
+Export a Patreon collection as CSV from Listr and use **Import list** or drop the file into ClipDownloader. Patreon collection labels include the cover title and numeric ID. Importing a titled export upgrades an existing ID-only collection in place. Queue the whole collection or individual posts. ClipDownloader opens each post with gallery-dl and saves one `patreon-post-<id>.zip` in the collection folder. It includes the post text, gallery images and GIFs, videos, attachments, and links from the creator’s post body. Webpage links are saved as `.url` shortcuts. Comments are excluded. For members-only posts, ClipDownloader tries the supported browser profiles on your machine. Reimport an older CSV to queue posts previously saved as shortcuts.
 
 ### Collected links
 

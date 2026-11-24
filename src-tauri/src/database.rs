@@ -1,6 +1,6 @@
 pub mod links;
 use chrono::{DateTime, Utc};
-use rusqlite::{params, Connection, Result};
+use rusqlite::{params, Connection, OptionalExtension, Result};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Once;
@@ -43,6 +43,7 @@ fn init_schema(conn: &Connection) -> Result<()> {
     ensure_column(conn, "output_format", "ALTER TABLE downloads ADD COLUMN output_format TEXT NOT NULL DEFAULT 'default' CHECK (output_format IN ('default','audio','video'))")?;
     ensure_column(conn, "last_error", "ALTER TABLE downloads ADD COLUMN last_error TEXT")?;
 
+    conn.execute("CREATE TABLE IF NOT EXISTS patreon_collection_names (id TEXT PRIMARY KEY, name TEXT NOT NULL)", [])?;
     ensure_column(conn, "body_links", "ALTER TABLE downloads ADD COLUMN body_links TEXT")?;
 
     ensure_column(conn, "shortcuts_indexed", "ALTER TABLE downloads ADD COLUMN shortcuts_indexed INTEGER NOT NULL DEFAULT 0")?;
@@ -527,6 +528,15 @@ fn same_collection_url(platform: &str, stored: &str, requested: &str, normalized
     }
 }
 
+fn numeric_id(id: &str) -> bool {
+    !id.is_empty() && id.len() <= 20 && id.bytes().all(|b| b.is_ascii_digit())
+}
+
+fn titled_collection_id(name: &str) -> Option<&str> {
+    let (title, id) = name.strip_suffix(')')?.rsplit_once(" (")?;
+    (!title.is_empty() && numeric_id(id)).then_some(id)
+}
+
 /* -------------------------------- database -------------------------------- */
 impl Database {
     pub fn new() -> Result<Self> {
@@ -733,6 +743,34 @@ impl Database {
         mark_id_done_conn(&self.conn, id, path)
     }
 
+    /// Resolve a collection label inside the CSV import transaction. Only a post URL
+    /// carrying the matching collection ID can supply a new title.
+    pub fn patreon_import_handle(&self, handle: &str, url: &tauri::Url) -> Result<String> {
+        let numbered = handle.strip_prefix("Collection ").filter(|id| numeric_id(id));
+        let Some(id) = numbered.or_else(|| titled_collection_id(handle)) else {
+            return Ok(handle.to_owned());
+        };
+        let previous: Option<String> = self.conn.query_row(
+            "SELECT name FROM patreon_collection_names WHERE id=?1", [id], |r| r.get(0),
+        ).optional()?;
+        if numbered.is_some() {
+            return Ok(previous.unwrap_or_else(|| handle.to_owned()));
+        }
+        let from_url = url.query_pairs().find(|(key, _)| key == "collection" || key == "collection_id").map(|(_, value)| value);
+        if from_url.as_deref() == Some(id) && crate::utils::url::patreon_post_id(url.as_str()).is_some()
+            && previous.as_deref() != Some(handle) {
+            self.conn.execute(
+                "INSERT INTO patreon_collection_names(id,name) VALUES(?1,?2) ON CONFLICT(id) DO UPDATE SET name=excluded.name",
+                params![id, handle],
+            )?;
+            self.conn.execute(
+                "UPDATE downloads SET user_handle=?1 WHERE platform='patreon' AND origin='collection' AND user_handle IN (?2,?3)",
+                params![handle, format!("Collection {id}"), previous],
+            )?;
+        }
+        Ok(handle.to_owned())
+    }
+
     pub fn existing_collection_item(&self, link: &str, platform: &str, user_handle: &str, origin: &str, is_link: bool) -> Result<Option<(i64, String, String)>> {
         let norm = normalize_link(link.to_string());
         let mut stmt = self.conn.prepare("SELECT link, id, status, path FROM downloads WHERE platform = ?1 COLLATE NOCASE AND (user_handle = ?2 COLLATE NOCASE OR (?2 = 'Unknown' AND (user_handle = '' OR user_handle IS NULL))) AND origin = ?3 COLLATE NOCASE")?;
@@ -791,9 +829,18 @@ impl Database {
         } else {
             u
         };
-        format!("{o} - {u}").chars().map(|ch| {
+        let safe: String = format!("{o} - {u}").chars().map(|ch| {
             if ch.is_control() || matches!(ch, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') { '_' } else { ch }
-        }).take(160).collect::<String>().trim_end_matches(['.', ' ']).to_string()
+        }).collect();
+        if o == "collection" {
+            if let Some(id) = titled_collection_id(u) {
+                let suffix = format!(" ({id})");
+                let mut end = (safe.len() - suffix.len()).min(160 - suffix.len());
+                while !safe.is_char_boundary(end) { end -= 1; }
+                return format!("{}{suffix}", &safe[..end]);
+            }
+        }
+        safe.chars().take(160).collect::<String>().trim_end_matches(['.', ' ']).to_string()
     }
 
     pub fn find_download_by_id(&self, id: i64) -> Result<Option<DbDownloadRow>> {
@@ -947,6 +994,34 @@ impl Database {
 #[cfg(test)]
 mod patreon_tests {
     use super::*;
+
+    #[test]
+    fn titled_collections_upgrade_by_verified_id_across_imports() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema(&conn).unwrap();
+        let db = Database {conn};
+        let csv = |name: &str, id: &str| format!("Platform,Type,Handle,Media,link\npatreon,collection,{name},link,https://www.patreon.com/posts/101?collection={id}\n");
+        let import = |name: &str, id: &str| crate::commands::import::import_into(&db, &csv(name, id)).unwrap();
+        assert_eq!(import("Collection 77", "77"), 1);
+        let row = db.list_backlog_ui().unwrap()[0].id;
+        db.mark_id_done(row, "existing-post.zip").unwrap();
+        assert_eq!(import("Cop Girl (77)", "77"), 0);
+        assert_eq!(import("Cop Girl (78)", "78"), 1);
+        assert_eq!(import("New title (77)", "77"), 0);
+        assert_eq!(import("Collection 77", "77"), 0);
+        let done = db.list_done_ui().unwrap();
+        assert_eq!(done.len(), 1);
+        assert_eq!(done[0].id, row);
+        assert_eq!(done[0].handle, "New title (77)");
+        assert_eq!(db.find_download_by_id(row).unwrap().unwrap().path, "existing-post.zip");
+        assert_eq!(db.list_backlog_ui().unwrap()[0].handle, "Cop Girl (78)");
+
+        // A post from a different collection cannot relabel the first collection.
+        assert_eq!(import("Unrelated (77)", "999"), 1);
+        assert_eq!(db.list_done_ui().unwrap()[0].handle, "New title (77)");
+        let long_label = Database::collection_folder_label("collection", &format!("{} (77)", "猫".repeat(160)));
+        assert!(long_label.ends_with(" (77)") && long_label.len() <= 160);
+    }
 
     #[test]
     fn reimporting_post_shortcuts_queues_a_single_upgrade() {
