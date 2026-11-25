@@ -1,21 +1,26 @@
-/// Import a CSV (as text) and add all rows into the DB with status=Backlog.
+use crate::utils::resource::{classify_url, Resource};
+
+/// Import downloadable items and browser-only references from a CSV.
 /// This is the core function that processes CSV files imported via "Import list" button or drag-and-drop.
-/// Expected CSV header format: Platform,Type,Handle,Media,link
+/// CSV columns: Platform,Type,Handle,Media,link, with an optional Creator column.
 /// - Platform: "patreon", "pinterest", "instagram", "tiktok", or "youtube"
 /// - Type: content source like "recommendation", "playlist", "profile", "bookmarks", etc.
 /// - Handle: username or channel name
 /// - Media: "pictures", "video", or "link"
 /// - link: the URL to download from
 ///
-/// All imported items are stored in the database with status "Backlog" for later downloading.
+/// Downloadable items enter the backlog. External references are visible only in Links.
 /// Returns the number of successfully imported rows.
 
 #[tauri::command]
-pub async fn import_csv_to_db(csv_text: Option<String>, csvText: Option<String>) -> Result<u64, String> {
+pub async fn import_csv_to_db(app: tauri::AppHandle, csv_text: Option<String>, csvText: Option<String>) -> Result<u64, String> {
     // Accept both snake_case and camelCase keys from JS.
     let csv_text = csv_text.or(csvText).ok_or_else(|| "missing argument: csv_text/csvText".to_string())?;
 
-    import_csv_text(csv_text).await
+    let inserted = import_csv_text(csv_text).await?;
+    use tauri::Emitter;
+    let _ = app.emit("import_completed", inserted);
+    Ok(inserted)
 }
 
 pub async fn import_csv_text(csv_text: String) -> Result<u64, String> {
@@ -32,6 +37,8 @@ fn import_csv_text_blocking(csv_text: String) -> Result<u64, String> {
 
 pub(crate) fn import_into(db: &crate::database::Database, csv_text: &str) -> Result<u64, String> {
     let mut rdr = csv::ReaderBuilder::new().trim(csv::Trim::All).has_headers(true).from_reader(csv_text.as_bytes());
+
+    let creator_column = rdr.headers().map_err(|e| e.to_string())?.iter().position(|header| header.eq_ignore_ascii_case("Creator"));
 
     // Batch every insert into one transaction: N implicit transactions (one
     // fsync each) collapse into a single commit. The duplicate check reads the
@@ -60,11 +67,14 @@ pub(crate) fn import_into(db: &crate::database::Database, csv_text: &str) -> Res
             }
 
             let platform = crate::database::Platform::from(platform_s.clone());
-            let media = crate::database::MediaKind::from(media_s);
-
-            if platform == crate::database::Platform::Patreon || media == crate::database::MediaKind::Link {
-                crate::utils::url::http_url(&link)?;
-            }
+            let parsed = crate::utils::url::http_url(&link)?;
+            let route = classify_url(&parsed, &media_s);
+            let media = route.media();
+            let status = if route == Resource::Reference {
+                crate::database::DownloadStatus::Reference
+            } else {
+                crate::database::DownloadStatus::Backlog
+            };
 
             // Determine origin; special-case Pinterest "{user} - {something}" to pinboard
             let origin = if platform_s.eq_ignore_ascii_case("pinterest") {
@@ -116,22 +126,24 @@ pub(crate) fn import_into(db: &crate::database::Database, csv_text: &str) -> Res
                 handle = "Unknown".into();
             }
 
+            if platform == crate::database::Platform::Patreon && origin == crate::database::Origin::Collection {
+                handle = db.patreon_import_handle(&handle, &parsed, creator_column.and_then(|column| rec.get(column)).unwrap_or("")).map_err(|e| e.to_string())?;
+            }
             let platform_token = format!("{:?}", platform).to_lowercase();
             let origin_token = format!("{:?}", origin).to_lowercase();
-            if let Some((id, status, path)) = db.existing_collection_item(&link, &platform_token, &handle, &origin_token).map_err(|e| e.to_string())? {
-                // Reimporting an old completed shortcut is an explicit request to download the full post.
-                if platform_token == "patreon" && status == "done" && path.ends_with(".url") && crate::utils::url::patreon_post_id(&link).is_some() {
-                    db.set_status_by_id(id, crate::database::DownloadStatus::Backlog).map_err(|e| e.to_string())?;
-                    inserted += 1;
+            if let Some((id, status, path)) = db.existing_collection_item(&link, &platform_token, &handle, &origin_token, matches!(media, crate::database::MediaKind::Link | crate::database::MediaKind::File) || parsed.query().is_some() || parsed.fragment().is_some()).map_err(|e| e.to_string())? {
+                let old_shortcut = status == "done" && path.to_ascii_lowercase().ends_with(".url");
+                let stronger_hint = status == "reference" && route != classify_url(&parsed, "");
+                if route != Resource::Reference && (old_shortcut || stronger_hint) {
+                    inserted += db.restore_media_download(id, &media).map_err(|e| e.to_string())? as u64;
                 }
                 continue;
             }
 
-            let download = crate::database::Download {id: None, platform, name, media, user: handle, origin, link, output_format: crate::database::OutputFormat::Default, status: crate::database::DownloadStatus::Backlog, path: String::new(), image_set_id: None, last_error: None, date_added: chrono::Utc::now(), date_downloaded: None};
+            let download = crate::database::Download {id: None, platform, name, media, user: handle, origin, link, output_format: crate::database::OutputFormat::Default, status, path: String::new(), image_set_id: None, last_error: None, date_added: chrono::Utc::now(), date_downloaded: None};
 
-            if db.insert_download(&download).is_ok() {
-                inserted += 1;
-            }
+            db.insert_download(&download).map_err(|e| e.to_string())?;
+            inserted += 1;
         }
 
         Ok(inserted)

@@ -11,6 +11,7 @@ use crate::download::video;
 
 use crate::settings;
 use crate::utils;
+use crate::utils::resource::{classify_url, Resource};
 
 use tauri::AppHandle;
 
@@ -101,7 +102,18 @@ fn friendly_browser_error(browser: &str, output: &str) -> Option<String> {
     None
 }
 
-pub async fn execute_download_job(app: AppHandle, row: DbDownloadRow, overrides: Option<DownloadOverrides>, emitter: Arc<dyn Fn(DownloadEvent) + Send + Sync>) -> Result<Option<String>, String> {
+pub enum JobResult {
+    Saved(String),
+    Reference,
+}
+
+fn saved_output(output: &str, url: &str, directory: &Path) -> Result<JobResult, String> {
+    parse_multiple_filenames_from_output(output, url, Some(directory)).into_iter()
+        .map(|(_, _, path)| path).find(|path| Path::new(path).is_file()).map(JobResult::Saved)
+        .ok_or_else(|| "The downloader did not report a saved file".into())
+}
+
+pub async fn execute_download_job(app: AppHandle, row: DbDownloadRow, overrides: Option<DownloadOverrides>, emitter: Arc<dyn Fn(DownloadEvent) + Send + Sync>) -> Result<JobResult, String> {
     let settings = settings::load_settings();
     let download_root = PathBuf::from(settings.download_directory.clone());
     if let Err(e) = fs::create_dir_all(&download_root) {
@@ -136,51 +148,58 @@ pub async fn execute_download_job(app: AppHandle, row: DbDownloadRow, overrides:
         use_flat = true;
     }
 
-    if !patreon && cleaned_url.contains("instagram.com/") {
-        if let Some((base, _)) = cleaned_url.split_once('?') {
-            cleaned_url = base.to_string();
-        }
+    let url = utils::url::http_url(&cleaned_url)?;
+    let route = classify_url(&url, &row.media);
+    if route == Resource::Reference { return Ok(JobResult::Reference); }
+    let service = utils::url::link_service(&url);
+    let is_instagram = service == "instagram" && matches!(route, Resource::InstagramPost | Resource::Video);
+    if is_instagram && route == Resource::InstagramPost {
+        let mut permalink = url.clone();
+        permalink.set_query(None);
+        cleaned_url = permalink.to_string();
     }
 
-    let site = if patreon { "patreon" } else { infer_site(&cleaned_url) };
-    let collection_dir_label = Database::collection_folder_label(&row.origin, &row.user_handle);
+    let site = match row.platform.as_str() {
+        _ if patreon => "patreon",
+        platform @ ("mega" | "telegram" | "dropbox" | "twitter") => platform,
+        _ => infer_site(&cleaned_url),
+    };
     let dest_dir = if use_flat {
         download_root.clone()
     } else {
-        download_root.join(site).join(collection_dir_label)
+        Database::collection_directory(&download_root, site, &row.origin, &row.user_handle, &row.creator)
     };
     let _ = fs::create_dir_all(&dest_dir);
 
     if let Some(post_id) = post_id {
         let tools = super::patreon::PostTools::for_app(&app, settings.use_system_binaries)?;
+        let handle = app.clone();
         let path = tools.download(&post_id, &dest_dir, &settings.on_duplicate, |message| {
             (emitter)(DownloadEvent::Message {id: row.id, message});
+        }, move |links| {
+            use tauri::Emitter;
+            Database::new().and_then(|db| db.record_post_links(row.id, &links)).map_err(|e| e.to_string())?;
+            let _ = handle.emit("post-links-collected", ());
+            Ok(())
         }).await?;
-        return Ok(Some(path.display().to_string()));
+        return Ok(JobResult::Saved(path.display().to_string()));
     }
 
-    if patreon || row.media == "link" {
-        let url = utils::url::http_url(&cleaned_url)?;
-        if row.media == "link" || row.media == "image" {
-            let stage = if row.media == "link" { "Checking linked resource" } else { "Downloading image" };
-            (emitter)(DownloadEvent::Message {id: row.id, message: stage.into()});
-            let path = super::direct::download(url, &dest_dir, &row.media, row.id, &settings.on_duplicate).await?;
-            return Ok(Some(path.display().to_string()));
-        }
+    if matches!(route, Resource::Image | Resource::File | Resource::FileEndpoint) {
+        let kind = if route == Resource::Image { "image" } else { "file" };
+        (emitter)(DownloadEvent::Message {id: row.id, message: format!("Downloading {kind}")});
+        return match super::direct::fetch(url, &dest_dir, kind, row.id, &settings.on_duplicate).await? {
+            Some(path) => Ok(JobResult::Saved(path.display().to_string())),
+            None if route == Resource::FileEndpoint => Ok(JobResult::Reference),
+            None => Err("The media URL returned a webpage instead of a file".into()),
+        };
     }
 
-    let is_instagram = !patreon && cleaned_url.contains("instagram.com/");
-    let is_ig_post_p = is_instagram && cleaned_url.contains("/p/");
-    let is_tt_photo = !patreon && utils::url::is_tiktok_photo(&cleaned_url);
-
+    let is_ig_post_p = route == Resource::InstagramPost;
     let mut browsers = utils::os::installed_browsers();
-    if patreon {
-        browsers.insert(0, ("public access".into(), String::new()));
-    }
-    if browsers.is_empty() {
-        return Err("No logged-in browsers detected for cookies.".into());
-    }
+    browsers.insert(0, ("public access".into(), String::new()));
 
+    let mut reported_no_media = false;
     let mut last_error: Option<String> = None;
     let mut specific_cookie_error: Option<String> = None;
     for (browser, cookie_arg) in &browsers {
@@ -202,8 +221,7 @@ pub async fn execute_download_job(app: AppHandle, row: DbDownloadRow, overrides:
                             "Saved (video)".into()
                         },
                     });
-                    let files = parse_multiple_filenames_from_output(&output, &cleaned_url, Some(&dest_dir));
-                    return Ok(files.get(0).map(|t| t.2.clone()));
+                    return saved_output(&output, &cleaned_url, &dest_dir);
                 }
                 Ok((false, _)) | Err(_) => {
                     if is_ig_post_p {
@@ -217,7 +235,7 @@ pub async fn execute_download_job(app: AppHandle, row: DbDownloadRow, overrides:
                                 let _ = fs::remove_dir_all(&tmp_dir);
                                 if moved_any {
                                     (emitter)(DownloadEvent::Message {id: row.id, message: "Saved images".into()});
-                                    return Ok(finals.get(0).cloned());
+                                    return finals.into_iter().next().map(JobResult::Saved).ok_or_else(|| "No saved files".into());
                                 } else {
                                     last_error.get_or_insert_with(|| format!("No files moved from {}", tmp_dir.display()));
                                 }
@@ -241,7 +259,7 @@ pub async fn execute_download_job(app: AppHandle, row: DbDownloadRow, overrides:
             continue;
         }
 
-        if site == "pinterest" || is_tt_photo {
+        if route == Resource::Gallery {
             (emitter)(DownloadEvent::Message {id: row.id, message: "Preparing image download".into()});
             match image::run_gallery_dl_to_temp(&app, &download_root, &cleaned_url, cookie_arg, row.id, emitter.clone()).await {
                 Ok((ok, _output, tmp_dir)) if ok => {
@@ -252,7 +270,7 @@ pub async fn execute_download_job(app: AppHandle, row: DbDownloadRow, overrides:
                     let _ = fs::remove_dir_all(&tmp_dir);
                     if moved_any {
                         (emitter)(DownloadEvent::Message {id: row.id, message: "Saved images".into()});
-                        return Ok(finals.get(0).cloned());
+                        return finals.into_iter().next().map(JobResult::Saved).ok_or_else(|| "No saved files".into());
                     } else {
                         last_error.get_or_insert_with(|| format!("No files moved from {}", tmp_dir.display()));
                     }
@@ -288,10 +306,13 @@ pub async fn execute_download_job(app: AppHandle, row: DbDownloadRow, overrides:
                         "Saved (video)".into()
                     },
                 });
-                let files = parse_multiple_filenames_from_output(&output, &cleaned_url, Some(&dest_dir));
-                return Ok(files.get(0).map(|t| t.2.clone()));
+                return saved_output(&output, &cleaned_url, &dest_dir);
             }
             Ok((false, output)) => {
+                if reports_no_media(service, &output) {
+                    reported_no_media = true;
+                    continue;
+                }
                 let msg = friendly_browser_error(browser, &output).unwrap_or_else(|| format!("yt-dlp failed with browser: {browser}\noutput:\n{output}"));
                 if specific_cookie_error.is_none() {
                     specific_cookie_error = friendly_browser_error(browser, &output);
@@ -305,8 +326,9 @@ pub async fn execute_download_job(app: AppHandle, row: DbDownloadRow, overrides:
         }
     }
 
+    if reported_no_media { return Ok(JobResult::Reference); }
     Err(specific_cookie_error.or(last_error).unwrap_or_else(|| {
-        if is_instagram || is_tt_photo {
+        if is_instagram || route == Resource::Gallery {
             "Failed to fetch media. Ensure bundled tools are present and your browser is logged in.".into()
         } else {
             "Failed to download with available browser cookies.".into()
@@ -314,19 +336,21 @@ pub async fn execute_download_job(app: AppHandle, row: DbDownloadRow, overrides:
     }))
 }
 
+fn reports_no_media(service: &str, output: &str) -> bool {
+    output.lines().any(|line| {
+        let error = line.trim().to_ascii_lowercase();
+        error.starts_with("error:") && match service {
+            "twitter" => error.contains("no video could be found in this tweet") || error.contains("there is no video in this tweet"),
+            "other" => error.contains("unsupported url:"),
+            _ => false,
+        }
+    })
+}
+
 fn strip_legacy_flags(url: &str) -> (String, bool, bool) {
-    let mut cleaned = url.to_string();
-    let mut want_audio = false;
-    let mut flat = false;
-    if cleaned.contains("#__audio_only__") {
-        want_audio = true;
-        cleaned = cleaned.replace("#__audio_only__", "");
-    }
-    if cleaned.contains("#__flat__") {
-        flat = true;
-        cleaned = cleaned.replace("#__flat__", "");
-    }
-    (cleaned, want_audio, flat)
+    let without_flat = url.trim_end_matches("#__flat__");
+    let cleaned = without_flat.trim_end_matches("#__audio_only__");
+    (cleaned.to_owned(), cleaned != without_flat, without_flat != url)
 }
 
 fn infer_site(url: &str) -> &'static str {
@@ -340,5 +364,18 @@ fn infer_site(url: &str) -> &'static str {
         "pinterest"
     } else {
         "other"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_explicit_unsupported_responses_become_references() {
+        assert!(reports_no_media("twitter", "ERROR: [twitter] 123: No video could be found in this tweet"));
+        assert!(reports_no_media("other", "ERROR: [generic] example: Unsupported URL: https://example.org"));
+        assert!(!reports_no_media("twitter", "ERROR: HTTP Error 403: Forbidden"));
+        assert!(!reports_no_media("other", "ERROR: connection timed out"));
     }
 }

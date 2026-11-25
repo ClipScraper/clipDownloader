@@ -1,4 +1,7 @@
 #[cfg(target_arch = "wasm32")]
+#[path = "../shared/collected_links.rs"]
+mod collected_links;
+#[cfg(target_arch = "wasm32")]
 mod app;
 #[cfg(target_arch = "wasm32")]
 mod components;

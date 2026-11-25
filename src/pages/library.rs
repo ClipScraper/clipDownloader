@@ -1,3 +1,5 @@
+use crate::components::creator_collections::{by_creator, collection_title};
+use crate::components::service_icon::service_icon;
 use crate::dom::assign_missing_descriptive_ids;
 use crate::types::{content_type_str, platform_str, ClipRow, MediaKind};
 use wasm_bindgen::prelude::*;
@@ -59,47 +61,35 @@ fn item_label_for_row(row: &ClipRow) -> String {
         last_two_path_segments(link)
     }
 }
-fn platform_icon_src(p: &str) -> &'static str {
-    match p {
-        "instagram" => "public/instagram.webp",
-        "pinterest" => "public/pinterest.png",
-        "patreon" => "public/patreon.png",
-        "tiktok" => "public/tiktok.webp",
-        "youtube" => "public/youtube.webp",
-        _ => "",
-    }
-}
-fn collection_title(row: &ClipRow) -> String {
-    let handle = if row.handle.trim().is_empty() {
-        "Unknown"
-    } else {
-        &row.handle
-    };
-    let typ = content_type_str(&row.content_type);
-    format!("{handle} | {typ}")
-}
 
 /* ───────────────────────── component ───────────────────────── */
 
+#[derive(Properties, PartialEq)]
+pub struct LibraryProps {
+    pub revision: u64,
+}
+
 #[function_component(LibraryPage)]
-pub fn library_page() -> Html {
+pub fn library_page(props: &LibraryProps) -> Html {
     use_effect(|| {
         assign_missing_descriptive_ids("library-page");
         || ()
     });
     let done_rows = use_state(|| Vec::<ClipRow>::new());
 
-    // load once
+    // Refresh the open library when a download completes.
     {
         let done_rows = done_rows.clone();
-        use_effect_with((), move |_| {
+        use_effect_with(props.revision, move |_| {
+            let current = std::rc::Rc::new(std::cell::Cell::new(true));
+            let active = current.clone();
             spawn_local(async move {
                 let v = invoke("list_done", JsValue::NULL).await;
                 if let Ok(rows) = serde_wasm_bindgen::from_value::<Vec<ClipRow>>(v) {
-                    done_rows.set(rows);
+                    if active.get() { done_rows.set(rows); }
                 }
             });
-            || ()
+            move || current.set(false)
         });
     }
 
@@ -198,7 +188,8 @@ pub fn library_page() -> Html {
                             html!{
                                 <div id={format!("{platform_dom}-collections")}>
                                     {
-                                        for col_map.into_iter().map(|((handle, typ_str), rows)| {
+                                        by_creator(&platform_dom, col_map.into_iter().map(|((handle, typ_str), rows)| {
+                                            let creator = rows.first().map(|row| row.creator.clone()).unwrap_or_default();
                                             let col_key = format!("{}::{}::{}::{}", section_id, plat_label, handle, typ_str);
                                             let collection_dom = format!("{platform_dom}-collection-{}", crate::dom::hash_fragment(&col_key));
                                             let col_open = expanded_collections.contains(&col_key);
@@ -262,7 +253,7 @@ pub fn library_page() -> Html {
                                                 })
                                             };
 
-                                            html!{
+                                            (creator, html!{
                                                 <div id={format!("{collection_dom}-group")} class="collection-block" key={col_key.clone()}>
                                                     <div id={format!("{collection_dom}-toggle")} class="collection-item" onclick={on_col_click}>
                                                         <div id={format!("{collection_dom}-identity")} class="item-left">
@@ -338,6 +329,7 @@ pub fn library_page() -> Html {
                                                                                     <li id={format!("library-item-{}-item", row.id)} class="row-line" key={row.link.clone()}>
                                                                                         {
                                                                                             match row.media {
+                                                                                                MediaKind::File => html!{ <Icon icon_id={IconId::LucideFile} width={"16"} height={"16"} /> },
                                                                                                 MediaKind::Link => html!{ <Icon icon_id={IconId::LucideLink} width={"16"} height={"16"} /> },
                                                                                                 MediaKind::Pictures => html!{<Icon icon_id={IconId::LucideImage} width={"16"} height={"16"} />},
                                                                                                 MediaKind::Video    => html!{<Icon icon_id={IconId::LucideVideo} width={"16"} height={"16"} />},
@@ -369,8 +361,8 @@ pub fn library_page() -> Html {
                                                         }
                                                     }
                                                 </div>
-                                            }
-                                        })
+                                            })
+                                        }))
                                     }
                                 </div>
                             }
@@ -382,7 +374,7 @@ pub fn library_page() -> Html {
                             <div id={format!("{platform_dom}-group")} class="platform-block" key={platform_key.clone()}>
                                 <div id={format!("{platform_dom}-toggle")} class="platform-item" onclick={on_platform_click}>
                                     <div id={format!("{platform_dom}-identity")} class="item-left">
-                                        <img id={format!("{platform_dom}-icon")} class="brand-icon" src={platform_icon_src(&plat_label)} />
+                                        {service_icon(format!("{platform_dom}-icon"), &plat_label)}
                                         <span id={format!("{platform_dom}-name")} class="item-title">{plat_label.clone()}</span>
                                     </div>
                                     <div id={format!("{platform_dom}-actions")} class="item-right">

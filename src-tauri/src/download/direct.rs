@@ -36,6 +36,11 @@ pub(super) fn save_file(mut temp: TempPath, directory: &Path, stem: &str, ext: &
 }
 
 pub(super) async fn download(url: Url, directory: &Path, media: &str, id: i64, policy: &OnDuplicate) -> Result<PathBuf, String> {
+    fetch(url, directory, media, id, policy).await?.ok_or_else(|| "The media URL returned a webpage instead of a file".into())
+}
+
+// An extensionless download endpoint may serve an attachment or a browser landing page.
+pub(super) async fn fetch(url: Url, directory: &Path, media: &str, id: i64, policy: &OnDuplicate) -> Result<Option<PathBuf>, String> {
     let client = HTTP.as_ref().map_err(|e| e.to_string())?;
     let mut response = client.get(url.clone()).send().await.map_err(|e| e.without_url().to_string())?;
     let mime = response.headers().get(CONTENT_TYPE).and_then(|v| v.to_str().ok())
@@ -43,40 +48,33 @@ pub(super) async fn download(url: Url, directory: &Path, media: &str, id: i64, p
     let disposition = response.headers().get(CONTENT_DISPOSITION).and_then(|v| v.to_str().ok()).unwrap_or("");
     let attachment = disposition.split(';').next().is_some_and(|v| v.trim().eq_ignore_ascii_case("attachment"));
     let web_page = matches!(mime.as_str(), "text/html" | "application/xhtml+xml");
-    let bookmark = media == "link" && ((web_page && !attachment) || !response.status().is_success());
 
-    if !bookmark {
-        response.error_for_status_ref().map_err(|e| e.without_url().to_string())?;
-        if media == "file" && web_page && !attachment {
-            return Err("The attachment returned a webpage instead of a file".into());
-        }
-        if media == "image" && !(mime.starts_with("image/") || mime == "application/octet-stream") {
-            return Err(format!("Expected an image, received {mime}"));
-        }
+    response.error_for_status_ref().map_err(|e| e.without_url().to_string())?;
+    if web_page && !attachment {
+        return Ok(None);
+    }
+    if media == "image" && !(mime.starts_with("image/") || mime == "application/octet-stream") {
+        return Err(format!("Expected an image, received {mime}"));
     }
 
     let filename = disposition.split(';').filter_map(|part| part.trim().split_once('='))
         .find(|(key, _)| key.eq_ignore_ascii_case("filename")).map(|(_, name)| name.trim_matches('"'))
         .or_else(|| response.url().path_segments()?.next_back()).unwrap_or("").to_owned();
     let original = Path::new(&filename);
-    let extension = if bookmark {
-        "url"
-    } else {
-        match mime.as_str() {
-            "image/jpeg" => "jpg",
-            "image/png" => "png",
-            "image/webp" => "webp",
-            "image/gif" => "gif",
-            "image/avif" => "avif",
-            "image/svg+xml" => "svg",
-            "application/pdf" => "pdf",
-            "application/zip" => "zip",
-            "text/plain" => "txt",
-            "video/mp4" => "mp4",
-            "audio/mpeg" => "mp3",
-            _ => original.extension().and_then(|e| e.to_str())
-                .filter(|e| e.len() <= 8 && e.chars().all(|c| c.is_ascii_alphanumeric())).unwrap_or("bin"),
-        }
+    let extension = match mime.as_str() {
+        "image/jpeg" => "jpg",
+        "image/png" => "png",
+        "image/webp" => "webp",
+        "image/gif" => "gif",
+        "image/avif" => "avif",
+        "image/svg+xml" => "svg",
+        "application/pdf" => "pdf",
+        "application/zip" => "zip",
+        "text/plain" => "txt",
+        "video/mp4" => "mp4",
+        "audio/mpeg" => "mp3",
+        _ => original.extension().or_else(|| Path::new(url.path()).extension()).and_then(|e| e.to_str())
+            .filter(|e| e.len() <= 8 && e.chars().all(|c| c.is_ascii_alphanumeric())).unwrap_or("bin"),
     };
     let name = original.file_stem().and_then(|n| n.to_str()).unwrap_or("")
         .chars().filter(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_')).take(60).collect::<String>();
@@ -84,16 +82,12 @@ pub(super) async fn download(url: Url, directory: &Path, media: &str, id: i64, p
 
     let (file, temp) = NamedTempFile::new_in(directory).map_err(|e| e.to_string())?.into_parts();
     let mut file = tokio::fs::File::from_std(file);
-    if bookmark {
-        file.write_all(format!("[InternetShortcut]\r\nURL={}\r\n", url.as_str()).as_bytes()).await.map_err(|e| e.to_string())?;
-    } else {
-        while let Some(chunk) = response.chunk().await.map_err(|e| e.without_url().to_string())? {
-            file.write_all(&chunk).await.map_err(|e| e.to_string())?;
-        }
+    while let Some(chunk) = response.chunk().await.map_err(|e| e.without_url().to_string())? {
+        file.write_all(&chunk).await.map_err(|e| e.to_string())?;
     }
     file.flush().await.map_err(|e| e.to_string())?;
     drop(file);
-    save_file(temp, directory, &stem, extension, policy).map_err(|e| e.to_string())
+    save_file(temp, directory, &stem, extension, policy).map(Some).map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
@@ -114,7 +108,43 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn transfers_direct_media_and_saves_webpages_as_shortcuts() {
+    async fn downloads_signed_gif_without_changing_the_request_target() {
+        let directory = tempfile::tempdir().unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let target = "/4/patreon-media/p/post/101/image/1.gif?token-hash=sample%3D&token-time=123";
+        let url = Url::parse(&format!("http://{}{target}", listener.local_addr().unwrap())).unwrap();
+        let gif = b"GIF89a\x01\x00\x01\x00\x80\x00\x00\x00\x00\x00\xff\xff\xff,\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;";
+        let serve = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut reader = tokio::io::BufReader::new(&mut socket);
+            let mut line = String::new();
+            tokio::io::AsyncBufReadExt::read_line(&mut reader, &mut line).await.unwrap();
+            assert_eq!(line.trim_end(), format!("GET {target} HTTP/1.1"));
+            let headers = format!("HTTP/1.1 200 OK\r\nContent-Type: image/gif\r\nContent-Length: {}\r\n\r\n", gif.len());
+            socket.write_all(headers.as_bytes()).await.unwrap();
+            socket.write_all(gif).await.unwrap();
+        });
+        let file = download(url, directory.path(), "image", 7, &OnDuplicate::CreateNew).await.unwrap();
+        serve.await.unwrap();
+        assert_eq!(file.extension().unwrap(), "gif");
+        assert_eq!(std::fs::read(file).unwrap(), gif);
+    }
+
+    #[tokio::test]
+    async fn an_extensionless_download_endpoint_uses_the_response_type() {
+        use crate::utils::resource::{classify_url, Resource};
+        let directory = tempfile::tempdir().unwrap();
+        let html = fixture_response(b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 6\r\n\r\n<html>").await;
+        assert_eq!(classify_url(&html, "link"), Resource::FileEndpoint);
+        assert!(fetch(html, directory.path(), "file", 1, &OnDuplicate::CreateNew).await.unwrap().is_none());
+        let binary = fixture_response(b"HTTP/1.1 200 OK\r\nContent-Type: application/pdf\r\nContent-Length: 4\r\n\r\n%PDF").await;
+        let saved = fetch(binary, directory.path(), "file", 2, &OnDuplicate::CreateNew).await.unwrap().unwrap();
+        assert_eq!(std::fs::read(saved).unwrap(), b"%PDF");
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
+    }
+
+    #[tokio::test]
+    async fn transfers_files_and_rejects_an_html_response() {
         let directory = tempfile::tempdir().unwrap();
         let image = fixture_response(b"HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: 5\r\n\r\nimage").await;
         let path = download(image, directory.path(), "image", 1, &OnDuplicate::CreateNew).await.unwrap();
@@ -122,13 +152,12 @@ mod tests {
         assert_eq!(std::fs::read(path).unwrap(), b"image");
 
         let file = fixture_response(b"HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Disposition: attachment; filename=\"notes.zip\"\r\nContent-Length: 3\r\n\r\nzip").await;
-        let path = download(file, directory.path(), "link", 2, &OnDuplicate::DoNothing).await.unwrap();
+        let path = download(file, directory.path(), "file", 2, &OnDuplicate::DoNothing).await.unwrap();
         assert_eq!(path.extension().unwrap(), "zip");
         assert_eq!(std::fs::read(path).unwrap(), b"zip");
 
         let page = fixture_response(b"HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: 6\r\n\r\n<html>").await;
-        let path = download(page.clone(), directory.path(), "link", 3, &OnDuplicate::Overwrite).await.unwrap();
-        assert_eq!(path.extension().unwrap(), "url");
-        assert_eq!(std::fs::read_to_string(path).unwrap(), format!("[InternetShortcut]\r\nURL={page}\r\n"));
+        assert!(download(page, directory.path(), "image", 3, &OnDuplicate::Overwrite).await.is_err());
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 2);
     }
 }

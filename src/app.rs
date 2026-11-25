@@ -14,7 +14,7 @@ use yew::prelude::*;
 #[wasm_bindgen]
 extern "C" {
     #[wasm_bindgen(catch, js_namespace = ["window", "__TAURI__", "core"])]
-    async fn invoke(cmd: &str, args: JsValue) -> Result<JsValue, JsValue>;
+    pub(crate) async fn invoke(cmd: &str, args: JsValue) -> Result<JsValue, JsValue>;
     #[wasm_bindgen(js_namespace = ["window", "__TAURI__", "event"])]
     async fn listen(event: &str, f: &Closure<dyn FnMut(JsValue)>) -> JsValue;
     #[wasm_bindgen(js_namespace = ["window","__TAURI__","webview"])]
@@ -29,6 +29,7 @@ pub fn log_invoke_err(cmd: &str, e: JsValue) {
 pub enum Page {
     Home,
     Downloads,
+    Links,
     Library,
     Settings,
     Extension,
@@ -60,6 +61,7 @@ fn log_download_snapshot(rows: &[ClipRow]) {
             DownloadStatus::Done => cnt_done += 1,
             DownloadStatus::Error => cnt_err += 1,
             DownloadStatus::Canceled => cnt_cancel += 1,
+            DownloadStatus::Reference => {}
         }
     }
     web_sys::console::log_1(&format!("[UI] list_downloads loaded: backlog={} queue={} downloading={} done={} error={} canceled={}", cnt_backlog, cnt_queue, cnt_down, cnt_done, cnt_err, cnt_cancel).into());
@@ -73,6 +75,7 @@ fn default_stage_text(row: &ClipRow) -> String {
         DownloadStatus::Done => "Done".into(),
         DownloadStatus::Error => row.last_error.clone().unwrap_or_else(|| "Failed".into()),
         DownloadStatus::Canceled => "Canceled".into(),
+        DownloadStatus::Reference => "Saved in Links".into(),
     }
 }
 
@@ -80,7 +83,7 @@ fn merge_download_entries(previous: &HashMap<i64, DownloadEntry>, rows: Vec<Clip
     let mut map = HashMap::new();
 
     for row in rows {
-        if matches!(row.status, DownloadStatus::Done | DownloadStatus::Canceled) {
+        if matches!(row.status, DownloadStatus::Done | DownloadStatus::Canceled | DownloadStatus::Reference) {
             continue;
         }
 
@@ -117,7 +120,7 @@ fn merge_download_entries(previous: &HashMap<i64, DownloadEntry>, rows: Vec<Clip
                 }
                 entry.stage_text = entry.row.last_error.clone().unwrap_or_else(|| "Failed".into());
             }
-            DownloadStatus::Done | DownloadStatus::Canceled => {}
+            DownloadStatus::Done | DownloadStatus::Canceled | DownloadStatus::Reference => {}
         }
 
         map.insert(entry.row.id, entry);
@@ -305,6 +308,7 @@ pub enum MoveBackItem {
 #[function_component(App)]
 pub fn app() -> Html {
     let page = use_state(|| Page::Home);
+    let links_revision = use_state(|| 0u64);
     let settings = use_state(Settings::default);
 
     let downloads = use_state(HashMap::<i64, DownloadEntry>::new);
@@ -402,7 +406,7 @@ pub fn app() -> Html {
                                 should_refresh = true;
                             }
                             DownloadEventPayload::StatusChanged {id, status} => match status {
-                                DownloadStatus::Done | DownloadStatus::Canceled => {
+                                DownloadStatus::Done | DownloadStatus::Canceled | DownloadStatus::Reference => {
                                     if map.remove(&id).is_none() {
                                         should_refresh = true;
                                     } else {
@@ -496,16 +500,20 @@ pub fn app() -> Html {
     }
 
     {
+        let links_revision = links_revision.clone();
         let downloads = downloads.clone();
         let downloads_ref = downloads_ref.clone();
         let downloads_ready = downloads_ready.clone();
         use_effect_with((), move |_| {
             spawn_local(async move {
+                let mut revision = 0;
                 let handler = Closure::<dyn FnMut(JsValue)>::new(move |_event: JsValue| {
-                    web_sys::console::log_1(&"[UI] import_completed event received, reloading downloads".into());
+                    revision += 1;
+                    links_revision.set(revision);
                     spawn_refresh_downloads(downloads.clone(), downloads_ref.clone(), downloads_ready.clone());
                 });
                 let _ = listen("import_completed", &handler).await;
+                let _ = listen("post-links-collected", &handler).await;
                 handler.forget();
             });
             || ()
@@ -643,7 +651,8 @@ pub fn app() -> Html {
                 />
             }
         }
-        Page::Library => html! {<pages::library::LibraryPage />},
+        Page::Links => html! {<pages::links::LinksPage revision={*links_revision} />},
+        Page::Library => html! {<pages::library::LibraryPage revision={*links_revision} />},
         Page::Settings => html! {<pages::settings::SettingsPage />},
         Page::Extension => html! {<pages::extension::ExtensionPage />},
         Page::Sponsor => html! {<pages::sponsor::SponsorPage />},

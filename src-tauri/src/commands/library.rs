@@ -1,3 +1,4 @@
+use crate::utils::resolve_stored_path;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -33,33 +34,6 @@ fn reveal_dir(dir: &str) -> Result<(), String> {
         Command::new("xdg-open").arg(dir).spawn().map_err(|e| format!("failed to open folder: {e}"))?;
     }
     Ok(())
-}
-
-/// Resolve a path stored in the database to one that actually exists on disk.
-///
-/// Older builds mis-decoded yt-dlp's cp1252 stdout as UTF-8, corrupting any
-/// non-ASCII characters in the stored download path (e.g. `Téléchargements`
-/// became `T�l�chargements`). Only the download-root prefix is affected, so if
-/// the stored path is missing we re-root the below-root components under the
-/// correctly-encoded `download_directory` from settings.
-fn resolve_stored_path(path: &str) -> Option<PathBuf> {
-    let p = PathBuf::from(path);
-    if p.exists() {
-        return Some(p);
-    }
-    let root = PathBuf::from(crate::settings::load_settings().download_directory);
-    let root_depth = root.components().count();
-    let comps: Vec<_> = p.components().collect();
-    if comps.len() > root_depth {
-        let mut rebuilt = root;
-        for c in &comps[root_depth..] {
-            rebuilt.push(c.as_os_str());
-        }
-        if rebuilt.exists() {
-            return Some(rebuilt);
-        }
-    }
-    None
 }
 
 #[tauri::command]
@@ -123,12 +97,30 @@ pub async fn open_platform_folder(platform: String) -> Result<(), String> {
 pub async fn open_collection_folder(platform: String, handle: String, content_type: String) -> Result<(), String> {
     let s = crate::settings::load_settings();
     let base = std::path::PathBuf::from(s.download_directory);
-    let label = crate::database::Database::collection_folder_label(&content_type, &handle);
-    let p = base.join(platform).join(label);
-    if !p.exists() {
-        return Ok(());
+    let previous = crate::database::Database::collection_directory(&base, &platform, &content_type, &handle, "");
+    if platform == "patreon" && content_type == "collection" {
+        return tauri::async_runtime::spawn_blocking(move || {
+            let db = crate::database::Database::new().map_err(|e| e.to_string())?;
+            let creator = db.patreon_collection_creator(&handle).map_err(|e| e.to_string())?;
+            let folder = crate::database::Database::collection_directory(&base, &platform, &content_type, &handle, &creator);
+            for dir in [folder, previous] {
+                if dir.is_dir() { return reveal_dir(&dir.to_string_lossy()); }
+            }
+            // Earlier imports may have saved files under an ID-only collection label.
+            let paths = db.list_ids_and_paths_by_collection(&platform, &handle, &content_type).map_err(|e| e.to_string())?;
+            for (_, path) in paths {
+                if path.is_empty() || path == "unknown_path" {
+                    continue;
+                }
+                if let Some(file) = resolve_stored_path(&path).filter(|p| p.is_file()) {
+                    if let Some(dir) = file.parent() { return reveal_dir(&dir.to_string_lossy()); }
+                }
+            }
+            Ok(())
+        }).await.map_err(|e| e.to_string())?;
     }
-    reveal_dir(&p.to_string_lossy())
+    if previous.is_dir() { return reveal_dir(&previous.to_string_lossy()); }
+    Ok(())
 }
 
 #[tauri::command]
@@ -161,4 +153,30 @@ pub async fn delete_library_item(link: String) -> Result<(), String> {
     })
     .await
     .map_err(|e| format!("Join error: {e}"))?
+}
+
+#[tauri::command]
+pub async fn list_collected_links() -> Result<Vec<crate::collected_links::CollectedLink>, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let db = crate::database::Database::new().map_err(|e| e.to_string())?;
+        db.collected_links().map_err(|e| e.to_string())
+    }).await.map_err(|e| format!("Join error: {e}"))?
+}
+
+#[tauri::command]
+pub async fn delete_collected_links(app: tauri::AppHandle, selection: crate::collected_links::LinkSelection) -> Result<(), String> {
+    use tauri::Emitter;
+    tauri::async_runtime::spawn_blocking(move || {
+        let db = crate::database::Database::new().map_err(|e| e.to_string())?;
+        db.delete_collected_links(&selection).map_err(|e| e.to_string())
+    }).await.map_err(|e| format!("Join error: {e}"))??;
+    let _ = app.emit("post-links-collected", ());
+    Ok(())
+}
+
+#[tauri::command]
+pub fn open_collected_link(app: tauri::AppHandle, url: String) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    let url = crate::utils::url::http_url(&url)?;
+    app.opener().open_url(url.as_str(), None::<&str>).map_err(|e| e.to_string())
 }

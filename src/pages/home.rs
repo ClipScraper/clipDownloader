@@ -14,8 +14,17 @@ use crate::dom::assign_missing_descriptive_ids;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 struct DownloadResult {
+    id: String,
     success: bool,
     message: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DownloadRequest {
+    url: String,
+    output_format: &'static str,
+    flat_destination: bool,
 }
 
 #[derive(Deserialize, Clone, Debug)]
@@ -51,8 +60,10 @@ pub fn home_page(props: &Props) -> Html {
     let download_results = use_state(|| Vec::<DownloadResult>::new());
     let is_downloading = use_state(|| false);
     let download_progress = use_state(|| String::from("Starting download..."));
-    let active_download_id = use_state(|| None::<i64>);
-    let is_valid_url = name.contains("instagram.com") || name.contains("tiktok.com") || name.contains("youtube.com") || name.contains("youtu.be");
+    let active_download_id = use_mut_ref(|| None::<i64>);
+    let is_valid_url = web_sys::Url::new(name.trim()).is_ok_and(|url| {
+        matches!(url.protocol().as_str(), "http:" | "https:") && !url.hostname().is_empty() && url.username().is_empty() && url.password().is_empty()
+    });
 
     {
         let download_results = download_results.clone();
@@ -88,7 +99,8 @@ pub fn home_page(props: &Props) -> Html {
                 let closure = Closure::wrap(Box::new(move |event: JsValue| {
                     let payload = js_sys::Reflect::get(&event, &JsValue::from_str("payload")).unwrap_or(event.clone());
                     if let Ok(evt) = serde_wasm_bindgen::from_value::<DownloadEventPayload>(payload) {
-                        if let Some(active_id) = *active_download_id {
+                        let tracked = *active_download_id.borrow();
+                        if let Some(active_id) = tracked {
                             match evt {
                                 DownloadEventPayload::Progress {id, progress, ..} => {
                                     if id == active_id {
@@ -103,18 +115,18 @@ pub fn home_page(props: &Props) -> Html {
                                 DownloadEventPayload::StatusChanged {id, status} => {
                                     if id == active_id {
                                         match status {
-                                            DownloadStatus::Done => {
+                                            DownloadStatus::Done | DownloadStatus::Reference => {
                                                 is_downloading_clone.set(false);
-                                                active_download_id.set(None);
+                                                *active_download_id.borrow_mut() = None;
                                                 let mut results = (*download_results).clone();
-                                                results.push(DownloadResult {success: true, message: "Saved download".into()});
+                                                results.push(DownloadResult {id: format!("home-download-{id}-result"), success: true, message: if status == DownloadStatus::Reference { "Saved in Links" } else { "Saved download" }.into()});
                                                 download_results.set(results);
                                             }
                                             DownloadStatus::Error | DownloadStatus::Canceled => {
                                                 is_downloading_clone.set(false);
-                                                active_download_id.set(None);
+                                                *active_download_id.borrow_mut() = None;
                                                 let mut results = (*download_results).clone();
-                                                results.push(DownloadResult {success: false, message: format!("Download {:?}", status)});
+                                                results.push(DownloadResult {id: format!("home-download-{id}-result"), success: false, message: format!("Download {:?}", status)});
                                                 download_results.set(results);
                                             }
                                             _ => {}
@@ -184,35 +196,32 @@ pub fn home_page(props: &Props) -> Html {
             download_progress.set("Starting download...".to_string());
             download_results.set(vec![]); // Clear previous results
             let value = greet_input_ref.cast::<web_sys::HtmlInputElement>().unwrap().value();
-            log::info("home_download_clicked", serde_json::json!({"url": value}));
-            web_sys::console::log_1(&format!("Form submitted with URL: {}", value).into());
+            log::info("home_download_clicked", serde_json::json!({}));
             let want_audio = *current_output_state;
-            // Encode Home flags directly into the URL so backend reliably honors them
-            let url_for_backend = {
-                let mut u = value.clone();
-                if want_audio {
-                    u.push_str("#__audio_only__");
-                }
-                // Home downloads should always target the flat destination (settings root)
-                u.push_str("#__flat__");
-                u
-            };
             wasm_bindgen_futures::spawn_local({
                 let active_download_id = active_download_id.clone();
+                let is_downloading = is_downloading.clone();
+                let download_results = download_results.clone();
                 async move {
                     let fmt = if want_audio {
                         "audio"
                     } else {
                         "video"
                     };
-                    let args = serde_wasm_bindgen::to_value(&serde_json::json!({"url": url_for_backend, "output_format": fmt, "flat_destination": true})).unwrap();
+                    let args = serde_wasm_bindgen::to_value(&DownloadRequest {url: value, output_format: fmt, flat_destination: true}).unwrap();
                     match invoke("download_url", args).await {
                         Ok(val) => {
-                            if let Ok(id) = serde_wasm_bindgen::from_value::<i64>(val) {
-                                active_download_id.set(Some(id));
+                            if let Some(message) = val.as_string() {
+                                is_downloading.set(false);
+                                *active_download_id.borrow_mut() = None;
+                                download_results.set(vec![DownloadResult {id: "home-submission-notice".into(), success: true, message}]);
+                            } else if let Ok(id) = serde_wasm_bindgen::from_value::<i64>(val) {
+                                *active_download_id.borrow_mut() = Some(id);
                             }
                         }
                         Err(e) => {
+                            is_downloading.set(false);
+                            download_results.set(vec![DownloadResult {id: "home-submission-error".into(), success: false, message: e.as_string().unwrap_or_else(|| "Could not start download".into())}]);
                             log_invoke_err("download_url", e);
                         }
                     }
@@ -229,16 +238,12 @@ pub fn home_page(props: &Props) -> Html {
             log::warn("home_download_cancel", serde_json::json!({}));
             is_downloading.set(false);
             download_results.set(vec![]);
-            spawn_local({
-                let active_download_id = active_download_id.clone();
-                async move {
-                    if let Some(id) = *active_download_id {
-                        let args = serde_wasm_bindgen::to_value(&serde_json::json!({"id": id})).unwrap();
-                        let _ = invoke("cancel_download", args).await;
-                    }
-                }
-            });
-            active_download_id.set(None);
+            if let Some(id) = active_download_id.borrow_mut().take() {
+                spawn_local(async move {
+                    let args = serde_wasm_bindgen::to_value(&serde_json::json!({"id": id})).unwrap();
+                    let _ = invoke("cancel_download", args).await;
+                });
+            }
         })
     };
 
@@ -334,10 +339,10 @@ pub fn home_page(props: &Props) -> Html {
             }}
 
             <div id="home-download-results" class="messages">
-                { for (*download_results).clone().into_iter().enumerate().map(|(index, result)| {
+                { for (*download_results).clone().into_iter().map(|result| {
                     html! {
                         <div
-                            id={format!("home-download-result-message-{}", index + 1)}
+                            id={result.id}
                             class={if result.success {
                                 "message-success"
                             } else {

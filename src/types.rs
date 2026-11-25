@@ -8,6 +8,11 @@ pub enum Platform {
     Youtube,
     Pinterest,
     Patreon,
+    Twitter,
+    Mega,
+    Dropbox,
+    Telegram,
+    Other,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -32,12 +37,16 @@ pub enum MediaKind {
     Pictures,
     #[serde(alias = "video")]
     Video,
+    #[serde(alias = "file")]
+    File,
     #[serde(alias = "link")]
     Link,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ClipRow {
+    #[serde(default)]
+    pub creator: String,
     #[serde(default)]
     pub id: i64,
     #[serde(rename = "Platform")]
@@ -71,6 +80,7 @@ pub enum DownloadStatus {
     Done,
     Error,
     Canceled,
+    Reference,
 }
 
 impl Default for DownloadStatus {
@@ -85,6 +95,11 @@ pub fn platform_str(p: &Platform) -> &'static str {
         Platform::Instagram => "instagram",
         Platform::Youtube => "youtube",
         Platform::Patreon => "patreon",
+        Platform::Twitter => "twitter",
+        Platform::Mega => "mega",
+        Platform::Dropbox => "dropbox",
+        Platform::Telegram => "telegram",
+        Platform::Other => "other",
         Platform::Pinterest => "pinterest",
     }
 }

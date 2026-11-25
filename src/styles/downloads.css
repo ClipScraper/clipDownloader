@@ -239,3 +239,53 @@
     background-color: rgba(255,255,255,0.10);
   }
 }
+
+/* Collected links share the platform and collection cards used by the library. */
+.service-icon { display: inline-flex; align-items: center; flex-shrink: 0; }
+.brand-icon[src$="/x.com.png"] { filter: invert(1); }
+.service-mega { color: #ff555d; }
+.service-dropbox { color: #6da3ff; }
+.service-telegram { color: #59b9e9; }
+.link-catalog .platform-item, .link-catalog .collection-item { padding: 0 8px 0 0; }
+.link-group-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+  padding: 10px 8px 10px 12px;
+  background: transparent;
+  box-shadow: none;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+.link-group-toggle:hover, .link-group-toggle:active { background: transparent; }
+.link-group-toggle::before { content: '▸'; color: #bdbdbd; }
+.link-group-toggle[aria-expanded="true"]::before { content: '▾'; }
+.link-group-toggle .item-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.link-trash { flex-shrink: 0; }
+.link-catalog .rows-card { margin: 0 0 10px 16px; padding: 4px 12px; }
+.collected-link { color: #e0e7f1; display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1; max-width: 100%; }
+.collected-link .brand-icon { flex: 0 0 18px; }
+.link-address { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; user-select: text; }
+.collected-link:hover { color: #9bcfff; text-decoration: underline; }
+.link-group-toggle:focus-visible, .link-trash:focus-visible, .collected-link:focus-visible { outline: 2px solid #9bcfff; outline-offset: 2px; }
+
+.creator-collections { margin-left: 16px; }
+.creator-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  border-radius: 10px;
+  background: rgba(255,255,255,0.06);
+  cursor: pointer;
+}
+.creator-item::-webkit-details-marker { display: none; }
+.creator-item::before { content: '▸'; color: #bdbdbd; }
+.creator-collections[open] > .creator-item::before { content: '▾'; }
+.creator-item:hover { background: rgba(255,255,255,0.12); }
+.creator-item:focus-visible { outline: 2px solid #9bcfff; }
